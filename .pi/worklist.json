@@ -1,0 +1,125 @@
+{
+	"version": 1,
+	"goals": [
+		{
+			"id": "future-start-goal",
+			"title": "Add a Start a Goal workflow",
+			"description": "Future feature: select a Project Goal and ask the agent to create a Session Task checklist for it.",
+			"status": "open",
+			"createdAt": "2026-07-13T00:00:00.000Z",
+			"updatedAt": "2026-07-13T00:00:00.000Z"
+		},
+		{
+			"id": "future-promote",
+			"title": "Add manual task promotion",
+			"description": "Future feature: manually turn a Session Task into a Project Goal.",
+			"status": "open",
+			"createdAt": "2026-07-13T00:00:01.000Z",
+			"updatedAt": "2026-07-13T00:00:01.000Z"
+		},
+		{
+			"id": "future-archive-ui",
+			"title": "Add archived-goal browsing",
+			"description": "Future feature: preserve completed Project Goals without showing them normally.",
+			"status": "open",
+			"createdAt": "2026-07-13T00:00:02.000Z",
+			"updatedAt": "2026-07-13T00:00:02.000Z"
+		},
+		{
+			"id": "future-focus",
+			"title": "Add focus mode",
+			"description": "Future feature: show only Session Tasks linked to the active Project Goal.",
+			"status": "open",
+			"createdAt": "2026-07-13T00:00:03.000Z",
+			"updatedAt": "2026-07-13T00:00:03.000Z"
+		},
+		{
+			"id": "future-history",
+			"title": "Add progress history",
+			"description": "Future feature: record which Pi sessions contributed to a Project Goal.",
+			"status": "open",
+			"createdAt": "2026-07-13T00:00:04.000Z",
+			"updatedAt": "2026-07-13T00:00:04.000Z"
+		},
+		{
+			"id": "future-read-only",
+			"title": "Add read-only Project Goals",
+			"description": "Future feature: let teams commit a roadmap that the agent can read but not mutate automatically.",
+			"status": "open",
+			"createdAt": "2026-07-13T00:00:05.000Z",
+			"updatedAt": "2026-07-13T00:00:05.000Z"
+		},
+		{
+			"id": "deferred-nesting",
+			"title": "Re-evaluate nested tasks",
+			"description": "Intentionally avoided initially; revisit only with compelling evidence.",
+			"status": "open",
+			"createdAt": "2026-07-13T00:00:06.000Z",
+			"updatedAt": "2026-07-13T00:00:06.000Z"
+		},
+		{
+			"id": "deferred-dependencies",
+			"title": "Re-evaluate dependency graphs",
+			"description": "Intentionally avoided initially; revisit only with compelling evidence.",
+			"status": "open",
+			"createdAt": "2026-07-13T00:00:07.000Z",
+			"updatedAt": "2026-07-13T00:00:07.000Z"
+		},
+		{
+			"id": "deferred-due-dates",
+			"title": "Re-evaluate due dates",
+			"description": "Intentionally avoided initially; revisit only with compelling evidence.",
+			"status": "open",
+			"createdAt": "2026-07-13T00:00:08.000Z",
+			"updatedAt": "2026-07-13T00:00:08.000Z"
+		},
+		{
+			"id": "deferred-estimates",
+			"title": "Re-evaluate time estimates",
+			"description": "Intentionally avoided initially; revisit only with compelling evidence.",
+			"status": "open",
+			"createdAt": "2026-07-13T00:00:09.000Z",
+			"updatedAt": "2026-07-13T00:00:09.000Z"
+		},
+		{
+			"id": "deferred-auto-complete",
+			"title": "Re-evaluate automatic goal completion",
+			"description": "Intentionally avoided initially; revisit only with compelling evidence.",
+			"status": "open",
+			"createdAt": "2026-07-13T00:00:10.000Z",
+			"updatedAt": "2026-07-13T00:00:10.000Z"
+		},
+		{
+			"id": "deferred-auto-promote",
+			"title": "Re-evaluate automatic promotion between scopes",
+			"description": "Intentionally avoided initially; revisit only with compelling evidence.",
+			"status": "open",
+			"createdAt": "2026-07-13T00:00:11.000Z",
+			"updatedAt": "2026-07-13T00:00:11.000Z"
+		},
+		{
+			"id": "deferred-cross-project",
+			"title": "Re-evaluate cross-project aggregation",
+			"description": "Intentionally avoided initially; revisit only with compelling evidence.",
+			"status": "open",
+			"createdAt": "2026-07-13T00:00:12.000Z",
+			"updatedAt": "2026-07-13T00:00:12.000Z"
+		},
+		{
+			"id": "deferred-notifications",
+			"title": "Re-evaluate stale-goal notifications",
+			"description": "Intentionally avoided initially; revisit only with compelling evidence.",
+			"status": "open",
+			"createdAt": "2026-07-13T00:00:13.000Z",
+			"updatedAt": "2026-07-13T00:00:13.000Z"
+		},
+		{
+			"id": "deferred-markdown",
+			"title": "Re-evaluate Markdown checklist parsing",
+			"description": "Intentionally avoided initially; arbitrary Markdown will not be the canonical database without compelling evidence.",
+			"status": "open",
+			"createdAt": "2026-07-13T00:00:14.000Z",
+			"updatedAt": "2026-07-13T00:00:14.000Z"
+		}
+	]
+}

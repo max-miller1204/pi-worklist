@@ -1,0 +1,17 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.5.3/schema.json",
+	"files": {
+		"includes": ["**", "!node_modules", "!.git", "!.pi-subagents"]
+	},
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab",
+		"lineWidth": 110
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"preset": "recommended"
+		}
+	}
+}
