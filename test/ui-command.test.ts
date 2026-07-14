@@ -7,11 +7,13 @@ const tasks: SessionTask[] = Array.from({ length: 6 }, (_, index) => ({
 	id: `t${index}`,
 	title: `Task ${index}`,
 	status: index === 0 ? "done" : index === 1 ? "doing" : "todo",
+	description: index === 1 ? "Keep the model informed after compaction" : undefined,
 }));
 const goals: ProjectGoal[] = [
 	{
 		id: "g1",
 		title: "Ship v1",
+		description: "Release the first stable version",
 		status: "active",
 		createdAt: "2026-01-01T00:00:00Z",
 		updatedAt: "2026-01-01T00:00:00Z",
@@ -28,7 +30,8 @@ describe("widget and prompt summary", () => {
 
 	it("caps prompt task detail", () => {
 		const summary = buildPromptSummary(tasks, goals, 2);
-		expect(summary).toContain("Ship v1");
+		expect(summary).toContain("Ship v1 - Release the first stable version");
+		expect(summary).toContain("Task 1 - Keep the model informed after compaction");
 		expect(summary).toContain("and 3 more");
 		expect(summary).not.toContain("Task 4");
 	});
@@ -45,6 +48,21 @@ describe("command parser", () => {
 			scope: "session",
 			action: "add",
 			title: "write regression tests",
+		});
+	});
+
+	it("parses optional task descriptions", () => {
+		expect(parseTasksCommand("session add write regression tests -- Cover RPC and TUI usage")).toEqual({
+			scope: "session",
+			action: "add",
+			title: "write regression tests",
+			description: "Cover RPC and TUI usage",
+		});
+		expect(parseTasksCommand("session update task-1 -- Replacement context")).toEqual({
+			scope: "session",
+			action: "update",
+			id: "task-1",
+			description: "Replacement context",
 		});
 	});
 

@@ -11,6 +11,7 @@ Project Goals track the larger outcomes shared by every Pi session in a Git repo
 ## Features
 
 - Branch-aware Session Tasks survive `/resume` and follow `/tree`, `/fork`, and `/clone`.
+- Optional Session Task descriptions preserve implementation context and acceptance criteria.
 - A new Pi session starts with an empty Session Task list.
 - Project Goals persist at `<git-root>/.pi/worklist.json` and can be committed with the repository.
 - `/tasks` opens an interactive two-section dashboard.
@@ -44,13 +45,15 @@ pi -e ./src/extension.ts
 ## Usage
 
 Run `/tasks` with no arguments to open the dashboard.
-Use Tab to switch lists, arrow keys to navigate, `a` to add, `e` to edit, Space or Enter to advance status, `d` to delete, and Escape to close.
+Use Tab to switch lists, arrow keys to navigate, `a` to add, `e` to edit titles and descriptions, Space or Enter to advance status, `d` to delete, and Escape to close.
 
 Direct commands are useful in RPC mode and scripts:
 
 ```text
 /tasks session list
 /tasks session add Write regression tests
+/tasks session add Write regression tests -- Cover RPC and TUI paths
+/tasks session update <id> -- Replace the task description
 /tasks session status <id> doing
 /tasks project list
 /tasks project add Replace legacy authentication
@@ -58,6 +61,7 @@ Direct commands are useful in RPC mode and scripts:
 /tasks project complete <id>
 ```
 
+Text after `--` is stored as the optional description for `add` and `update` commands.
 Typing a Project Goal lifecycle command is explicit user intent.
 The model-facing tool instead requires `confirm=true`, and its prompt rules prohibit setting that flag without an explicit request.
 
@@ -75,6 +79,7 @@ Project Goal operations are unavailable outside a Git repository, while Session 
 ## Model tool
 
 The `worklist` tool accepts `scope=session|project` and actions including `list`, `add`, `update`, `set_status`, `set_active`, `complete`, `reopen`, `archive`, and `delete`.
+Session Tasks accept optional descriptions on `add` and `update`.
 Session Task statuses are `todo`, `doing`, and `done`.
 Project Goal statuses are `open`, `active`, `done`, and `archived`.
 Only activation is a non-destructive direct Project Goal status change.

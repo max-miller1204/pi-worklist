@@ -1,6 +1,7 @@
 import type { ProjectGoal, SessionTask } from "./types.ts";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import { compactDescription } from "./format.ts";
 
 export function buildWidgetLines(tasks: SessionTask[], goals: ProjectGoal[]): string[] {
 	const active = goals.find((goal) => goal.status === "active");
@@ -20,10 +21,16 @@ export function buildPromptSummary(tasks: SessionTask[], goals: ProjectGoal[], m
 	const pending = tasks.filter((task) => task.status !== "done").slice(0, maxItems);
 	if (!active && pending.length === 0) return "";
 	const lines = ["[WORKLIST]"];
-	if (active) lines.push(`Active project goal: ${active.title}`);
+	if (active) {
+		const description = active.description ? ` - ${compactDescription(active.description)}` : "";
+		lines.push(`Active project goal: ${active.title}${description}`);
+	}
 	if (pending.length) {
 		lines.push("Incomplete session tasks:");
-		for (const task of pending) lines.push(`- [${task.status === "doing" ? "doing" : "todo"}] ${task.title}`);
+		for (const task of pending) {
+			const description = task.description ? ` - ${compactDescription(task.description)}` : "";
+			lines.push(`- [${task.status === "doing" ? "doing" : "todo"}] ${task.title}${description}`);
+		}
 	}
 	const remaining = tasks.filter((task) => task.status !== "done").length - pending.length;
 	if (remaining > 0) lines.push(`- ...and ${remaining} more`);
@@ -93,6 +100,10 @@ export class Dashboard {
 			const prefix = index === this.selected ? th.fg("accent", ">") : " ";
 			lines.push(`${prefix} ${marker} ${item.title} ${th.fg("dim", item.id)}`);
 		});
+		const selected = items[this.selected];
+		if (selected?.description) {
+			lines.push("", th.fg("muted", `Description: ${compactDescription(selected.description)}`));
+		}
 		lines.push(
 			"",
 			th.fg("dim", "tab switch  ↑↓ navigate  a add  e edit  space/enter advance  d delete  esc close"),

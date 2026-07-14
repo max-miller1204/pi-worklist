@@ -4,6 +4,7 @@ export type ProjectGoalStatus = "open" | "active" | "done" | "archived";
 export interface SessionTask {
 	id: string;
 	title: string;
+	description?: string;
 	status: SessionTaskStatus;
 	goalId?: string;
 }

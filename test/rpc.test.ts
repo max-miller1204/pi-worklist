@@ -9,6 +9,14 @@ afterEach(() => {
 	for (const child of children.splice(0)) child.kill("SIGTERM");
 });
 
+function parseJson<T>(value: string): T {
+	try {
+		return JSON.parse(value) as T;
+	} catch (error) {
+		throw new Error(`Invalid JSON: ${String(error)}`);
+	}
+}
+
 function rpc(child: ChildProcessWithoutNullStreams, request: object): Promise<Record<string, unknown>> {
 	return new Promise((resolveResponse, reject) => {
 		let buffer = "";
@@ -21,7 +29,7 @@ function rpc(child: ChildProcessWithoutNullStreams, request: object): Promise<Re
 				const line = buffer.slice(0, newline);
 				buffer = buffer.slice(newline + 1);
 				if (!line.trim()) continue;
-				const value = JSON.parse(line) as Record<string, unknown>;
+				const value = parseJson<Record<string, unknown>>(line);
 				if (value.type === "extension_error") {
 					clearTimeout(timer);
 					reject(new Error(JSON.stringify(value)));
@@ -68,20 +76,33 @@ describe("real Pi load", () => {
 		const data = response.data as { commands: Array<{ name: string; path?: string }> };
 		expect(data.commands.some((command) => command.name.startsWith("tasks"))).toBe(true);
 
-		expect((await rpc(child, { type: "prompt", message: "/tasks session add RPC task" })).success).toBe(true);
-		const sessionEntries = (await rpc(child, { type: "get_entries" })).data as {
-			entries: Array<{ type: string; customType?: string }>;
-		};
 		expect(
-			sessionEntries.entries.some(
-				(entry) => entry.type === "custom" && entry.customType === "worklist-session-snapshot",
-			),
+			(
+				await rpc(child, {
+					type: "prompt",
+					message: "/tasks session add RPC task -- Extra context for the task",
+				})
+			).success,
 		).toBe(true);
+		const sessionEntries = (await rpc(child, { type: "get_entries" })).data as {
+			entries: Array<{
+				type: string;
+				customType?: string;
+				data?: { tasks?: Array<{ title: string; description?: string }> };
+			}>;
+		};
+		const snapshot = sessionEntries.entries.find(
+			(entry) => entry.type === "custom" && entry.customType === "worklist-session-snapshot",
+		);
+		expect(snapshot?.data?.tasks?.[0]).toMatchObject({
+			title: "RPC task",
+			description: "Extra context for the task",
+		});
 
 		expect((await rpc(child, { type: "prompt", message: "/tasks project add RPC goal" })).success).toBe(true);
-		const project = JSON.parse(await readFile(join(cwd, ".pi", "worklist.json"), "utf8")) as {
-			goals: Array<{ title: string }>;
-		};
+		const project = parseJson<{ goals: Array<{ title: string }> }>(
+			await readFile(join(cwd, ".pi", "worklist.json"), "utf8"),
+		);
 		expect(project.goals.some((goal) => goal.title === "RPC goal")).toBe(true);
 
 		expect((await rpc(child, { type: "new_session" })).success).toBe(true);
@@ -91,6 +112,8 @@ describe("real Pi load", () => {
 		expect(freshEntries.entries.some((entry) => entry.customType === "worklist-session-snapshot")).toBe(
 			false,
 		);
-		expect(JSON.parse(await readFile(join(cwd, ".pi", "worklist.json"), "utf8")).goals).toHaveLength(1);
+		expect(
+			parseJson<{ goals: unknown[] }>(await readFile(join(cwd, ".pi", "worklist.json"), "utf8")).goals,
+		).toHaveLength(1);
 	});
 });

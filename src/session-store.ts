@@ -37,10 +37,10 @@ export class SessionStore {
 		return next;
 	}
 
-	async addTask(title: string, goalId?: string): Promise<SessionTask> {
+	async addTask(title: string, description?: string, goalId?: string): Promise<SessionTask> {
 		return this.serialized(async () => {
 			const id = `st-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-			const task: SessionTask = { id, title, status: "todo", goalId };
+			const task: SessionTask = { id, title, description, status: "todo", goalId };
 			this.tasks = [...this.tasks, task];
 			this.persist();
 			return task;
@@ -49,7 +49,7 @@ export class SessionStore {
 
 	async updateTask(
 		id: string,
-		updates: Partial<Pick<SessionTask, "title" | "goalId">>,
+		updates: Partial<Pick<SessionTask, "title" | "description" | "goalId">>,
 	): Promise<SessionTask | null> {
 		return this.serialized(async () => {
 			const index = this.tasks.findIndex((t) => t.id === id);
