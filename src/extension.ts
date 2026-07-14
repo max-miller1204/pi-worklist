@@ -18,8 +18,18 @@ export interface ParsedCommand {
 	action: string;
 	id?: string;
 	title?: string;
+	description?: string;
 	status?: SessionTaskStatus | ProjectGoalStatus;
 	confirm?: boolean;
+}
+
+function parseTitleAndDescription(parts: string[]): Pick<ParsedCommand, "title" | "description"> {
+	const separator = parts.indexOf("--");
+	if (separator === -1) return { title: parts.join(" ") };
+	return {
+		title: parts.slice(0, separator).join(" "),
+		description: parts.slice(separator + 1).join(" "),
+	};
 }
 
 export function parseTasksCommand(args: string): ParsedCommand | null {
@@ -29,8 +39,18 @@ export function parseTasksCommand(args: string): ParsedCommand | null {
 	const action = parts.shift();
 	if (!action) return null;
 	if (action === "list") return { scope, action };
-	if (action === "add") return { scope, action, title: parts.join(" ") };
-	if (action === "update") return { scope, action, id: parts.shift(), title: parts.join(" ") };
+	if (action === "add") return { scope, action, ...parseTitleAndDescription(parts) };
+	if (action === "update") {
+		const id = parts.shift();
+		const details = parseTitleAndDescription(parts);
+		return {
+			scope,
+			action,
+			id,
+			...(details.title ? { title: details.title } : {}),
+			...(details.description !== undefined ? { description: details.description } : {}),
+		};
+	}
 	if (action === "status")
 		return { scope, action: "set_status", id: parts[0], status: parts[1] as ParsedCommand["status"] };
 	if (["complete", "reopen", "archive", "delete", "set_active"].includes(action)) {
@@ -83,10 +103,11 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 		name: "worklist",
 		label: "Worklist",
 		description:
-			"Manage branch-aware session tasks or repository-wide project goals. Project complete, reopen, archive, and delete require confirm=true after explicit user intent.",
+			"Manage branch-aware session tasks with optional descriptions or repository-wide project goals. Project complete, reopen, archive, and delete require confirm=true after explicit user intent.",
 		promptSnippet: "Manage Session Tasks and repository-scoped Project Goals",
 		promptGuidelines: [
 			"Use worklist to maintain Session Tasks for multi-step work and update them as verified work progresses.",
+			"Add a concise worklist description when a Session Task title does not capture important context or acceptance criteria.",
 			"Use worklist with scope=project only when the user asks to manage the project roadmap.",
 			"Never set worklist confirm=true for a project lifecycle action unless the user explicitly requested that exact completion, reopening, archival, or deletion.",
 		],
@@ -117,13 +138,40 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 				`Add ${action.scope === "session" ? "session task" : "project goal"}`,
 				"Title",
 			);
-			if (title?.trim()) await execute({ scope: action.scope, action: "add", title: title.trim() }, ctx);
+			if (!title?.trim()) return true;
+			const description = await ctx.ui.editor("Add description (optional)", "");
+			if (description === undefined) return true;
+			await execute(
+				{
+					scope: action.scope,
+					action: "add",
+					title: title.trim(),
+					description: description.trim() || undefined,
+				},
+				ctx,
+			);
 			return true;
 		}
 		if (action.kind === "edit") {
-			const title = await ctx.ui.input("Edit title", "New title");
-			if (title?.trim())
-				await execute({ scope: action.scope, action: "update", id: action.id, title: title.trim() }, ctx);
+			const item =
+				action.scope === "session"
+					? sessionStore.getTasks().find((candidate) => candidate.id === action.id)
+					: projectGoals.find((candidate) => candidate.id === action.id);
+			if (!item) return true;
+			const title = await ctx.ui.input("Edit title (leave blank to keep)", item.title);
+			if (title === undefined) return true;
+			const description = await ctx.ui.editor("Edit description", item.description ?? "");
+			if (description === undefined) return true;
+			await execute(
+				{
+					scope: action.scope,
+					action: "update",
+					id: action.id,
+					title: title.trim() || undefined,
+					description: description.trim(),
+				},
+				ctx,
+			);
 			return true;
 		}
 		if (action.kind === "delete") {
@@ -162,7 +210,10 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 			if (args.trim()) {
 				const parsed = parseTasksCommand(args);
 				if (!parsed || (parsed.action === "add" && !parsed.title)) {
-					ctx.ui.notify("Usage: /tasks <session|project> <action> [id/status/title]", "error");
+					ctx.ui.notify(
+						"Usage: /tasks <session|project> <action> [id/status/title] [-- description]",
+						"error",
+					);
 					return;
 				}
 				try {
@@ -182,6 +233,8 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 			}
 			let again = true;
 			while (again) {
+				// Each dashboard action depends on the previous interaction and must run sequentially.
+				// pi-lens-ignore: await-in-loop
 				await refreshProject();
 				const action = await ctx.ui.custom<DashboardAction>((tui, theme, _keys, done) => {
 					const dashboard = new Dashboard(sessionStore.getTasks(), projectGoals, theme, done);

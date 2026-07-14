@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { SessionStore, SESSION_SNAPSHOT_TYPE } from "../src/session-store.ts";
-import { executeWorklist } from "../src/tool.ts";
+import { executeWorklist, formatSessionTasks } from "../src/tool.ts";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -44,18 +44,33 @@ describe("session state and tool", () => {
 	it("supports session CRUD and persists snapshots", async () => {
 		const { api, entries } = fakePi();
 		const store = new SessionStore(api);
-		const added = await executeWorklist({ scope: "session", action: "add", title: "Test it" }, ctx, {
+		const added = await executeWorklist(
+			{
+				scope: "session",
+				action: "add",
+				title: "Test it",
+				description: "Cover the RPC and UI paths",
+			},
+			ctx,
+			{
+				sessionStore: store,
+				projectPath: null,
+			},
+		);
+		const id = added.details.tasks?.[0]?.id;
+		expect(id).toBeTruthy();
+		expect(formatSessionTasks(store.getTasks())).toContain("Test it - Cover the RPC and UI paths");
+		await executeWorklist({ scope: "session", action: "update", id, description: "Updated context" }, ctx, {
 			sessionStore: store,
 			projectPath: null,
 		});
-		const id = added.details.tasks?.[0]?.id;
-		expect(id).toBeTruthy();
+		expect(store.getTasks()[0]?.description).toBe("Updated context");
 		await executeWorklist({ scope: "session", action: "set_status", id, status: "done" }, ctx, {
 			sessionStore: store,
 			projectPath: null,
 		});
 		expect(store.getTasks()[0]?.status).toBe("done");
-		expect(entries).toHaveLength(2);
+		expect(entries).toHaveLength(3);
 	});
 
 	it("guards every destructive project lifecycle path", async () => {
