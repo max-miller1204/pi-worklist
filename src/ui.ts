@@ -1,10 +1,7 @@
 import type { ProjectGoal, SessionTask } from "./types.ts";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
-
-function compactDescription(description: string): string {
-	return description.replace(/\s+/g, " ").trim();
-}
+import { compactDescription } from "./format.ts";
 
 export function buildWidgetLines(tasks: SessionTask[], goals: ProjectGoal[]): string[] {
 	const active = goals.find((goal) => goal.status === "active");

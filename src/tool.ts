@@ -8,6 +8,7 @@ import type {
 	SessionTaskStatus,
 	WorklistToolDetails,
 } from "./types.ts";
+import { compactDescription } from "./format.ts";
 import { generateId, mutateProjectWorklist, readProjectWorklist, sortGoals } from "./project-store.ts";
 import type { SessionStore } from "./session-store.ts";
 import { getWorklistPath, resolveGitRoot } from "./git.ts";
@@ -29,7 +30,7 @@ export function formatSessionTasks(tasks: SessionTask[]): string {
 		.map((t) => {
 			const marker = t.status === "done" ? "[x]" : t.status === "doing" ? "[~]" : "[ ]";
 			const goal = t.goalId ? ` (goal:${t.goalId})` : "";
-			const description = t.description ? ` - ${t.description.replace(/\s+/g, " ").trim()}` : "";
+			const description = t.description ? ` - ${compactDescription(t.description)}` : "";
 			return `${marker} ${t.id}: ${t.title}${goal}${description}`;
 		})
 		.join("\n");
@@ -40,7 +41,7 @@ export function formatProjectGoals(goals: ProjectGoal[]): string {
 	return sortGoals(goals)
 		.map(
 			(g) =>
-				`[${g.status}] ${g.id}: ${g.title}${g.description ? ` - ${g.description.replace(/\s+/g, " ").trim()}` : ""}`,
+				`[${g.status}] ${g.id}: ${g.title}${g.description ? ` - ${compactDescription(g.description)}` : ""}`,
 		)
 		.join("\n");
 }

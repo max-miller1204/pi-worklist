@@ -140,13 +140,12 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 			);
 			if (!title?.trim()) return true;
 			const description = await ctx.ui.editor("Add description (optional)", "");
-			if (description === undefined) return true;
 			await execute(
 				{
 					scope: action.scope,
 					action: "add",
 					title: title.trim(),
-					description: description.trim() || undefined,
+					description: description?.trim() || undefined,
 				},
 				ctx,
 			);
@@ -162,13 +161,21 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 			if (title === undefined) return true;
 			const description = await ctx.ui.editor("Edit description", item.description ?? "");
 			if (description === undefined) return true;
+			const nextTitle = title.trim() || undefined;
+			const nextDescription = description.trim();
+			if (
+				(nextTitle === undefined || nextTitle === item.title) &&
+				nextDescription === (item.description ?? "")
+			) {
+				return true;
+			}
 			await execute(
 				{
 					scope: action.scope,
 					action: "update",
 					id: action.id,
-					title: title.trim() || undefined,
-					description: description.trim(),
+					title: nextTitle,
+					description: nextDescription,
 				},
 				ctx,
 			);
