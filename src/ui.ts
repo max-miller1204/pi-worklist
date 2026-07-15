@@ -28,8 +28,7 @@ export function buildPromptSummary(tasks: SessionTask[], goals: ProjectGoal[], m
 	if (pending.length) {
 		lines.push("Incomplete session tasks:");
 		for (const task of pending) {
-			const description = task.description ? ` - ${compactDescription(task.description)}` : "";
-			lines.push(`- [${task.status === "doing" ? "doing" : "todo"}] ${task.title}${description}`);
+			lines.push(`- [${task.status === "doing" ? "doing" : "todo"}] ${task.title}`);
 		}
 	}
 	const remaining = tasks.filter((task) => task.status !== "done").length - pending.length;
@@ -101,7 +100,7 @@ export class Dashboard {
 			lines.push(`${prefix} ${marker} ${item.title} ${th.fg("dim", item.id)}`);
 		});
 		const selected = items[this.selected];
-		if (selected?.description) {
+		if (this.scope === "project" && selected && "description" in selected && selected.description) {
 			lines.push("", th.fg("muted", `Description: ${compactDescription(selected.description)}`));
 		}
 		lines.push(

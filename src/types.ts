@@ -4,7 +4,6 @@ export type ProjectGoalStatus = "open" | "active" | "done" | "archived";
 export interface SessionTask {
 	id: string;
 	title: string;
-	description?: string;
 	status: SessionTaskStatus;
 	goalId?: string;
 }
@@ -37,5 +36,6 @@ export interface WorklistToolDetails {
 	requiresConfirm?: boolean;
 }
 
-export const SESSION_SNAPSHOT_VERSION = 1;
+export const SESSION_SNAPSHOT_VERSION = 2;
+export const READABLE_SESSION_SNAPSHOT_VERSIONS: readonly number[] = [1, 2];
 export const PROJECT_WORKLIST_VERSION = 1;

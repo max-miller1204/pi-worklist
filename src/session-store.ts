@@ -1,8 +1,20 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { SessionSnapshot, SessionTask, SessionTaskStatus } from "./types.ts";
-import { SESSION_SNAPSHOT_VERSION } from "./types.ts";
+import { READABLE_SESSION_SNAPSHOT_VERSIONS, SESSION_SNAPSHOT_VERSION } from "./types.ts";
 
 export const SESSION_SNAPSHOT_TYPE = "worklist-session-snapshot";
+
+const SESSION_TASK_STATUSES: readonly SessionTaskStatus[] = ["todo", "doing", "done"];
+
+function isValidSessionTask(value: unknown): value is SessionTask {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+	const task = value as Record<string, unknown>;
+	if (typeof task.id !== "string") return false;
+	if (typeof task.title !== "string") return false;
+	if (!SESSION_TASK_STATUSES.includes(task.status as SessionTaskStatus)) return false;
+	if (task.goalId !== undefined && typeof task.goalId !== "string") return false;
+	return true;
+}
 
 export class SessionStore {
 	private tasks: SessionTask[] = [];
@@ -25,8 +37,13 @@ export class SessionStore {
 			if (entry.type !== "custom") continue;
 			if (entry.customType !== SESSION_SNAPSHOT_TYPE) continue;
 			const data = entry.data as SessionSnapshot | undefined;
-			if (data && data.version === SESSION_SNAPSHOT_VERSION && Array.isArray(data.tasks)) {
-				this.tasks = data.tasks.slice();
+			if (data && READABLE_SESSION_SNAPSHOT_VERSIONS.includes(data.version) && Array.isArray(data.tasks)) {
+				this.tasks = data.tasks.filter(isValidSessionTask).map(({ id, title, status, goalId }) => ({
+					id,
+					title,
+					status,
+					...(goalId !== undefined ? { goalId } : {}),
+				}));
 			}
 		}
 	}
@@ -37,10 +54,10 @@ export class SessionStore {
 		return next;
 	}
 
-	async addTask(title: string, description?: string, goalId?: string): Promise<SessionTask> {
+	async addTask(title: string, goalId?: string): Promise<SessionTask> {
 		return this.serialized(async () => {
 			const id = `st-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-			const task: SessionTask = { id, title, description, status: "todo", goalId };
+			const task: SessionTask = { id, title, status: "todo", goalId };
 			this.tasks = [...this.tasks, task];
 			this.persist();
 			return task;
@@ -49,7 +66,7 @@ export class SessionStore {
 
 	async updateTask(
 		id: string,
-		updates: Partial<Pick<SessionTask, "title" | "description" | "goalId">>,
+		updates: Partial<Pick<SessionTask, "title" | "goalId">>,
 	): Promise<SessionTask | null> {
 		return this.serialized(async () => {
 			const index = this.tasks.findIndex((t) => t.id === id);

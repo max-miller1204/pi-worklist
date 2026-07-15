@@ -84,26 +84,41 @@ describe("real Pi load", () => {
 				})
 			).success,
 		).toBe(true);
+		const rejectedEntries = (await rpc(child, { type: "get_entries" })).data as {
+			entries: Array<{ customType?: string }>;
+		};
+		expect(rejectedEntries.entries.some((entry) => entry.customType === "worklist-session-snapshot")).toBe(
+			false,
+		);
+
+		expect((await rpc(child, { type: "prompt", message: "/tasks session add RPC task" })).success).toBe(true);
 		const sessionEntries = (await rpc(child, { type: "get_entries" })).data as {
 			entries: Array<{
 				type: string;
 				customType?: string;
-				data?: { tasks?: Array<{ title: string; description?: string }> };
+				data?: { tasks?: Array<Record<string, unknown>> };
 			}>;
 		};
 		const snapshot = sessionEntries.entries.find(
 			(entry) => entry.type === "custom" && entry.customType === "worklist-session-snapshot",
 		);
-		expect(snapshot?.data?.tasks?.[0]).toMatchObject({
-			title: "RPC task",
-			description: "Extra context for the task",
-		});
+		expect(snapshot?.data?.tasks?.[0]).toMatchObject({ title: "RPC task", status: "todo" });
+		expect(snapshot?.data?.tasks?.[0]).not.toHaveProperty("description");
 
-		expect((await rpc(child, { type: "prompt", message: "/tasks project add RPC goal" })).success).toBe(true);
-		const project = parseJson<{ goals: Array<{ title: string }> }>(
+		expect(
+			(
+				await rpc(child, {
+					type: "prompt",
+					message: "/tasks project add RPC goal -- Repository-wide outcome",
+				})
+			).success,
+		).toBe(true);
+		const project = parseJson<{ goals: Array<{ title: string; description?: string }> }>(
 			await readFile(join(cwd, ".pi", "worklist.json"), "utf8"),
 		);
-		expect(project.goals.some((goal) => goal.title === "RPC goal")).toBe(true);
+		expect(project.goals).toContainEqual(
+			expect.objectContaining({ title: "RPC goal", description: "Repository-wide outcome" }),
+		);
 
 		expect((await rpc(child, { type: "new_session" })).success).toBe(true);
 		const freshEntries = (await rpc(child, { type: "get_entries" })).data as {
