@@ -120,6 +120,14 @@
 			"status": "open",
 			"createdAt": "2026-07-13T00:00:14.000Z",
 			"updatedAt": "2026-07-13T00:00:14.000Z"
+		},
+		{
+			"id": "goal-mrm6is1p-79dfb408",
+			"title": "Enforce Biome import ordering repository-wide",
+			"description": "Switch the check script to biome check and run biome check --write once so organizeImports is enforced consistently.",
+			"status": "open",
+			"createdAt": "2026-07-15T14:32:22.909Z",
+			"updatedAt": "2026-07-15T14:32:22.909Z"
 		}
 	]
 }
