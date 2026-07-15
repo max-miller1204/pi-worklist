@@ -46,7 +46,9 @@ export const WorklistParamsSchema = Type.Object({
 	),
 	title: Type.Optional(Type.String({ description: "Title for add/update." })),
 	description: Type.Optional(
-		Type.String({ description: "Description for session task or project goal add/update." }),
+		Type.String({
+			description: "Description for project goal add/update. Session tasks do not support descriptions.",
+		}),
 	),
 	status: Type.Optional(StatusSchema),
 	goalId: Type.Optional(

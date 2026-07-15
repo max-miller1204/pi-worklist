@@ -33,38 +33,45 @@ describe("session state and tool", () => {
 					{
 						type: "custom",
 						customType: SESSION_SNAPSHOT_TYPE,
-						data: { version: 1, tasks: [{ id: "b", title: "new", status: "doing" }] },
+						data: {
+							version: 1,
+							tasks: [{ id: "b", title: "new", description: "Legacy context", status: "doing" }],
+						},
 					},
 				],
 			},
 		} as unknown as ExtensionContext);
-		expect(store.getTasks().map((task) => task.id)).toEqual(["b"]);
+		expect(store.getTasks()).toEqual([{ id: "b", title: "new", status: "doing" }]);
 	});
 
 	it("supports session CRUD and persists snapshots", async () => {
 		const { api, entries } = fakePi();
 		const store = new SessionStore(api);
-		const added = await executeWorklist(
-			{
-				scope: "session",
-				action: "add",
-				title: "Test it",
-				description: "Cover the RPC and UI paths",
-			},
-			ctx,
-			{
-				sessionStore: store,
-				projectPath: null,
-			},
-		);
-		const id = added.details.tasks?.[0]?.id;
-		expect(id).toBeTruthy();
-		expect(formatSessionTasks(store.getTasks())).toContain("Test it - Cover the RPC and UI paths");
-		await executeWorklist({ scope: "session", action: "update", id, description: "Updated context" }, ctx, {
+		await expect(
+			executeWorklist(
+				{
+					scope: "session",
+					action: "add",
+					title: "Test it",
+					description: "Cover the RPC and UI paths",
+				},
+				ctx,
+				{ sessionStore: store, projectPath: null },
+			),
+		).rejects.toThrow("only supported for project goals");
+		expect(entries).toHaveLength(0);
+		const added = await executeWorklist({ scope: "session", action: "add", title: "Test it" }, ctx, {
 			sessionStore: store,
 			projectPath: null,
 		});
-		expect(store.getTasks()[0]?.description).toBe("Updated context");
+		const id = added.details.tasks?.[0]?.id;
+		expect(id).toBeTruthy();
+		expect(formatSessionTasks(store.getTasks())).toContain("Test it");
+		await executeWorklist({ scope: "session", action: "update", id, title: "Test it well" }, ctx, {
+			sessionStore: store,
+			projectPath: null,
+		});
+		expect(store.getTasks()[0]?.title).toBe("Test it well");
 		await executeWorklist({ scope: "session", action: "set_status", id, status: "done" }, ctx, {
 			sessionStore: store,
 			projectPath: null,

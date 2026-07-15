@@ -30,8 +30,7 @@ export function formatSessionTasks(tasks: SessionTask[]): string {
 		.map((t) => {
 			const marker = t.status === "done" ? "[x]" : t.status === "doing" ? "[~]" : "[ ]";
 			const goal = t.goalId ? ` (goal:${t.goalId})` : "";
-			const description = t.description ? ` - ${compactDescription(t.description)}` : "";
-			return `${marker} ${t.id}: ${t.title}${goal}${description}`;
+			return `${marker} ${t.id}: ${t.title}${goal}`;
 		})
 		.join("\n");
 }
@@ -134,6 +133,9 @@ export async function executeWorklist(
 	const { sessionStore, projectPath } = deps;
 
 	if (params.scope === "session") {
+		if (params.description !== undefined) {
+			throw new Error("description is only supported for project goals");
+		}
 		switch (params.action) {
 			case "list": {
 				const tasks = sessionStore.getTasks();
@@ -144,7 +146,7 @@ export async function executeWorklist(
 			}
 			case "add": {
 				if (!params.title) throw new Error("title is required for session add");
-				const task = await sessionStore.addTask(params.title, params.description, params.goalId);
+				const task = await sessionStore.addTask(params.title, params.goalId);
 				const tasks = sessionStore.getTasks();
 				return {
 					content: `Added session task ${task.id}: ${task.title}`,
@@ -153,9 +155,8 @@ export async function executeWorklist(
 			}
 			case "update": {
 				if (!params.id) throw new Error("id is required for session update");
-				const updates: Partial<Pick<SessionTask, "title" | "description" | "goalId">> = {};
+				const updates: Partial<Pick<SessionTask, "title" | "goalId">> = {};
 				if (params.title !== undefined) updates.title = params.title;
-				if (params.description !== undefined) updates.description = params.description;
 				if (params.goalId !== undefined) updates.goalId = params.goalId;
 				const task = await sessionStore.updateTask(params.id, updates);
 				if (!task) throw new Error(`Session task ${params.id} not found`);

@@ -11,7 +11,7 @@ Project Goals track the larger outcomes shared by every Pi session in a Git repo
 ## Features
 
 - Branch-aware Session Tasks survive `/resume` and follow `/tree`, `/fork`, and `/clone`.
-- Optional Session Task descriptions preserve implementation context and acceptance criteria.
+- Session Tasks stay intentionally small and title-only, so they represent executable chunks rather than broad outcomes.
 - A new Pi session starts with an empty Session Task list.
 - Project Goals persist at `<git-root>/.pi/worklist.json` and can be committed with the repository.
 - `/tasks` opens an interactive two-section dashboard.
@@ -45,23 +45,26 @@ pi -e ./src/extension.ts
 ## Usage
 
 Run `/tasks` with no arguments to open the dashboard.
-Use Tab to switch lists, arrow keys to navigate, `a` to add, `e` to edit titles and descriptions, Space or Enter to advance status, `d` to delete, and Escape to close.
+Use Tab to switch lists, arrow keys to navigate, `a` to add, `e` to edit, Space or Enter to advance status, `d` to delete, and Escape to close.
+Session Task edits change the title, while Project Goal edits can also change the description.
 
 Direct commands are useful in RPC mode and scripts:
 
 ```text
 /tasks session list
-/tasks session add Write regression tests
-/tasks session add Write regression tests -- Cover RPC and TUI paths
-/tasks session update <id> -- Replace the task description
+/tasks session add Write RPC regression tests
+/tasks session add Verify the dashboard behavior
+/tasks session update <id> Replace the task title
 /tasks session status <id> doing
 /tasks project list
-/tasks project add Replace legacy authentication
+/tasks project add Replace legacy authentication -- Migrate every supported client
+/tasks project update <id> -- Replace the goal description
 /tasks project set_active <id>
 /tasks project complete <id>
 ```
 
-Text after `--` is stored as the optional description for `add` and `update` commands.
+Text after `--` is stored as the optional Project Goal description for `add` and `update` commands.
+Session Tasks do not support descriptions.
 Typing a Project Goal lifecycle command is explicit user intent.
 The model-facing tool instead requires `confirm=true`, and its prompt rules prohibit setting that flag without an explicit request.
 
@@ -79,7 +82,8 @@ Project Goal operations are unavailable outside a Git repository, while Session 
 ## Model tool
 
 The `worklist` tool accepts `scope=session|project` and actions including `list`, `add`, `update`, `set_status`, `set_active`, `complete`, `reopen`, `archive`, and `delete`.
-Session Tasks accept optional descriptions on `add` and `update`.
+Session Tasks use concise, self-contained titles without descriptions.
+Agents are instructed to split non-trivial work into several concrete, independently completable Session Tasks instead of copying the broad end goal into one task.
 Session Task statuses are `todo`, `doing`, and `done`.
 Project Goal statuses are `open`, `active`, `done`, and `archived`.
 Only activation is a non-destructive direct Project Goal status change.

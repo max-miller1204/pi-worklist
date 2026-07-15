@@ -25,8 +25,13 @@ export class SessionStore {
 			if (entry.type !== "custom") continue;
 			if (entry.customType !== SESSION_SNAPSHOT_TYPE) continue;
 			const data = entry.data as SessionSnapshot | undefined;
-			if (data && data.version === SESSION_SNAPSHOT_VERSION && Array.isArray(data.tasks)) {
-				this.tasks = data.tasks.slice();
+			if (data && [1, SESSION_SNAPSHOT_VERSION].includes(data.version) && Array.isArray(data.tasks)) {
+				this.tasks = data.tasks.map(({ id, title, status, goalId }) => ({
+					id,
+					title,
+					status,
+					...(goalId !== undefined ? { goalId } : {}),
+				}));
 			}
 		}
 	}
@@ -37,10 +42,10 @@ export class SessionStore {
 		return next;
 	}
 
-	async addTask(title: string, description?: string, goalId?: string): Promise<SessionTask> {
+	async addTask(title: string, goalId?: string): Promise<SessionTask> {
 		return this.serialized(async () => {
 			const id = `st-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-			const task: SessionTask = { id, title, description, status: "todo", goalId };
+			const task: SessionTask = { id, title, status: "todo", goalId };
 			this.tasks = [...this.tasks, task];
 			this.persist();
 			return task;
@@ -49,7 +54,7 @@ export class SessionStore {
 
 	async updateTask(
 		id: string,
-		updates: Partial<Pick<SessionTask, "title" | "description" | "goalId">>,
+		updates: Partial<Pick<SessionTask, "title" | "goalId">>,
 	): Promise<SessionTask | null> {
 		return this.serialized(async () => {
 			const index = this.tasks.findIndex((t) => t.id === id);

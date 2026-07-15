@@ -23,7 +23,15 @@ export interface ParsedCommand {
 	confirm?: boolean;
 }
 
-function parseTitleAndDescription(parts: string[]): Pick<ParsedCommand, "title" | "description"> {
+export const WORKLIST_PROMPT_GUIDELINES = [
+	"For non-trivial multi-step work, use worklist to create several small, concrete, independently completable Session Tasks before implementation, then update them as verified work progresses.",
+	"Do not create one Session Task that merely restates the user's broad request or end goal. Broad outcomes belong in Project Goals; Session Tasks should name the next executable chunks.",
+	"Keep Session Task titles concise and self-contained. Session Tasks do not have descriptions.",
+	"Use worklist with scope=project only when the user asks to manage the project roadmap.",
+	"Never set worklist confirm=true for a project lifecycle action unless the user explicitly requested that exact completion, reopening, archival, or deletion.",
+] as const;
+
+function parseProjectDetails(parts: string[]): Pick<ParsedCommand, "title" | "description"> {
 	const separator = parts.indexOf("--");
 	if (separator === -1) return { title: parts.join(" ") };
 	return {
@@ -39,10 +47,20 @@ export function parseTasksCommand(args: string): ParsedCommand | null {
 	const action = parts.shift();
 	if (!action) return null;
 	if (action === "list") return { scope, action };
-	if (action === "add") return { scope, action, ...parseTitleAndDescription(parts) };
+	if (action === "add") {
+		if (scope === "session") {
+			if (parts.includes("--")) return null;
+			return { scope, action, title: parts.join(" ") };
+		}
+		return { scope, action, ...parseProjectDetails(parts) };
+	}
 	if (action === "update") {
 		const id = parts.shift();
-		const details = parseTitleAndDescription(parts);
+		if (scope === "session") {
+			if (parts.includes("--")) return null;
+			return { scope, action, id, ...(parts.length ? { title: parts.join(" ") } : {}) };
+		}
+		const details = parseProjectDetails(parts);
 		return {
 			scope,
 			action,
@@ -103,14 +121,9 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 		name: "worklist",
 		label: "Worklist",
 		description:
-			"Manage branch-aware session tasks with optional descriptions or repository-wide project goals. Project complete, reopen, archive, and delete require confirm=true after explicit user intent.",
-		promptSnippet: "Manage Session Tasks and repository-scoped Project Goals",
-		promptGuidelines: [
-			"Use worklist to maintain Session Tasks for multi-step work and update them as verified work progresses.",
-			"Add a concise worklist description when a Session Task title does not capture important context or acceptance criteria.",
-			"Use worklist with scope=project only when the user asks to manage the project roadmap.",
-			"Never set worklist confirm=true for a project lifecycle action unless the user explicitly requested that exact completion, reopening, archival, or deletion.",
-		],
+			"Manage branch-aware, actionable Session Tasks or repository-wide Project Goals. Session Tasks are small work chunks without descriptions. Project complete, reopen, archive, and delete require confirm=true after explicit user intent.",
+		promptSnippet: "Manage small Session Task chunks and repository-scoped Project Goals",
+		promptGuidelines: [...WORKLIST_PROMPT_GUIDELINES],
 		parameters: WorklistParamsSchema,
 		executionMode: WORKLIST_EXECUTION_MODE,
 		async execute(_id, params, _signal, _onUpdate, ctx) {
@@ -139,13 +152,18 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 				"Title",
 			);
 			if (!title?.trim()) return true;
+			if (action.scope === "session") {
+				await execute({ scope: "session", action: "add", title: title.trim() }, ctx);
+				return true;
+			}
 			const description = await ctx.ui.editor("Add description (optional)", "");
+			if (description === undefined) return true;
 			await execute(
 				{
-					scope: action.scope,
+					scope: "project",
 					action: "add",
 					title: title.trim(),
-					description: description?.trim() || undefined,
+					description: description.trim() || undefined,
 				},
 				ctx,
 			);
@@ -159,19 +177,26 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 			if (!item) return true;
 			const title = await ctx.ui.input("Edit title (leave blank to keep)", item.title);
 			if (title === undefined) return true;
-			const description = await ctx.ui.editor("Edit description", item.description ?? "");
-			if (description === undefined) return true;
 			const nextTitle = title.trim() || undefined;
+			if (action.scope === "session") {
+				if (nextTitle === undefined || nextTitle === item.title) return true;
+				await execute({ scope: "session", action: "update", id: action.id, title: nextTitle }, ctx);
+				return true;
+			}
+			const goal = projectGoals.find((candidate) => candidate.id === action.id);
+			if (!goal) return true;
+			const description = await ctx.ui.editor("Edit description", goal.description ?? "");
+			if (description === undefined) return true;
 			const nextDescription = description.trim();
 			if (
-				(nextTitle === undefined || nextTitle === item.title) &&
-				nextDescription === (item.description ?? "")
+				(nextTitle === undefined || nextTitle === goal.title) &&
+				nextDescription === (goal.description ?? "")
 			) {
 				return true;
 			}
 			await execute(
 				{
-					scope: action.scope,
+					scope: "project",
 					action: "update",
 					id: action.id,
 					title: nextTitle,
@@ -218,7 +243,7 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 				const parsed = parseTasksCommand(args);
 				if (!parsed || (parsed.action === "add" && !parsed.title)) {
 					ctx.ui.notify(
-						"Usage: /tasks <session|project> <action> [id/status/title] [-- description]",
+						"Usage: /tasks <session|project> <action> [id/status/title] [-- project description]",
 						"error",
 					);
 					return;
