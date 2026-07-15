@@ -71,7 +71,8 @@ The model-facing tool instead requires `confirm=true`, and its prompt rules proh
 ## Storage semantics
 
 Session Tasks are stored as versioned Pi custom entries in the current session tree.
-They do not enter model context directly.
+Snapshots written by earlier releases are still loaded, and any legacy Session Task descriptions are dropped during migration.
+Session Tasks do not enter model context directly.
 Only the active goal and an intentionally bounded list of incomplete tasks are added to the current turn's system prompt.
 
 Project Goals use a schema-versioned JSON file at `.pi/worklist.json` in the canonical Git root.
