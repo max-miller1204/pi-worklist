@@ -26,12 +26,14 @@ export class SessionStore {
 			if (entry.customType !== SESSION_SNAPSHOT_TYPE) continue;
 			const data = entry.data as SessionSnapshot | undefined;
 			if (data && [1, SESSION_SNAPSHOT_VERSION].includes(data.version) && Array.isArray(data.tasks)) {
-				this.tasks = data.tasks.map(({ id, title, status, goalId }) => ({
-					id,
-					title,
-					status,
-					...(goalId !== undefined ? { goalId } : {}),
-				}));
+				this.tasks = data.tasks
+					.filter((task) => task && typeof task === "object")
+					.map(({ id, title, status, goalId }) => ({
+						id,
+						title,
+						status,
+						...(goalId !== undefined ? { goalId } : {}),
+					}));
 			}
 		}
 	}

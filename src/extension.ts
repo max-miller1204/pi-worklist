@@ -157,34 +157,33 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 				return true;
 			}
 			const description = await ctx.ui.editor("Add description (optional)", "");
-			if (description === undefined) return true;
 			await execute(
 				{
 					scope: "project",
 					action: "add",
 					title: title.trim(),
-					description: description.trim() || undefined,
+					description: description?.trim() || undefined,
 				},
 				ctx,
 			);
 			return true;
 		}
 		if (action.kind === "edit") {
-			const item =
-				action.scope === "session"
-					? sessionStore.getTasks().find((candidate) => candidate.id === action.id)
-					: projectGoals.find((candidate) => candidate.id === action.id);
-			if (!item) return true;
-			const title = await ctx.ui.input("Edit title (leave blank to keep)", item.title);
-			if (title === undefined) return true;
-			const nextTitle = title.trim() || undefined;
 			if (action.scope === "session") {
-				if (nextTitle === undefined || nextTitle === item.title) return true;
+				const task = sessionStore.getTasks().find((candidate) => candidate.id === action.id);
+				if (!task) return true;
+				const title = await ctx.ui.input("Edit title (leave blank to keep)", task.title);
+				if (title === undefined) return true;
+				const nextTitle = title.trim() || undefined;
+				if (nextTitle === undefined || nextTitle === task.title) return true;
 				await execute({ scope: "session", action: "update", id: action.id, title: nextTitle }, ctx);
 				return true;
 			}
 			const goal = projectGoals.find((candidate) => candidate.id === action.id);
 			if (!goal) return true;
+			const title = await ctx.ui.input("Edit title (leave blank to keep)", goal.title);
+			if (title === undefined) return true;
+			const nextTitle = title.trim() || undefined;
 			const description = await ctx.ui.editor("Edit description", goal.description ?? "");
 			if (description === undefined) return true;
 			const nextDescription = description.trim();
