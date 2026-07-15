@@ -37,4 +37,5 @@ export interface WorklistToolDetails {
 }
 
 export const SESSION_SNAPSHOT_VERSION = 2;
+export const READABLE_SESSION_SNAPSHOT_VERSIONS: readonly number[] = [1, 2];
 export const PROJECT_WORKLIST_VERSION = 1;

@@ -44,6 +44,61 @@ describe("session state and tool", () => {
 		expect(store.getTasks()).toEqual([{ id: "b", title: "new", status: "doing" }]);
 	});
 
+	it("skips malformed tasks while keeping valid ones during reconstruction", () => {
+		const { api } = fakePi();
+		const store = new SessionStore(api);
+		store.reconstruct({
+			sessionManager: {
+				getBranch: () => [
+					{
+						type: "custom",
+						customType: SESSION_SNAPSHOT_TYPE,
+						data: {
+							version: 2,
+							tasks: [
+								null,
+								["id", "title", "status"],
+								{ title: "missing id", status: "todo" },
+								{ id: 42, title: "numeric id", status: "todo" },
+								{ id: "bad-title", title: null, status: "todo" },
+								{ id: "bad-status", title: "Bad status", status: "paused" },
+								{ id: "bad-goal", title: "Bad goal", status: "todo", goalId: 7 },
+								{ id: "ok", title: "Valid", status: "doing" },
+								{ id: "ok-goal", title: "Valid with goal", status: "done", goalId: "g-1" },
+							],
+						},
+					},
+				],
+			},
+		} as unknown as ExtensionContext);
+		expect(store.getTasks()).toEqual([
+			{ id: "ok", title: "Valid", status: "doing" },
+			{ id: "ok-goal", title: "Valid with goal", status: "done", goalId: "g-1" },
+		]);
+	});
+
+	it("ignores snapshots with unsupported versions", () => {
+		const { api } = fakePi();
+		const store = new SessionStore(api);
+		store.reconstruct({
+			sessionManager: {
+				getBranch: () => [
+					{
+						type: "custom",
+						customType: SESSION_SNAPSHOT_TYPE,
+						data: { version: 2, tasks: [{ id: "a", title: "Supported", status: "todo" }] },
+					},
+					{
+						type: "custom",
+						customType: SESSION_SNAPSHOT_TYPE,
+						data: { version: 3, tasks: [{ id: "b", title: "Future", status: "todo" }] },
+					},
+				],
+			},
+		} as unknown as ExtensionContext);
+		expect(store.getTasks()).toEqual([{ id: "a", title: "Supported", status: "todo" }]);
+	});
+
 	it("supports session CRUD and persists snapshots", async () => {
 		const { api, entries } = fakePi();
 		const store = new SessionStore(api);

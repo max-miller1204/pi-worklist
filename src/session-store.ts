@@ -1,8 +1,20 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { SessionSnapshot, SessionTask, SessionTaskStatus } from "./types.ts";
-import { SESSION_SNAPSHOT_VERSION } from "./types.ts";
+import { READABLE_SESSION_SNAPSHOT_VERSIONS, SESSION_SNAPSHOT_VERSION } from "./types.ts";
 
 export const SESSION_SNAPSHOT_TYPE = "worklist-session-snapshot";
+
+const SESSION_TASK_STATUSES: readonly SessionTaskStatus[] = ["todo", "doing", "done"];
+
+function isValidSessionTask(value: unknown): value is SessionTask {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+	const task = value as Record<string, unknown>;
+	if (typeof task.id !== "string") return false;
+	if (typeof task.title !== "string") return false;
+	if (!SESSION_TASK_STATUSES.includes(task.status as SessionTaskStatus)) return false;
+	if (task.goalId !== undefined && typeof task.goalId !== "string") return false;
+	return true;
+}
 
 export class SessionStore {
 	private tasks: SessionTask[] = [];
@@ -25,9 +37,9 @@ export class SessionStore {
 			if (entry.type !== "custom") continue;
 			if (entry.customType !== SESSION_SNAPSHOT_TYPE) continue;
 			const data = entry.data as SessionSnapshot | undefined;
-			if (data && [1, SESSION_SNAPSHOT_VERSION].includes(data.version) && Array.isArray(data.tasks)) {
+			if (data && READABLE_SESSION_SNAPSHOT_VERSIONS.includes(data.version) && Array.isArray(data.tasks)) {
 				this.tasks = data.tasks
-					.filter((task) => task && typeof task === "object")
+					.filter(isValidSessionTask)
 					.map(({ id, title, status, goalId }) => ({
 						id,
 						title,
