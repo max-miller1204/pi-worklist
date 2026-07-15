@@ -38,14 +38,12 @@ export class SessionStore {
 			if (entry.customType !== SESSION_SNAPSHOT_TYPE) continue;
 			const data = entry.data as SessionSnapshot | undefined;
 			if (data && READABLE_SESSION_SNAPSHOT_VERSIONS.includes(data.version) && Array.isArray(data.tasks)) {
-				this.tasks = data.tasks
-					.filter(isValidSessionTask)
-					.map(({ id, title, status, goalId }) => ({
-						id,
-						title,
-						status,
-						...(goalId !== undefined ? { goalId } : {}),
-					}));
+				this.tasks = data.tasks.filter(isValidSessionTask).map(({ id, title, status, goalId }) => ({
+					id,
+					title,
+					status,
+					...(goalId !== undefined ? { goalId } : {}),
+				}));
 			}
 		}
 	}
