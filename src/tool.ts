@@ -139,9 +139,6 @@ function normalizePlacement(params: {
 	if (params.scope === "project" && (params.action === "move" || placement)) {
 		throw new Error("Project Goal reordering is not supported");
 	}
-	if (params.scope === "session" && params.action === "move" && !placement) {
-		throw new Error("session move requires exactly one of beforeId or afterId");
-	}
 	if (params.scope === "session" && placement && params.action !== "add" && params.action !== "move") {
 		throw new Error("beforeId and afterId are only supported for session add and move");
 	}

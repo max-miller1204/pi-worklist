@@ -158,9 +158,33 @@ describe("command parser", () => {
 		});
 	});
 
+	it("accepts a trailing anchor flag", () => {
+		expect(parseTasksCommand("session add write regression tests --before task-1")).toEqual({
+			scope: "session",
+			action: "add",
+			beforeId: "task-1",
+			title: "write regression tests",
+		});
+		expect(parseTasksCommand("session add verify the fix --after task-1")).toEqual({
+			scope: "session",
+			action: "add",
+			afterId: "task-1",
+			title: "verify the fix",
+		});
+		expect(parseTasksCommand("project add another goal --after goal-1")).toEqual({
+			scope: "project",
+			action: "add",
+			afterId: "goal-1",
+			title: "another goal",
+		});
+	});
+
 	it("rejects malformed or unsupported placement syntax", () => {
 		expect(parseTasksCommand("session add --before task-1 --after task-2 title")).toBeNull();
+		expect(parseTasksCommand("session add title --before task-1 --after task-2")).toBeNull();
 		expect(parseTasksCommand("session add --before")).toBeNull();
+		expect(parseTasksCommand("session add write tests --before")).toBeNull();
+		expect(parseTasksCommand("session add write --before task-1 more tests")).toBeNull();
 		expect(parseTasksCommand("session move task-1")).toBeNull();
 		expect(parseTasksCommand("session move task-1 --before task-2 extra")).toBeNull();
 		expect(parseTasksCommand("session list --before task-1")).toBeNull();

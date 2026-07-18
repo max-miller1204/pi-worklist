@@ -59,6 +59,7 @@ Direct commands are useful in RPC mode and scripts:
 /tasks session add Write RPC regression tests
 /tasks session add --before <anchor-id> Reproduce the failure first
 /tasks session add --after <anchor-id> Verify the dashboard behavior
+/tasks session add Verify the dashboard behavior --after <anchor-id>
 /tasks session move <task-id> --before <anchor-id>
 /tasks session move <task-id> --after <anchor-id>
 /tasks session update <id> Replace the task title
@@ -74,6 +75,7 @@ Text after `--` is stored as the optional Project Goal description for `add` and
 Session Tasks do not support descriptions.
 Session Task `add` accepts either `--before <anchor-id>` or `--after <anchor-id>` and appends when neither is supplied.
 Session Task `move` requires exactly one of those stable-ID anchors.
+An anchor flag and its ID may lead the arguments or trail them, but only one anchor flag is accepted per command.
 Project Goals do not accept placement or movement.
 Typing a Project Goal lifecycle command is explicit user intent.
 The model-facing tool instead requires `confirm=true`, and its prompt rules prohibit setting that flag without an explicit request.

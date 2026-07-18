@@ -43,18 +43,18 @@ export const WORKLIST_PROMPT_GUIDELINES = [
 function parsePlacement(
 	parts: string[],
 ): { parts: string[]; placement?: Pick<ParsedCommand, "beforeId" | "afterId"> } | null {
-	const flag = parts[0];
-	if (flag !== "--before" && flag !== "--after") {
-		if (parts.some((part) => part === "--before" || part === "--after")) return null;
-		return { parts };
-	}
-	const anchorId = parts[1];
-	if (!anchorId || anchorId === "--" || anchorId === "--before" || anchorId === "--after") return null;
-	const remaining = parts.slice(2);
-	if (remaining.some((part) => part === "--before" || part === "--after")) return null;
+	const flagIndices = parts.flatMap((part, index) =>
+		part === "--before" || part === "--after" ? [index] : [],
+	);
+	if (flagIndices.length === 0) return { parts };
+	if (flagIndices.length > 1) return null;
+	const flagIndex = flagIndices[0];
+	if (flagIndex !== 0 && flagIndex !== parts.length - 2) return null;
+	const anchorId = parts[flagIndex + 1];
+	if (!anchorId || anchorId === "--") return null;
 	return {
-		parts: remaining,
-		placement: flag === "--before" ? { beforeId: anchorId } : { afterId: anchorId },
+		parts: [...parts.slice(0, flagIndex), ...parts.slice(flagIndex + 2)],
+		placement: parts[flagIndex] === "--before" ? { beforeId: anchorId } : { afterId: anchorId },
 	};
 }
 
@@ -304,7 +304,8 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 				const parsed = parseTasksCommand(args);
 				if (!parsed || (parsed.action === "add" && !parsed.title)) {
 					ctx.ui.notify(
-						"Usage: /tasks <session|project> <action> [id/status/title] [-- project description]",
+						"Usage: /tasks <session|project> <action> [id/status/title] [-- project description]\n" +
+							"Session ordering: /tasks session add [--before|--after <anchor-id>] <title> (the anchor may also trail the title), /tasks session move <id> --before|--after <anchor-id>",
 						"error",
 					);
 					return;
@@ -329,7 +330,11 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 			while (again) {
 				// Each dashboard action depends on the previous interaction and must run sequentially.
 				// pi-lens-ignore: await-in-loop
-				await refreshProject();
+				try {
+					await refreshProject();
+				} catch (error) {
+					ctx.ui.notify(String(error), "error");
+				}
 				const result = await ctx.ui.custom<DashboardResult>((tui, theme, _keys, done) => {
 					const dashboard = new Dashboard(sessionStore.getTasks(), projectGoals, theme, done, dashboardState);
 					return {
@@ -342,7 +347,16 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 					};
 				});
 				dashboardState = result?.state;
-				again = result ? await handleDashboardAction(result.action, ctx) : false;
+				if (!result) {
+					again = false;
+					continue;
+				}
+				try {
+					again = await handleDashboardAction(result.action, ctx);
+				} catch (error) {
+					ctx.ui.notify(String(error), "error");
+					again = true;
+				}
 			}
 		},
 	});
