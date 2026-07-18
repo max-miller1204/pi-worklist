@@ -135,6 +135,172 @@ describe("session state and tool", () => {
 		expect(entries).toHaveLength(3);
 	});
 
+	it("inserts and moves tasks by stable anchor ID", async () => {
+		const { api, entries } = fakePi();
+		const store = new SessionStore(api);
+		const associated = { id: "b", title: "Completed", status: "done" as const, goalId: "goal-1" };
+		store.setTasks([
+			{ id: "a", title: "First", status: "todo" },
+			associated,
+			{ id: "c", title: "Current", status: "doing" },
+		]);
+
+		await executeWorklist({ scope: "session", action: "add", title: "Before", beforeId: "a" }, ctx, {
+			sessionStore: store,
+			projectPath: null,
+		});
+		await executeWorklist({ scope: "session", action: "add", title: "After", afterId: "b" }, ctx, {
+			sessionStore: store,
+			projectPath: null,
+		});
+		await executeWorklist({ scope: "session", action: "add", title: "Appended" }, ctx, {
+			sessionStore: store,
+			projectPath: null,
+		});
+		expect(store.getTasks().map((task) => task.title)).toEqual([
+			"Before",
+			"First",
+			"Completed",
+			"After",
+			"Current",
+			"Appended",
+		]);
+
+		await executeWorklist({ scope: "session", action: "move", id: "b", beforeId: "a" }, ctx, {
+			sessionStore: store,
+			projectPath: null,
+		});
+		await executeWorklist({ scope: "session", action: "move", id: "b", afterId: "c" }, ctx, {
+			sessionStore: store,
+			projectPath: null,
+		});
+		expect(store.getTasks().map((task) => task.title)).toEqual([
+			"Before",
+			"First",
+			"After",
+			"Current",
+			"Completed",
+			"Appended",
+		]);
+		expect(store.getTasks().find((task) => task.id === "b")).toEqual(associated);
+		expect(entries).toHaveLength(5);
+	});
+
+	it("does not persist self-placement or already-satisfied moves", async () => {
+		const { api, entries } = fakePi();
+		const store = new SessionStore(api);
+		store.setTasks([
+			{ id: "a", title: "First", status: "todo" },
+			{ id: "b", title: "Second", status: "doing" },
+			{ id: "c", title: "Third", status: "done" },
+		]);
+
+		for (const params of [
+			{ scope: "session" as const, action: "move", id: "a", beforeId: "a" },
+			{ scope: "session" as const, action: "move", id: "a", beforeId: "b" },
+			{ scope: "session" as const, action: "move", id: "b", afterId: "a" },
+		]) {
+			await expect(
+				executeWorklist(params, ctx, { sessionStore: store, projectPath: null }),
+			).resolves.toMatchObject({ details: { action: "move" } });
+		}
+		expect(entries).toHaveLength(0);
+
+		await executeWorklist({ scope: "session", action: "move", id: "c", beforeId: "a" }, ctx, {
+			sessionStore: store,
+			projectPath: null,
+		});
+		expect(store.getTasks().map((task) => task.id)).toEqual(["c", "a", "b"]);
+		expect(entries).toHaveLength(1);
+	});
+
+	it("rejects invalid placement without poisoning serialized mutations", async () => {
+		const { api, entries } = fakePi();
+		const store = new SessionStore(api);
+		store.setTasks([
+			{ id: "a", title: "First", status: "todo" },
+			{ id: "b", title: "Second", status: "todo" },
+		]);
+
+		const invalidCalls = [
+			{
+				params: { scope: "session" as const, action: "add", title: "Both", beforeId: "a", afterId: "b" },
+				error: "exactly one",
+			},
+			{
+				params: { scope: "session" as const, action: "add", title: "Blank", beforeId: "  " },
+				error: "must not be blank",
+			},
+			{ params: { scope: "session" as const, action: "move", id: "a" }, error: "requires exactly one" },
+			{ params: { scope: "session" as const, action: "list", beforeId: "a" }, error: "only supported" },
+			{
+				params: { scope: "project" as const, action: "add", title: "Goal", afterId: "a" },
+				error: "Project Goal reordering",
+			},
+			{
+				params: { scope: "project" as const, action: "move", id: "a", beforeId: "b" },
+				error: "Project Goal reordering",
+			},
+		];
+		for (const { params, error } of invalidCalls) {
+			await expect(executeWorklist(params, ctx, { sessionStore: store, projectPath: null })).rejects.toThrow(
+				error,
+			);
+		}
+		expect(entries).toHaveLength(0);
+
+		await expect(
+			executeWorklist({ scope: "session", action: "add", title: "Unknown", beforeId: "missing" }, ctx, {
+				sessionStore: store,
+				projectPath: null,
+			}),
+		).rejects.toThrow("anchor missing not found");
+		await expect(
+			executeWorklist({ scope: "session", action: "move", id: "missing", beforeId: "a" }, ctx, {
+				sessionStore: store,
+				projectPath: null,
+			}),
+		).rejects.toThrow("Session task missing not found");
+		await expect(
+			executeWorklist({ scope: "session", action: "move", id: "a", afterId: "missing" }, ctx, {
+				sessionStore: store,
+				projectPath: null,
+			}),
+		).rejects.toThrow("anchor missing not found");
+
+		const deleting = store.deleteTask("b");
+		const staleAdd = store.addTask("Stale anchor", undefined, { afterId: "b" });
+		await expect(deleting).resolves.toBe(true);
+		await expect(staleAdd).rejects.toThrow("anchor b not found");
+		await expect(store.addTask("Queue recovered")).resolves.toMatchObject({ title: "Queue recovered" });
+		expect(store.getTasks().map((task) => task.title)).toEqual(["First", "Queue recovered"]);
+		expect(entries).toHaveLength(2);
+	});
+
+	it("resolves move sources and anchors in serialized mutation order", async () => {
+		const { api, entries } = fakePi();
+		const store = new SessionStore(api);
+		store.setTasks([
+			{ id: "a", title: "First", status: "todo" },
+			{ id: "b", title: "Anchor", status: "done" },
+			{ id: "c", title: "Moving", status: "doing" },
+		]);
+
+		const deleteAnchor = store.deleteTask("b");
+		const staleMove = store.moveTask("c", { afterId: "b" });
+		await expect(deleteAnchor).resolves.toBe(true);
+		await expect(staleMove).rejects.toThrow("anchor b not found");
+		await expect(store.moveTask("c", { beforeId: "a" })).resolves.toMatchObject({ id: "c" });
+		expect(store.getTasks().map((task) => task.id)).toEqual(["c", "a"]);
+		expect(entries).toHaveLength(2);
+
+		const deleteSource = store.deleteTask("c");
+		const missingSourceMove = store.moveTask("c", { afterId: "a" });
+		await expect(deleteSource).resolves.toBe(true);
+		await expect(missingSourceMove).resolves.toBeNull();
+		expect(entries).toHaveLength(3);
+	});
+
 	it("guards every destructive project lifecycle path", async () => {
 		const path = join(await mkdtemp(join(tmpdir(), "pi-worklist-tool-")), ".pi", "worklist.json");
 		const { api } = fakePi();

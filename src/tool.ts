@@ -5,6 +5,7 @@ import type {
 	ProjectGoalStatus,
 	ProjectWorklist,
 	SessionTask,
+	SessionTaskPlacement,
 	SessionTaskStatus,
 	WorklistToolDetails,
 } from "./types.ts";
@@ -116,6 +117,37 @@ async function deleteProjectGoal(
 	};
 }
 
+function readPlacement(params: { beforeId?: string; afterId?: string }): SessionTaskPlacement | undefined {
+	if (params.beforeId !== undefined) return { beforeId: params.beforeId.trim() };
+	if (params.afterId !== undefined) return { afterId: params.afterId.trim() };
+	return undefined;
+}
+
+function normalizePlacement(params: {
+	scope: "session" | "project";
+	action: string;
+	beforeId?: string;
+	afterId?: string;
+}): SessionTaskPlacement | undefined {
+	if (params.beforeId !== undefined && params.afterId !== undefined) {
+		throw new Error("beforeId and afterId are mutually exclusive; provide exactly one placement anchor");
+	}
+	const anchor = params.beforeId ?? params.afterId;
+	if (anchor !== undefined && !anchor.trim()) throw new Error("Placement anchor must not be blank");
+	const placement = readPlacement(params);
+
+	if (params.scope === "project" && (params.action === "move" || placement)) {
+		throw new Error("Project Goal reordering is not supported");
+	}
+	if (params.scope === "session" && params.action === "move" && !placement) {
+		throw new Error("session move requires exactly one of beforeId or afterId");
+	}
+	if (params.scope === "session" && placement && params.action !== "add" && params.action !== "move") {
+		throw new Error("beforeId and afterId are only supported for session add and move");
+	}
+	return placement;
+}
+
 export async function executeWorklist(
 	params: {
 		scope: "session" | "project";
@@ -125,12 +157,15 @@ export async function executeWorklist(
 		description?: string;
 		status?: SessionTaskStatus | ProjectGoalStatus;
 		goalId?: string;
+		beforeId?: string;
+		afterId?: string;
 		confirm?: boolean;
 	},
 	_ctx: ExtensionContext,
 	deps: ToolDeps,
 ): Promise<{ content: string; details: WorklistToolDetails }> {
 	const { sessionStore, projectPath } = deps;
+	const placement = normalizePlacement(params);
 
 	if (params.scope === "session") {
 		if (params.description !== undefined) {
@@ -146,11 +181,22 @@ export async function executeWorklist(
 			}
 			case "add": {
 				if (!params.title) throw new Error("title is required for session add");
-				const task = await sessionStore.addTask(params.title, params.goalId);
+				const task = await sessionStore.addTask(params.title, params.goalId, placement);
 				const tasks = sessionStore.getTasks();
 				return {
 					content: `Added session task ${task.id}: ${task.title}`,
 					details: { scope: "session", action: "add", tasks },
+				};
+			}
+			case "move": {
+				if (!params.id) throw new Error("id is required for session move");
+				if (!placement) throw new Error("session move requires exactly one of beforeId or afterId");
+				const task = await sessionStore.moveTask(params.id, placement);
+				if (!task) throw new Error(`Session task ${params.id} not found`);
+				const tasks = sessionStore.getTasks();
+				return {
+					content: `Moved session task ${task.id}`,
+					details: { scope: "session", action: "move", tasks },
 				};
 			}
 			case "update": {

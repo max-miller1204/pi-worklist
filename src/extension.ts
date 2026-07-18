@@ -11,7 +11,14 @@ import {
 	WORKLIST_EXECUTION_MODE,
 } from "./tool.ts";
 import type { ProjectGoal, ProjectGoalStatus, SessionTaskStatus } from "./types.ts";
-import { buildPromptSummary, buildWidgetLines, Dashboard, type DashboardAction } from "./ui.ts";
+import {
+	buildPromptSummary,
+	buildWidgetLines,
+	Dashboard,
+	type DashboardAction,
+	type DashboardResult,
+	type DashboardState,
+} from "./ui.ts";
 
 export interface ParsedCommand {
 	scope: "session" | "project";
@@ -20,6 +27,8 @@ export interface ParsedCommand {
 	title?: string;
 	description?: string;
 	status?: SessionTaskStatus | ProjectGoalStatus;
+	beforeId?: string;
+	afterId?: string;
 	confirm?: boolean;
 }
 
@@ -30,6 +39,24 @@ export const WORKLIST_PROMPT_GUIDELINES = [
 	"Use worklist with scope=project only when the user asks to manage the project roadmap.",
 	"Never set worklist confirm=true for a project lifecycle action unless the user explicitly requested that exact completion, reopening, archival, or deletion.",
 ] as const;
+
+function parsePlacement(
+	parts: string[],
+): { parts: string[]; placement?: Pick<ParsedCommand, "beforeId" | "afterId"> } | null {
+	const flag = parts[0];
+	if (flag !== "--before" && flag !== "--after") {
+		if (parts.some((part) => part === "--before" || part === "--after")) return null;
+		return { parts };
+	}
+	const anchorId = parts[1];
+	if (!anchorId || anchorId === "--" || anchorId === "--before" || anchorId === "--after") return null;
+	const remaining = parts.slice(2);
+	if (remaining.some((part) => part === "--before" || part === "--after")) return null;
+	return {
+		parts: remaining,
+		placement: flag === "--before" ? { beforeId: anchorId } : { afterId: anchorId },
+	};
+}
 
 function parseProjectDetails(parts: string[]): Pick<ParsedCommand, "title" | "description"> {
 	const separator = parts.indexOf("--");
@@ -46,13 +73,25 @@ export function parseTasksCommand(args: string): ParsedCommand | null {
 	const scope = parts.shift() as "session" | "project";
 	const action = parts.shift();
 	if (!action) return null;
+	const hasPlacementFlag = parts.some((part) => part === "--before" || part === "--after");
+	if (action !== "add" && action !== "move" && hasPlacementFlag) return null;
 	if (action === "list") return { scope, action };
 	if (action === "add") {
+		const parsed = parsePlacement(parts);
+		if (!parsed) return null;
 		if (scope === "session") {
-			if (parts.includes("--")) return null;
-			return { scope, action, title: parts.join(" ") };
+			if (parsed.parts.includes("--")) return null;
+			if (parsed.parts.length === 0) return null;
+			return { scope, action, ...parsed.placement, title: parsed.parts.join(" ") };
 		}
-		return { scope, action, ...parseProjectDetails(parts) };
+		return { scope, action, ...parsed.placement, ...parseProjectDetails(parsed.parts) };
+	}
+	if (action === "move") {
+		const id = parts.shift();
+		if (!id) return null;
+		const parsed = parsePlacement(parts);
+		if (!parsed?.placement || parsed.parts.length > 0) return null;
+		return { scope, action, id, ...parsed.placement };
 	}
 	if (action === "update") {
 		const id = parts.shift();
@@ -121,7 +160,7 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 		name: "worklist",
 		label: "Worklist",
 		description:
-			"Manage branch-aware, actionable Session Tasks or repository-wide Project Goals. Session Tasks are small work chunks without descriptions. Project complete, reopen, archive, and delete require confirm=true after explicit user intent.",
+			"Manage branch-aware, ordered Session Tasks or repository-wide Project Goals. Session add accepts optional beforeId or afterId; session move requires exactly one. Project Goals cannot be reordered. Project complete, reopen, archive, and delete require confirm=true after explicit user intent.",
 		promptSnippet: "Manage small Session Task chunks and repository-scoped Project Goals",
 		promptGuidelines: [...WORKLIST_PROMPT_GUIDELINES],
 		parameters: WorklistParamsSchema,
@@ -146,14 +185,24 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 
 	async function handleDashboardAction(action: DashboardAction, ctx: ExtensionContext): Promise<boolean> {
 		if (action.kind === "close") return false;
-		if (action.kind === "add") {
+		if (action.kind === "add" || action.kind === "insert") {
 			const title = await ctx.ui.input(
-				`Add ${action.scope === "session" ? "session task" : "project goal"}`,
+				action.kind === "insert"
+					? "Insert session task"
+					: `Add ${action.scope === "session" ? "session task" : "project goal"}`,
 				"Title",
 			);
 			if (!title?.trim()) return true;
 			if (action.scope === "session") {
-				await execute({ scope: "session", action: "add", title: title.trim() }, ctx);
+				await execute(
+					{
+						scope: "session",
+						action: "add",
+						title: title.trim(),
+						...(action.kind === "insert" ? { beforeId: action.beforeId } : {}),
+					},
+					ctx,
+				);
 				return true;
 			}
 			const description = await ctx.ui.editor("Add description (optional)", "");
@@ -163,6 +212,19 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 					action: "add",
 					title: title.trim(),
 					description: description?.trim() || undefined,
+				},
+				ctx,
+			);
+			return true;
+		}
+		if (action.kind === "move") {
+			await execute(
+				{
+					scope: "session",
+					action: "move",
+					id: action.id,
+					...(action.beforeId !== undefined ? { beforeId: action.beforeId } : {}),
+					...(action.afterId !== undefined ? { afterId: action.afterId } : {}),
 				},
 				ctx,
 			);
@@ -236,7 +298,7 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 
 	pi.registerCommand("tasks", {
 		description:
-			"Open Worklist, or use: /tasks <session|project> <list|add|update|status|complete|reopen|archive|delete|set_active> ...",
+			"Open Worklist, or use: /tasks <session|project> <list|add|move|update|status|complete|reopen|archive|delete|set_active> ...",
 		handler: async (args, ctx) => {
 			if (args.trim()) {
 				const parsed = parseTasksCommand(args);
@@ -263,12 +325,13 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 				return;
 			}
 			let again = true;
+			let dashboardState: DashboardState | undefined;
 			while (again) {
 				// Each dashboard action depends on the previous interaction and must run sequentially.
 				// pi-lens-ignore: await-in-loop
 				await refreshProject();
-				const action = await ctx.ui.custom<DashboardAction>((tui, theme, _keys, done) => {
-					const dashboard = new Dashboard(sessionStore.getTasks(), projectGoals, theme, done);
+				const result = await ctx.ui.custom<DashboardResult>((tui, theme, _keys, done) => {
+					const dashboard = new Dashboard(sessionStore.getTasks(), projectGoals, theme, done, dashboardState);
 					return {
 						render: (width) => dashboard.render(width),
 						invalidate: () => dashboard.invalidate(),
@@ -278,7 +341,8 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 						},
 					};
 				});
-				again = action ? await handleDashboardAction(action, ctx) : false;
+				dashboardState = result?.state;
+				again = result ? await handleDashboardAction(result.action, ctx) : false;
 			}
 		},
 	});
