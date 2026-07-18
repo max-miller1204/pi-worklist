@@ -47,9 +47,10 @@ pi -e ./src/extension.ts
 
 Run `/tasks` with no arguments to open the dashboard.
 Use Tab to switch lists and arrow keys to navigate.
-In Session Tasks, `a` appends, `i` inserts before the selected task, and Shift+Up or Shift+Down moves the selected task while keeping it selected.
+In Session Tasks, `a` appends, `i` inserts before the selected task, and Shift+Up or Shift+Down moves the selected task.
 Project Goals support `a` to add but do not support insertion or reordering.
 In either scope, use `e` to edit, Space or Enter to advance status, `d` to delete, and Escape to close.
+The dashboard keeps the current list and the selected task across each action, so a moved task stays selected at its new position.
 Session Task edits change the title, while Project Goal edits can also change the description.
 
 Direct commands are useful in RPC mode and scripts:

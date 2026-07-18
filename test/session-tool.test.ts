@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { SessionStore, SESSION_SNAPSHOT_TYPE } from "../src/session-store.ts";
 import { executeWorklist, formatSessionTasks } from "../src/tool.ts";
+import worklistExtension from "../src/extension.ts";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -335,5 +336,35 @@ describe("session state and tool", () => {
 				projectPath: path,
 			}),
 		).rejects.toThrow("must be reopened");
+	});
+});
+
+describe("registered model tool", () => {
+	function registerExtension() {
+		let tool: Record<string, unknown> | undefined;
+		const api = {
+			appendEntry: () => {},
+			registerTool: (config: Record<string, unknown>) => {
+				tool = config;
+			},
+			registerCommand: () => {},
+			on: () => {},
+		} as unknown as ExtensionAPI;
+		worklistExtension(api);
+		if (!tool) throw new Error("worklist tool was not registered");
+		return tool;
+	}
+
+	it("keeps model tool execution sequential so ordering mutations stay serialized", () => {
+		expect(registerExtension().executionMode).toBe("sequential");
+	});
+
+	it("exposes the session ordering surface to the model", () => {
+		const parameters = registerExtension().parameters as {
+			properties: Record<string, { enum?: string[]; description?: string }>;
+		};
+		expect(parameters.properties.action.enum).toContain("move");
+		expect(parameters.properties.beforeId).toBeDefined();
+		expect(parameters.properties.afterId).toBeDefined();
 	});
 });
