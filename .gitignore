@@ -3,3 +3,4 @@ node_modules/
 coverage/
 .pi-subagents/
 .DS_Store
+artifacts/
