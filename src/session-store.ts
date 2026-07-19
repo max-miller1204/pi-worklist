@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { SessionSnapshot, SessionTask, SessionTaskStatus } from "./types.ts";
+import type { SessionSnapshot, SessionTask, SessionTaskPlacement, SessionTaskStatus } from "./types.ts";
 import { READABLE_SESSION_SNAPSHOT_VERSIONS, SESSION_SNAPSHOT_VERSION } from "./types.ts";
 
 export const SESSION_SNAPSHOT_TYPE = "worklist-session-snapshot";
@@ -54,11 +54,43 @@ export class SessionStore {
 		return next;
 	}
 
-	async addTask(title: string, goalId?: string): Promise<SessionTask> {
+	async addTask(title: string, goalId?: string, placement?: SessionTaskPlacement): Promise<SessionTask> {
 		return this.serialized(async () => {
+			let insertionIndex = this.tasks.length;
+			if (placement) {
+				const anchorId = placement.beforeId ?? placement.afterId;
+				const anchorIndex = this.tasks.findIndex((task) => task.id === anchorId);
+				if (anchorIndex === -1) throw new Error(`Session task anchor ${anchorId} not found`);
+				insertionIndex = placement.beforeId !== undefined ? anchorIndex : anchorIndex + 1;
+			}
 			const id = `st-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-			const task: SessionTask = { id, title, status: "todo", goalId };
-			this.tasks = [...this.tasks, task];
+			const task: SessionTask = {
+				id,
+				title,
+				status: "todo",
+				...(goalId !== undefined ? { goalId } : {}),
+			};
+			this.tasks = [...this.tasks.slice(0, insertionIndex), task, ...this.tasks.slice(insertionIndex)];
+			this.persist();
+			return task;
+		});
+	}
+
+	async moveTask(id: string, placement: SessionTaskPlacement): Promise<SessionTask | null> {
+		return this.serialized(async () => {
+			const sourceIndex = this.tasks.findIndex((task) => task.id === id);
+			if (sourceIndex === -1) return null;
+			const task = this.tasks[sourceIndex];
+			const anchorId = placement.beforeId ?? placement.afterId;
+			if (anchorId === id) return task;
+
+			const remaining = [...this.tasks.slice(0, sourceIndex), ...this.tasks.slice(sourceIndex + 1)];
+			const anchorIndex = remaining.findIndex((candidate) => candidate.id === anchorId);
+			if (anchorIndex === -1) throw new Error(`Session task anchor ${anchorId} not found`);
+			const insertionIndex = placement.beforeId !== undefined ? anchorIndex : anchorIndex + 1;
+			const next = [...remaining.slice(0, insertionIndex), task, ...remaining.slice(insertionIndex)];
+			if (next.every((candidate, index) => candidate.id === this.tasks[index]?.id)) return task;
+			this.tasks = next;
 			this.persist();
 			return task;
 		});

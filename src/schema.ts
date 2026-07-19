@@ -6,12 +6,32 @@ const ScopeSchema: TUnsafe<"session" | "project"> = StringEnum(["session", "proj
 });
 
 const ActionSchema: TUnsafe<
-	"list" | "add" | "update" | "set_status" | "delete" | "complete" | "reopen" | "archive" | "set_active"
+	| "list"
+	| "add"
+	| "move"
+	| "update"
+	| "set_status"
+	| "delete"
+	| "complete"
+	| "reopen"
+	| "archive"
+	| "set_active"
 > = StringEnum(
-	["list", "add", "update", "set_status", "delete", "complete", "reopen", "archive", "set_active"] as const,
+	[
+		"list",
+		"add",
+		"move",
+		"update",
+		"set_status",
+		"delete",
+		"complete",
+		"reopen",
+		"archive",
+		"set_active",
+	] as const,
 	{
 		description:
-			"Action to perform. 'complete', 'reopen', 'archive', and 'delete' on project goals require confirm=true.",
+			"Action to perform. 'move' is Session Task only. 'complete', 'reopen', 'archive', and 'delete' on project goals require confirm=true.",
 	},
 );
 
@@ -54,6 +74,16 @@ export const WorklistParamsSchema = Type.Object({
 	goalId: Type.Optional(
 		Type.String({
 			description: "Associate a session task with a project goal ID.",
+		}),
+	),
+	beforeId: Type.Optional(
+		Type.String({
+			description: "Insert or move a Session Task immediately before this stable task ID.",
+		}),
+	),
+	afterId: Type.Optional(
+		Type.String({
+			description: "Insert or move a Session Task immediately after this stable task ID.",
 		}),
 	),
 	confirm: Type.Optional(

@@ -20,8 +20,11 @@ function parseJson<T>(value: string): T {
 function rpc(child: ChildProcessWithoutNullStreams, request: object): Promise<Record<string, unknown>> {
 	return new Promise((resolveResponse, reject) => {
 		let buffer = "";
-		const timer = setTimeout(() => reject(new Error("RPC response timed out")), 20_000);
-		child.stdout.on("data", (chunk: Buffer) => {
+		const cleanup = () => {
+			clearTimeout(timer);
+			child.stdout.off("data", onData);
+		};
+		const onData = (chunk: Buffer) => {
 			buffer += chunk.toString("utf8");
 			for (;;) {
 				const newline = buffer.indexOf("\n");
@@ -31,15 +34,22 @@ function rpc(child: ChildProcessWithoutNullStreams, request: object): Promise<Re
 				if (!line.trim()) continue;
 				const value = parseJson<Record<string, unknown>>(line);
 				if (value.type === "extension_error") {
-					clearTimeout(timer);
+					cleanup();
 					reject(new Error(JSON.stringify(value)));
+					return;
 				}
 				if (value.type === "response" && value.id === "test") {
-					clearTimeout(timer);
+					cleanup();
 					resolveResponse(value);
+					return;
 				}
 			}
-		});
+		};
+		const timer = setTimeout(() => {
+			cleanup();
+			reject(new Error("RPC response timed out"));
+		}, 20_000);
+		child.stdout.on("data", onData);
 		child.stdin.write(`${JSON.stringify({ id: "test", ...request })}\n`);
 	});
 }
@@ -92,18 +102,85 @@ describe("real Pi load", () => {
 		);
 
 		expect((await rpc(child, { type: "prompt", message: "/tasks session add RPC task" })).success).toBe(true);
-		const sessionEntries = (await rpc(child, { type: "get_entries" })).data as {
+		const initialSessionEntries = (await rpc(child, { type: "get_entries" })).data as {
 			entries: Array<{
 				type: string;
 				customType?: string;
-				data?: { tasks?: Array<Record<string, unknown>> };
+				data?: { version?: number; tasks?: Array<{ id?: string; title?: string; status?: string }> };
 			}>;
 		};
-		const snapshot = sessionEntries.entries.find(
+		const initialSnapshot = initialSessionEntries.entries
+			.filter((entry) => entry.type === "custom" && entry.customType === "worklist-session-snapshot")
+			.at(-1);
+		const baseId = initialSnapshot?.data?.tasks?.[0]?.id;
+		expect(baseId).toBeTruthy();
+		expect(initialSnapshot?.data?.tasks?.[0]).toMatchObject({ title: "RPC task", status: "todo" });
+		expect(initialSnapshot?.data?.tasks?.[0]).not.toHaveProperty("description");
+
+		expect(
+			(
+				await rpc(child, {
+					type: "prompt",
+					message: `/tasks session add --before ${baseId} RPC first step`,
+				})
+			).success,
+		).toBe(true);
+		expect(
+			(
+				await rpc(child, {
+					type: "prompt",
+					message: `/tasks session add --after ${baseId} RPC follow-up`,
+				})
+			).success,
+		).toBe(true);
+		const insertedEntries = (await rpc(child, { type: "get_entries" })).data as typeof initialSessionEntries;
+		const insertedSnapshot = insertedEntries.entries
+			.filter((entry) => entry.type === "custom" && entry.customType === "worklist-session-snapshot")
+			.at(-1);
+		expect(insertedSnapshot?.data?.tasks?.map((task) => task.title)).toEqual([
+			"RPC first step",
+			"RPC task",
+			"RPC follow-up",
+		]);
+		const firstId = insertedSnapshot?.data?.tasks?.[0]?.id;
+		const followUpId = insertedSnapshot?.data?.tasks?.[2]?.id;
+		expect(firstId).toBeTruthy();
+		expect(followUpId).toBeTruthy();
+
+		expect(
+			(
+				await rpc(child, {
+					type: "prompt",
+					message: `/tasks session move ${followUpId} --before ${firstId}`,
+				})
+			).success,
+		).toBe(true);
+		const movedEntries = (await rpc(child, { type: "get_entries" })).data as typeof initialSessionEntries;
+		const movedSnapshots = movedEntries.entries.filter(
 			(entry) => entry.type === "custom" && entry.customType === "worklist-session-snapshot",
 		);
-		expect(snapshot?.data?.tasks?.[0]).toMatchObject({ title: "RPC task", status: "todo" });
-		expect(snapshot?.data?.tasks?.[0]).not.toHaveProperty("description");
+		expect(movedSnapshots.at(-1)?.data).toMatchObject({ version: 2 });
+		expect(movedSnapshots.at(-1)?.data?.tasks?.map((task) => task.title)).toEqual([
+			"RPC follow-up",
+			"RPC first step",
+			"RPC task",
+		]);
+		expect(movedSnapshots).toHaveLength(4);
+
+		expect(
+			(
+				await rpc(child, {
+					type: "prompt",
+					message: `/tasks session move ${followUpId} --before ${followUpId}`,
+				})
+			).success,
+		).toBe(true);
+		const noOpEntries = (await rpc(child, { type: "get_entries" })).data as typeof initialSessionEntries;
+		expect(
+			noOpEntries.entries.filter(
+				(entry) => entry.type === "custom" && entry.customType === "worklist-session-snapshot",
+			),
+		).toHaveLength(4);
 
 		expect(
 			(

@@ -12,6 +12,7 @@ Project Goals track the larger outcomes shared by every Pi session in a Git repo
 
 - Branch-aware Session Tasks survive `/resume` and follow `/tree`, `/fork`, and `/clone`.
 - Session Tasks stay intentionally small and title-only, so they represent executable chunks rather than broad outcomes.
+- Session Task array order is a canonical queue that supports stable-ID insertion and movement.
 - A new Pi session starts with an empty Session Task list.
 - Project Goals persist at `<git-root>/.pi/worklist.json` and can be committed with the repository.
 - `/tasks` opens an interactive two-section dashboard.
@@ -45,7 +46,11 @@ pi -e ./src/extension.ts
 ## Usage
 
 Run `/tasks` with no arguments to open the dashboard.
-Use Tab to switch lists, arrow keys to navigate, `a` to add, `e` to edit, Space or Enter to advance status, `d` to delete, and Escape to close.
+Use Tab to switch lists and arrow keys to navigate.
+In Session Tasks, `a` appends, `i` inserts before the selected task, and Shift+Up or Shift+Down moves the selected task.
+Project Goals support `a` to add but do not support insertion or reordering.
+In either scope, use `e` to edit, Space or Enter to advance status, `d` to delete, and Escape to close.
+The dashboard keeps the current list and the selected task across each action, so a moved task stays selected at its new position.
 Session Task edits change the title, while Project Goal edits can also change the description.
 
 Direct commands are useful in RPC mode and scripts:
@@ -53,7 +58,11 @@ Direct commands are useful in RPC mode and scripts:
 ```text
 /tasks session list
 /tasks session add Write RPC regression tests
-/tasks session add Verify the dashboard behavior
+/tasks session add --before <anchor-id> Reproduce the failure first
+/tasks session add --after <anchor-id> Verify the dashboard behavior
+/tasks session add Verify the dashboard behavior --after <anchor-id>
+/tasks session move <task-id> --before <anchor-id>
+/tasks session move <task-id> --after <anchor-id>
 /tasks session update <id> Replace the task title
 /tasks session status <id> doing
 /tasks project list
@@ -65,6 +74,10 @@ Direct commands are useful in RPC mode and scripts:
 
 Text after `--` is stored as the optional Project Goal description for `add` and `update` commands.
 Session Tasks do not support descriptions.
+Session Task `add` accepts either `--before <anchor-id>` or `--after <anchor-id>` and appends when neither is supplied.
+Session Task `move` requires exactly one of those stable-ID anchors.
+An anchor flag and its ID may lead the arguments or trail them, but only one anchor flag is accepted per command.
+Project Goals do not accept placement or movement.
 Typing a Project Goal lifecycle command is explicit user intent.
 The model-facing tool instead requires `confirm=true`, and its prompt rules prohibit setting that flag without an explicit request.
 
@@ -72,8 +85,10 @@ The model-facing tool instead requires `confirm=true`, and its prompt rules proh
 
 Session Tasks are stored as versioned Pi custom entries in the current session tree.
 Snapshots written by earlier releases are still loaded, and any legacy Session Task descriptions are dropped during migration.
+The snapshot version remains 2 because canonical queue order is already represented by the stored task array.
+Completed tasks remain in that canonical order.
 Session Tasks do not enter model context directly.
-Only the active goal and an intentionally bounded list of incomplete tasks are added to the current turn's system prompt.
+Only the active goal and an intentionally bounded list of incomplete tasks are added to the current turn's system prompt, preserving their relative queue order.
 
 Project Goals use a schema-versioned JSON file at `.pi/worklist.json` in the canonical Git root.
 The file is human-readable and suitable for version control.
@@ -82,7 +97,10 @@ Project Goal operations are unavailable outside a Git repository, while Session 
 
 ## Model tool
 
-The `worklist` tool accepts `scope=session|project` and actions including `list`, `add`, `update`, `set_status`, `set_active`, `complete`, `reopen`, `archive`, and `delete`.
+The `worklist` tool accepts `scope=session|project` and actions including `list`, `add`, `move`, `update`, `set_status`, `set_active`, `complete`, `reopen`, `archive`, and `delete`.
+For Session Tasks, `add` optionally accepts exactly one of `beforeId` or `afterId`, while `move` requires exactly one.
+Moves preserve the task ID, title, status, and Project Goal association.
+Self-placement and already-satisfied placement succeed without writing another session snapshot.
 Session Tasks use concise, self-contained titles without descriptions.
 Agents are instructed to split non-trivial work into several concrete, independently completable Session Tasks instead of copying the broad end goal into one task.
 Session Task statuses are `todo`, `doing`, and `done`.

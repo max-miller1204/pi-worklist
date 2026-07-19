@@ -8,6 +8,10 @@ export interface SessionTask {
 	goalId?: string;
 }
 
+export type SessionTaskPlacement =
+	| { beforeId: string; afterId?: never }
+	| { beforeId?: never; afterId: string };
+
 export interface ProjectGoal {
 	id: string;
 	title: string;
