@@ -22,6 +22,7 @@ Project Goals track the larger outcomes shared by every Pi session in a Git repo
 - The `worklist` model tool manages both scopes through one consistent API.
 - A Pi-free external CLI lets scripts and other agents manage Project Goals without a running Pi session.
 - Project Goal completion, reopening, archival, and deletion require explicit user intent.
+- Managed Session Task operations accept only existing open or active Project Goal associations and detect edits to the selected goal before reconciliation.
 - Cross-process locking and atomic replacement prevent concurrent Pi processes from losing updates or corrupting the project file.
 - A versioned inter-extension contract defines bounded, capability-negotiated integration over Pi's shared event bus.
 
@@ -89,8 +90,9 @@ The model-facing tool instead requires `confirm=true`, and its prompt rules proh
 
 Session Tasks are stored as versioned Pi custom entries in the current session tree.
 Each snapshot carries an opaque concurrency token that follows the active `/tree`, `/fork`, `/clone`, or resumed branch.
-Snapshot version 3 can retain a validated version 1 managed projection on a task.
+Snapshot version 3 can retain a validated version 1 managed projection on a task with a non-empty Project Goal association.
 The projection contains the producer and external workflow-step identity, approved plan revision, orchestration run ID, timestamps, lightweight read-only execution state, and bounded result or session-contribution references.
+Managed metadata without a Project Goal ID is detached during snapshot migration rather than being persisted as an orchestrator-managed task.
 Attempts, retries, logs, dependencies, artifacts, evidence, and recovery remain canonical in pi-orchestrator and are omitted during projection normalization.
 Snapshots written by earlier releases are still loaded, derive their token from the Pi custom entry ID when necessary, retain existing task IDs, and drop legacy descriptions during in-memory migration.
 The next Session Task mutation writes the migrated state as snapshot version 3.
@@ -108,6 +110,10 @@ A semantic no-op preserves the Project Worklist file bytes, Project Goal timesta
 The file is human-readable and suitable for version control.
 A malformed or unsupported file is reported and never overwritten automatically.
 Project Goal operations are unavailable outside a Git repository, while Session Tasks continue to work normally.
+Orchestration goal selection returns the stable goal ID, its monotonic `updatedAt` token, and the containing Project Worklist revision.
+Done or archived goals must be explicitly reopened before orchestration.
+Archival and confirmed deletion preserve existing Session Task projections for inspection without silently changing the Session Task branch, so closed or temporarily orphaned projections remain visible but cannot receive new managed mutations.
+Reopening the same goal restores eligibility under its stable ID, while deletion never silently recreates or reassigns the goal.
 
 ## Model tool
 

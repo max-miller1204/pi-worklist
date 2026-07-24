@@ -62,6 +62,12 @@ export async function listProjectGoals(path: string): Promise<ProjectGoal[]> {
 	return snapshot.goals;
 }
 
+function nextGoalUpdatedAt(previous: string): string {
+	const previousTime = Date.parse(previous);
+	const nextTime = Number.isNaN(previousTime) ? Date.now() : Math.max(Date.now(), previousTime + 1);
+	return new Date(nextTime).toISOString();
+}
+
 function mutationOutcome(result: {
 	data: Omit<ProjectMutationOutcome, "revision" | "changed">;
 	revision?: number;
@@ -124,7 +130,7 @@ export async function updateProjectGoal(
 				...current,
 				title,
 				...(description !== undefined ? { description } : {}),
-				updatedAt: new Date().toISOString(),
+				updatedAt: nextGoalUpdatedAt(current.updatedAt),
 			};
 			const goals = [...worklist.goals];
 			goals[index] = updated;
@@ -172,13 +178,20 @@ export async function activateProjectGoal(
 					changed: false,
 				};
 			}
-			const now = new Date().toISOString();
 			const goals = worklist.goals.map((goal) => {
 				if (goal.id === id) {
-					return { ...goal, status: "active" as ProjectGoalStatus, updatedAt: now };
+					return {
+						...goal,
+						status: "active" as ProjectGoalStatus,
+						updatedAt: nextGoalUpdatedAt(goal.updatedAt),
+					};
 				}
 				if (goal.status === "active") {
-					return { ...goal, status: "open" as ProjectGoalStatus, updatedAt: now };
+					return {
+						...goal,
+						status: "open" as ProjectGoalStatus,
+						updatedAt: nextGoalUpdatedAt(goal.updatedAt),
+					};
 				}
 				return goal;
 			});
@@ -218,7 +231,7 @@ export async function transitionProjectGoal(
 			const updated: ProjectGoal = {
 				...current,
 				status,
-				updatedAt: new Date().toISOString(),
+				updatedAt: nextGoalUpdatedAt(current.updatedAt),
 			};
 			const goals = [...worklist.goals];
 			goals[index] = updated;

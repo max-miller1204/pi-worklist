@@ -109,7 +109,9 @@ Providers must not add response timestamps, generated request IDs, or other nond
 The selector is either `{ type: "active" }` or `{ type: "id", id }`.
 An active lookup can return `goal: null` when no active Project Goal exists.
 An explicit ID that does not exist returns `NOT_FOUND`.
-The result is a bounded detail projection with any truncated text named in `projection.truncatedFields`.
+An explicit done or archived goal returns `VALIDATION_FAILED` with `resolution: "reopen-project-goal"` and cannot be used for orchestration until the user explicitly reopens it through a confirmed pi-worklist lifecycle action.
+The result is a bounded detail projection with the stable goal ID and `updatedAt`, any truncated text named in `projection.truncatedFields`, and the containing Project Worklist revision in result metadata.
+The consumer snapshots the selected goal ID and `updatedAt` before planning or approval.
 
 ### `session-tasks.list`
 
@@ -122,7 +124,10 @@ The provider must not return more than its advertised maximum.
 ### `session-tasks.reconcile`
 
 This operation atomically reconciles the desired pi-orchestrator-managed projection set for one Project Goal.
-The request carries the owner, versioned producer identity, stable external workflow-step identities, projected titles and worklist statuses, plan and approved-plan revisions, lightweight execution projections, bounded references, an idempotency key, and an optional expected session revision.
+The request carries the owner, versioned producer identity, stable external workflow-step identities, projected titles and worklist statuses, plan and approved-plan revisions, lightweight execution projections, bounded references, an idempotency key, the selected goal's expected `updatedAt`, and an optional expected session revision.
+Before changing Session Tasks, the provider verifies that `goalId` still exists, is open or active, and has the expected `updatedAt` captured by `project-goals.get`.
+A missing goal returns `NOT_FOUND`, a done or archived goal returns `VALIDATION_FAILED` with `resolution: "reopen-project-goal"`, and a changed `updatedAt` returns `CONFLICT` with `resolution: "refresh-and-retry"`.
+None of these failures append a Session Task snapshot.
 A stored managed projection adds creation and update timestamps while preserving the producer and external identity.
 The response maps every external identity to its stable Session Task ID and reports whether it was created, updated, unchanged, removed, or preserved because of a user override.
 The operation must not append snapshots directly outside the shared worklist mutation service.
@@ -131,6 +136,7 @@ Managed Session Task metadata uses projection schema version 1 inside Session Ta
 The external identity must identify a `workflow-step`, and its `id` is the stable orchestration step ID.
 The execution `runId` is the orchestration run ID.
 Managed projections retain producer identity, plan and approved-plan revisions, creation and update timestamps, lightweight read-only execution state, and bounded summary, run, result, or session-contribution references.
+Every valid managed projection also has a non-empty Session Task `goalId`.
 References are limited to 2,048 UTF-8 bytes and execution summaries are limited to 4,096 UTF-8 bytes.
 Normalization omits unknown fields rather than copying attempts, retries, dependencies, workers, logs, artifacts, evidence, or recovery state into pi-worklist.
 Ordinary Session Task list and mutation results omit managed metadata.
@@ -149,8 +155,12 @@ This is the only protocol operation that creates Project Goals.
 The request must include explicit approval evidence, a digest of the exact approved content, stable external phase identities, an idempotency key, and an optional expected project revision.
 The provider validates approval and creates the complete batch atomically or creates nothing.
 
-Protocol v1 deliberately has no operation to rewrite, complete, archive, delete, or activate a Project Goal.
+Protocol v1 deliberately has no operation to rewrite, complete, archive, delete, reopen, or activate a Project Goal.
 Those lifecycle actions stay under pi-worklist control and retain their existing explicit confirmation rules.
+Archiving a goal makes its existing managed projections closed associations, while confirmed deletion can leave temporarily orphaned projections.
+Pi-worklist preserves those projections for inspection and does not append a Session Task snapshot, silently reassign them, recreate a deleted goal, or infer approval.
+New managed reconciliation and execution mutations reject closed or missing associations.
+Explicitly reopening the same archived or done goal preserves its stable ID and makes its projections eligible again, while a deleted goal remains missing.
 
 ## Revisions, conflicts, and no-ops
 

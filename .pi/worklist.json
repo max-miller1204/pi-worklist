@@ -53,9 +53,9 @@
       "id": "goal-mryb1h5e-e452f08c",
       "title": "Enforce Project Goal association integrity",
       "description": "Validate that every orchestrator-managed Session Task goalId refers to an existing Project Goal and reject orchestration of done or archived goals unless the user explicitly reopens them. Return the goal's stable ID and revision or updatedAt value so pi-orchestrator can snapshot the exact goal used for planning and detect edits before approval. Define safe behavior for deletion, archival, reopening, and temporarily orphaned projections without weakening explicit confirmation for destructive Project Goal lifecycle actions.",
-      "status": "open",
+      "status": "done",
       "createdAt": "2026-07-24T02:12:07.826Z",
-      "updatedAt": "2026-07-24T02:12:07.826Z"
+      "updatedAt": "2026-07-24T22:43:19.518Z"
     },
     {
       "id": "goal-mryb1h5f-49db693f",

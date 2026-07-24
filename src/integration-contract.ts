@@ -228,6 +228,8 @@ export interface WorklistOperationPayloads {
 		expectedSessionRevision?: string;
 		idempotencyKey: string;
 		goalId: string;
+		/** Project Goal updatedAt captured by project-goals.get before planning or approval. */
+		expectedGoalUpdatedAt: string;
 		owner: "pi-orchestrator";
 		tasks: ManagedSessionTaskInput[];
 	};

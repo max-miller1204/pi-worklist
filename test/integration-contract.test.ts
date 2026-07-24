@@ -155,6 +155,7 @@ describe("pi-worklist integration contract", () => {
 			payload: {
 				idempotencyKey: "run-7:projection-1",
 				goalId: "goal-1",
+				expectedGoalUpdatedAt: "2026-07-24T20:00:00.000Z",
 				owner: "pi-orchestrator",
 				tasks: [],
 			},

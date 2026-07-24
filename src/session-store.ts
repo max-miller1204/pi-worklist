@@ -72,7 +72,10 @@ function normalizeStoredSessionTask(value: unknown, readManaged: boolean): Store
 	const managed = normalizeManagedSessionTaskProjection(
 		(value as unknown as Record<string, unknown>).managed,
 	);
-	return { ...task, ...(managed !== undefined ? { managed } : {}) };
+	return {
+		...task,
+		...(managed !== undefined && task.goalId !== undefined && task.goalId.length > 0 ? { managed } : {}),
+	};
 }
 
 export class SessionStore {
