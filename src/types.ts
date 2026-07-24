@@ -31,14 +31,18 @@ export interface ProjectWorklist {
 	goals: ProjectGoal[];
 }
 
-export interface WorklistToolDetails {
+export interface WorklistOperationResult {
 	scope: "session" | "project";
 	action: string;
+	task?: SessionTask;
 	tasks?: SessionTask[];
+	goal?: ProjectGoal;
 	goals?: ProjectGoal[];
 	error?: string;
 	requiresConfirm?: boolean;
 }
+
+export type WorklistToolDetails = WorklistOperationResult;
 
 export const SESSION_SNAPSHOT_VERSION = 2;
 export const READABLE_SESSION_SNAPSHOT_VERSIONS: readonly number[] = [1, 2];

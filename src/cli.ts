@@ -1,16 +1,7 @@
 #!/usr/bin/env node
+import { WorklistApplicationService } from "./application-service.ts";
 import { formatProjectGoals } from "./format.ts";
 import { getWorklistPath, resolveGitRoot } from "./git.ts";
-import {
-	activateProjectGoal,
-	addProjectGoal,
-	deleteProjectGoal,
-	listProjectGoals,
-	PROJECT_LIFECYCLE_TARGET_STATUS,
-	ProjectGoalActivationBlockedError,
-	transitionProjectGoal,
-	updateProjectGoal,
-} from "./project-mutations.ts";
 import type { ProjectGoal } from "./types.ts";
 
 /**
@@ -114,25 +105,42 @@ function report(invocation: CliInvocation, message: string, goals: ProjectGoal[]
 
 async function runLifecycle(
 	invocation: CliInvocation,
-	projectPath: string,
+	service: WorklistApplicationService,
 	action: LifecycleAction,
 ): Promise<void> {
 	const id = requireId(invocation);
-	if (!invocation.confirm) {
+	const result = await service.execute(
+		{ scope: "project", action, id, confirm: invocation.confirm },
+		{ source: "cli" },
+	);
+	if (result.requiresConfirm) {
 		fail(
 			`project ${action} is a lifecycle action and requires --confirm. ` +
 				"Pass --confirm only when the user explicitly requested this action.",
 			3,
 		);
 	}
+	const goals = result.goals ?? [];
 	if (action === "delete") {
-		const { goals } = await deleteProjectGoal(projectPath, id);
 		report(invocation, `Deleted project goal ${id}`, goals);
 		return;
 	}
-	const status = PROJECT_LIFECYCLE_TARGET_STATUS[action];
-	const { goal, goals } = await transitionProjectGoal(projectPath, id, status);
-	report(invocation, `Project goal ${goal.id} is now ${goal.status}`, goals, goal);
+	if (!result.goal) throw new Error(`Project goal ${id} was not returned after ${action}`);
+	report(invocation, `Project goal ${result.goal.id} is now ${result.goal.status}`, goals, result.goal);
+}
+
+async function runSetActive(invocation: CliInvocation, service: WorklistApplicationService): Promise<void> {
+	const id = requireId(invocation);
+	try {
+		const result = await service.execute({ scope: "project", action: "set_active", id }, { source: "cli" });
+		if (!result.goal) throw new Error(`Activated Project Goal ${id} was not returned`);
+		report(invocation, `Activated project goal ${result.goal.id}`, result.goals ?? [], result.goal);
+	} catch (error) {
+		if (error instanceof Error && error.message.includes("must be reopened")) {
+			fail(`${error.message} Reopen it first: node src/cli.ts project reopen ${id} --confirm`, 1);
+		}
+		throw error;
+	}
 }
 
 async function run(invocation: CliInvocation): Promise<void> {
@@ -142,11 +150,12 @@ async function run(invocation: CliInvocation): Promise<void> {
 		}
 		fail(`Unknown scope ${invocation.scope}\n\n${USAGE}`, 2);
 	}
-	const projectPath = resolveProjectPath(invocation.cwd);
+	const service = new WorklistApplicationService({ projectPath: resolveProjectPath(invocation.cwd) });
 
 	switch (invocation.action) {
 		case "list": {
-			const goals = await listProjectGoals(projectPath);
+			const result = await service.execute({ scope: "project", action: "list" }, { source: "cli" });
+			const goals = result.goals ?? [];
 			report(invocation, formatProjectGoals(goals), goals);
 			return;
 		}
@@ -154,8 +163,17 @@ async function run(invocation: CliInvocation): Promise<void> {
 			const title = invocation.rest.join(" ").trim();
 			if (!title) fail(`project add requires a title\n\n${USAGE}`, 2);
 			const description = invocation.description?.trim() || undefined;
-			const { goal, goals } = await addProjectGoal(projectPath, title, description);
-			report(invocation, `Added project goal ${goal.id}: ${goal.title}`, goals, goal);
+			const result = await service.execute(
+				{ scope: "project", action: "add", title, description },
+				{ source: "cli" },
+			);
+			if (!result.goal) throw new Error("Added Project Goal was not returned");
+			report(
+				invocation,
+				`Added project goal ${result.goal.id}: ${result.goal.title}`,
+				result.goals ?? [],
+				result.goal,
+			);
 			return;
 		}
 		case "update": {
@@ -164,31 +182,28 @@ async function run(invocation: CliInvocation): Promise<void> {
 			if (title === undefined && invocation.description === undefined) {
 				fail(`project update requires a new title, a -- description, or both\n\n${USAGE}`, 2);
 			}
-			const { goal, goals } = await updateProjectGoal(projectPath, id, {
-				title,
-				description: invocation.description,
-			});
-			report(invocation, `Updated project goal ${goal.id}`, goals, goal);
+			const result = await service.execute(
+				{
+					scope: "project",
+					action: "update",
+					id,
+					title,
+					description: invocation.description,
+				},
+				{ source: "cli" },
+			);
+			if (!result.goal) throw new Error(`Updated Project Goal ${id} was not returned`);
+			report(invocation, `Updated project goal ${result.goal.id}`, result.goals ?? [], result.goal);
 			return;
 		}
-		case "set_active": {
-			const id = requireId(invocation);
-			try {
-				const { goal, goals } = await activateProjectGoal(projectPath, id);
-				report(invocation, `Activated project goal ${goal.id}`, goals, goal);
-			} catch (error) {
-				if (error instanceof ProjectGoalActivationBlockedError) {
-					fail(`${error.message}. Reopen it first: node src/cli.ts project reopen ${id} --confirm`, 1);
-				}
-				throw error;
-			}
+		case "set_active":
+			await runSetActive(invocation, service);
 			return;
-		}
 		case "complete":
 		case "reopen":
 		case "archive":
 		case "delete":
-			await runLifecycle(invocation, projectPath, invocation.action);
+			await runLifecycle(invocation, service, invocation.action);
 			return;
 		default:
 			fail(`Unknown project action ${invocation.action}\n\n${USAGE}`, 2);

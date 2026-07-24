@@ -2,10 +2,10 @@ import { generateId, mutateProjectWorklist, readProjectWorklist, sortGoals } fro
 import type { ProjectGoal, ProjectGoalStatus, ProjectWorklist } from "./types.ts";
 
 /**
- * Pi-free mutation service for Project Goals. Every interface (model tool,
- * /tasks command, dashboard, CLI, future inter-extension API) must route
- * project mutations through these functions so validation, locking, and
- * persistence rules stay identical everywhere.
+ * Pi-free Project Goal persistence primitives.
+ *
+ * Interface adapters must call WorklistApplicationService rather than these
+ * functions directly so application validation and persistence stay unified.
  */
 
 export const PROJECT_LIFECYCLE_TARGET_STATUS: Record<"complete" | "reopen" | "archive", ProjectGoalStatus> = {
@@ -98,13 +98,15 @@ export async function activateProjectGoal(path: string, id: string): Promise<Pro
 				return { worklist, result: { outcome: null, blocked: true } };
 			}
 			const now = new Date().toISOString();
-			const goals = worklist.goals.map((goal) =>
-				goal.id === id
-					? { ...goal, status: "active" as ProjectGoalStatus, updatedAt: now }
-					: goal.status === "active"
-						? { ...goal, status: "open" as ProjectGoalStatus, updatedAt: now }
-						: goal,
-			);
+			const goals = worklist.goals.map((goal) => {
+				if (goal.id === id) {
+					return { ...goal, status: "active" as ProjectGoalStatus, updatedAt: now };
+				}
+				if (goal.status === "active") {
+					return { ...goal, status: "open" as ProjectGoalStatus, updatedAt: now };
+				}
+				return goal;
+			});
 			const activated = goals.find((goal) => goal.id === id);
 			return {
 				worklist: { ...worklist, goals },
