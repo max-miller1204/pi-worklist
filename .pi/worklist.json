@@ -1,133 +1,141 @@
 {
-	"version": 1,
-	"goals": [
-		{
-			"id": "future-start-goal",
-			"title": "Integrate Project Goal launch with pi-orchestrator",
-			"description": "Let the user select a Project Goal from the Worklist dashboard and request orchestration through a versioned capability handshake. Show the action only when pi-orchestrator is available, pass the stable goal ID and current goal revision, preserve explicit approval before execution, and keep retry, cancellation, logs, evidence, and run control in the orchestrator rather than duplicating those controls in pi-worklist.",
-			"status": "open",
-			"createdAt": "2026-07-13T00:00:00.000Z",
-			"updatedAt": "2026-07-24T02:12:07.822Z"
-		},
-		{
-			"id": "future-promote",
-			"title": "Add manual task promotion",
-			"description": "Future feature: manually turn a Session Task into a Project Goal.",
-			"status": "open",
-			"createdAt": "2026-07-13T00:00:01.000Z",
-			"updatedAt": "2026-07-13T00:00:01.000Z"
-		},
-		{
-			"id": "future-archive-ui",
-			"title": "Add archived-goal browsing",
-			"description": "Future feature: preserve completed Project Goals without showing them normally.",
-			"status": "open",
-			"createdAt": "2026-07-13T00:00:02.000Z",
-			"updatedAt": "2026-07-13T00:00:02.000Z"
-		},
-		{
-			"id": "future-focus",
-			"title": "Add focus mode",
-			"description": "Future feature: show only Session Tasks linked to the active Project Goal.",
-			"status": "open",
-			"createdAt": "2026-07-13T00:00:03.000Z",
-			"updatedAt": "2026-07-13T00:00:03.000Z"
-		},
-		{
-			"id": "future-history",
-			"title": "Add progress history",
-			"description": "Future feature: record which Pi sessions contributed to a Project Goal.",
-			"status": "open",
-			"createdAt": "2026-07-13T00:00:04.000Z",
-			"updatedAt": "2026-07-13T00:00:04.000Z"
-		},
-		{
-			"id": "future-read-only",
-			"title": "Add read-only Project Goals",
-			"description": "Future feature: let teams commit a roadmap that the agent can read but not mutate automatically.",
-			"status": "open",
-			"createdAt": "2026-07-13T00:00:05.000Z",
-			"updatedAt": "2026-07-13T00:00:05.000Z"
-		},
-		{
-			"id": "goal-mrm6is1p-79dfb408",
-			"title": "Enforce Biome import ordering repository-wide",
-			"description": "Switch the check script to biome check and run biome check --write once so organizeImports is enforced consistently.",
-			"status": "open",
-			"createdAt": "2026-07-15T14:32:22.909Z",
-			"updatedAt": "2026-07-15T14:32:22.909Z"
-		},
-		{
-			"id": "goal-mryb1h5b-f5473d74",
-			"title": "Add a versioned inter-extension worklist API",
-			"description": "Expose a machine-oriented integration protocol over Pi's shared pi.events bus so pi-orchestrator can discover capabilities, read the active or selected Project Goal, list Session Tasks, reconcile task projections, and update projected execution state without invoking the model-facing tool, instantiating another SessionStore, editing .pi/worklist.json, or appending snapshots directly. Include protocol versions, request IDs, actor and run correlation metadata, typed success and error responses, timeouts, capability negotiation, and a graceful unavailable or incompatible fallback. Route the tool, command, dashboard, and inter-extension requests through one mutation service so every interface applies identical validation and persistence rules.",
-			"status": "open",
-			"createdAt": "2026-07-24T02:12:07.823Z",
-			"updatedAt": "2026-07-24T02:12:07.823Z"
-		},
-		{
-			"id": "goal-mryb1h5c-4fa12e56",
-			"title": "Track orchestrator provenance on Session Tasks",
-			"description": "Extend Session Tasks with optional hidden automation metadata that records the producing system, orchestration run ID, step ID, approved plan revision, and a stable external identity. Add creation and update timestamps where useful, preserve concise title-only Session Task UX, keep metadata out of normal model context, and migrate older branch-aware snapshots without changing existing IDs or dropping recognized metadata.",
-			"status": "open",
-			"createdAt": "2026-07-24T02:12:07.824Z",
-			"updatedAt": "2026-07-24T02:12:07.824Z"
-		},
-		{
-			"id": "goal-mryb1h5d-8654f513",
-			"title": "Add atomic Session Task projection reconciliation",
-			"description": "Provide one serialized batch operation that upserts all Session Task projections for an orchestration run by stable external identity, updates existing projections, creates missing projections, preserves unrelated user-created tasks and canonical queue order, and appends exactly one session snapshot. Make reconciliation idempotent across retries, recovery, /tree, /fork, /clone, and /resume so pi-orchestrator can safely rebuild the current session view without duplicating tasks.",
-			"status": "open",
-			"createdAt": "2026-07-24T02:12:07.825Z",
-			"updatedAt": "2026-07-24T02:12:07.825Z"
-		},
-		{
-			"id": "goal-mryb1h5e-e452f08c",
-			"title": "Enforce Project Goal association integrity",
-			"description": "Validate that every orchestrator-managed Session Task goalId refers to an existing Project Goal and reject orchestration of done or archived goals unless the user explicitly reopens them. Return the goal's stable ID and revision or updatedAt value so pi-orchestrator can snapshot the exact goal used for planning and detect edits before approval. Define safe behavior for deletion, archival, reopening, and temporarily orphaned projections without weakening explicit confirmation for destructive Project Goal lifecycle actions.",
-			"status": "open",
-			"createdAt": "2026-07-24T02:12:07.826Z",
-			"updatedAt": "2026-07-24T02:12:07.826Z"
-		},
-		{
-			"id": "goal-mryb1h5f-49db693f",
-			"title": "Add revisions and idempotent external mutations",
-			"description": "Add monotonic revisions to Project Worklists and Session Task snapshots, support optional expectedRevision checks, and accept idempotency keys for external batch creation and status updates. Preserve the existing cross-process lock, atomic rename, branch-aware snapshot semantics, and backward readers while returning explicit conflict results instead of allowing a resumed orchestrator to overwrite newer user changes.",
-			"status": "open",
-			"createdAt": "2026-07-24T02:12:07.827Z",
-			"updatedAt": "2026-07-24T02:12:07.827Z"
-		},
-		{
-			"id": "goal-mryb1h5g-d5f79061",
-			"title": "Separate Session Task status from execution state",
-			"description": "Keep the simple todo, doing, and done Session Task lifecycle while adding optional projected execution state for orchestrator-managed tasks, including queued, blocked, running, retrying, succeeded, failed, and cancelled. Treat the projection as informational, set done only after verified success, retain failure and retry context without expanding the manual status cycle, and let pi-orchestrator remain the canonical owner of attempts and recovery state.",
-			"status": "open",
-			"createdAt": "2026-07-24T02:12:07.828Z",
-			"updatedAt": "2026-07-24T02:12:07.828Z"
-		},
-		{
-			"id": "goal-mryb1h5h-bb98956e",
-			"title": "Publish structured worklist change events",
-			"description": "Emit compact versioned events after every successful tool, command, dashboard, or external mutation. Include scope, resulting revision, changed entity IDs, actor, mutation type, timestamp, and optional orchestration run or correlation ID so pi-orchestrator can detect user edits, moves, deletions, and status changes. Keep events live and queryable through current snapshots for initial integration rather than duplicating the orchestrator's durable event journal.",
-			"status": "open",
-			"createdAt": "2026-07-24T02:12:07.829Z",
-			"updatedAt": "2026-07-24T02:12:07.829Z"
-		},
-		{
-			"id": "goal-mryb1h5i-8ea0e01c",
-			"title": "Define managed Session Task override behavior",
-			"description": "Mark orchestrator-managed Session Tasks clearly while preserving user control over editing, moving, deleting, and changing their status. Emit a divergence event for user overrides, require pi-orchestrator to pause or reconcile instead of silently restoring stale data, define how managed projections detach when a run ends, and retain the rule that successful tasks never automatically complete their associated Project Goal.",
-			"status": "open",
-			"createdAt": "2026-07-24T02:12:07.830Z",
-			"updatedAt": "2026-07-24T02:12:07.830Z"
-		},
-		{
-			"id": "goal-mryb1h5j-82a5e051",
-			"title": "Attach lightweight orchestration result references",
-			"description": "Allow an orchestrator-managed Session Task to carry a small run or result reference, final outcome summary, and optional digest suitable for opening evidence in pi-orchestrator. Do not store worker logs, Git diffs, review reports, validation output, artifact bodies, leases, or recovery state in pi-worklist; those remain canonical in the orchestrator's run and artifact stores.",
-			"status": "open",
-			"createdAt": "2026-07-24T02:12:07.831Z",
-			"updatedAt": "2026-07-24T02:12:07.831Z"
-		}
-	]
+  "version": 1,
+  "goals": [
+    {
+      "id": "future-start-goal",
+      "title": "Integrate Project Goal launch with pi-orchestrator",
+      "description": "Let the user select a Project Goal from the Worklist dashboard and request orchestration through a versioned capability handshake. Show the action only when pi-orchestrator is available, pass the stable goal ID and current goal revision, preserve explicit approval before execution, and keep retry, cancellation, logs, evidence, and run control in the orchestrator rather than duplicating those controls in pi-worklist.",
+      "status": "open",
+      "createdAt": "2026-07-13T00:00:00.000Z",
+      "updatedAt": "2026-07-24T02:12:07.822Z"
+    },
+    {
+      "id": "future-promote",
+      "title": "Add manual task promotion",
+      "description": "Future feature: manually turn a Session Task into a Project Goal.",
+      "status": "open",
+      "createdAt": "2026-07-13T00:00:01.000Z",
+      "updatedAt": "2026-07-13T00:00:01.000Z"
+    },
+    {
+      "id": "future-archive-ui",
+      "title": "Add archived-goal browsing",
+      "description": "Future feature: preserve completed Project Goals without showing them normally.",
+      "status": "open",
+      "createdAt": "2026-07-13T00:00:02.000Z",
+      "updatedAt": "2026-07-13T00:00:02.000Z"
+    },
+    {
+      "id": "future-focus",
+      "title": "Add focus mode",
+      "description": "Future feature: show only Session Tasks linked to the active Project Goal.",
+      "status": "open",
+      "createdAt": "2026-07-13T00:00:03.000Z",
+      "updatedAt": "2026-07-13T00:00:03.000Z"
+    },
+    {
+      "id": "future-history",
+      "title": "Add progress history",
+      "description": "Future feature: record which Pi sessions contributed to a Project Goal.",
+      "status": "open",
+      "createdAt": "2026-07-13T00:00:04.000Z",
+      "updatedAt": "2026-07-13T00:00:04.000Z"
+    },
+    {
+      "id": "future-read-only",
+      "title": "Add read-only Project Goals",
+      "description": "Future feature: let teams commit a roadmap that the agent can read but not mutate automatically.",
+      "status": "open",
+      "createdAt": "2026-07-13T00:00:05.000Z",
+      "updatedAt": "2026-07-13T00:00:05.000Z"
+    },
+    {
+      "id": "goal-mrm6is1p-79dfb408",
+      "title": "Enforce Biome import ordering repository-wide",
+      "description": "Switch the check script to biome check and run biome check --write once so organizeImports is enforced consistently.",
+      "status": "open",
+      "createdAt": "2026-07-15T14:32:22.909Z",
+      "updatedAt": "2026-07-15T14:32:22.909Z"
+    },
+    {
+      "id": "goal-mryb1h5b-f5473d74",
+      "title": "Add a versioned inter-extension worklist API",
+      "description": "Expose a machine-oriented integration protocol over Pi's shared pi.events bus so pi-orchestrator can discover capabilities, read the active or selected Project Goal, list Session Tasks, reconcile task projections, and update projected execution state without invoking the model-facing tool, instantiating another SessionStore, editing .pi/worklist.json, or appending snapshots directly. Include protocol versions, request IDs, actor and run correlation metadata, typed success and error responses, timeouts, capability negotiation, and a graceful unavailable or incompatible fallback. Route the tool, command, dashboard, and inter-extension requests through one mutation service so every interface applies identical validation and persistence rules.",
+      "status": "open",
+      "createdAt": "2026-07-24T02:12:07.823Z",
+      "updatedAt": "2026-07-24T02:12:07.823Z"
+    },
+    {
+      "id": "goal-mryb1h5c-4fa12e56",
+      "title": "Track orchestrator provenance on Session Tasks",
+      "description": "Extend Session Tasks with optional hidden automation metadata that records the producing system, orchestration run ID, step ID, approved plan revision, and a stable external identity. Add creation and update timestamps where useful, preserve concise title-only Session Task UX, keep metadata out of normal model context, and migrate older branch-aware snapshots without changing existing IDs or dropping recognized metadata.",
+      "status": "open",
+      "createdAt": "2026-07-24T02:12:07.824Z",
+      "updatedAt": "2026-07-24T02:12:07.824Z"
+    },
+    {
+      "id": "goal-mryb1h5d-8654f513",
+      "title": "Add atomic Session Task projection reconciliation",
+      "description": "Provide one serialized batch operation that upserts all Session Task projections for an orchestration run by stable external identity, updates existing projections, creates missing projections, preserves unrelated user-created tasks and canonical queue order, and appends exactly one session snapshot. Make reconciliation idempotent across retries, recovery, /tree, /fork, /clone, and /resume so pi-orchestrator can safely rebuild the current session view without duplicating tasks.",
+      "status": "open",
+      "createdAt": "2026-07-24T02:12:07.825Z",
+      "updatedAt": "2026-07-24T02:12:07.825Z"
+    },
+    {
+      "id": "goal-mryb1h5e-e452f08c",
+      "title": "Enforce Project Goal association integrity",
+      "description": "Validate that every orchestrator-managed Session Task goalId refers to an existing Project Goal and reject orchestration of done or archived goals unless the user explicitly reopens them. Return the goal's stable ID and revision or updatedAt value so pi-orchestrator can snapshot the exact goal used for planning and detect edits before approval. Define safe behavior for deletion, archival, reopening, and temporarily orphaned projections without weakening explicit confirmation for destructive Project Goal lifecycle actions.",
+      "status": "open",
+      "createdAt": "2026-07-24T02:12:07.826Z",
+      "updatedAt": "2026-07-24T02:12:07.826Z"
+    },
+    {
+      "id": "goal-mryb1h5f-49db693f",
+      "title": "Add revisions and idempotent external mutations",
+      "description": "Add monotonic revisions to Project Worklists and Session Task snapshots, support optional expectedRevision checks, and accept idempotency keys for external batch creation and status updates. Preserve the existing cross-process lock, atomic rename, branch-aware snapshot semantics, and backward readers while returning explicit conflict results instead of allowing a resumed orchestrator to overwrite newer user changes.",
+      "status": "open",
+      "createdAt": "2026-07-24T02:12:07.827Z",
+      "updatedAt": "2026-07-24T02:12:07.827Z"
+    },
+    {
+      "id": "goal-mryb1h5g-d5f79061",
+      "title": "Separate Session Task status from execution state",
+      "description": "Keep the simple todo, doing, and done Session Task lifecycle while adding optional projected execution state for orchestrator-managed tasks, including queued, blocked, running, retrying, succeeded, failed, and cancelled. Treat the projection as informational, set done only after verified success, retain failure and retry context without expanding the manual status cycle, and let pi-orchestrator remain the canonical owner of attempts and recovery state.",
+      "status": "open",
+      "createdAt": "2026-07-24T02:12:07.828Z",
+      "updatedAt": "2026-07-24T02:12:07.828Z"
+    },
+    {
+      "id": "goal-mryb1h5h-bb98956e",
+      "title": "Publish structured worklist change events",
+      "description": "Emit compact versioned events after every successful tool, command, dashboard, or external mutation. Include scope, resulting revision, changed entity IDs, actor, mutation type, timestamp, and optional orchestration run or correlation ID so pi-orchestrator can detect user edits, moves, deletions, and status changes. Keep events live and queryable through current snapshots for initial integration rather than duplicating the orchestrator's durable event journal.",
+      "status": "open",
+      "createdAt": "2026-07-24T02:12:07.829Z",
+      "updatedAt": "2026-07-24T02:12:07.829Z"
+    },
+    {
+      "id": "goal-mryb1h5i-8ea0e01c",
+      "title": "Define managed Session Task override behavior",
+      "description": "Mark orchestrator-managed Session Tasks clearly while preserving user control over editing, moving, deleting, and changing their status. Emit a divergence event for user overrides, require pi-orchestrator to pause or reconcile instead of silently restoring stale data, define how managed projections detach when a run ends, and retain the rule that successful tasks never automatically complete their associated Project Goal.",
+      "status": "open",
+      "createdAt": "2026-07-24T02:12:07.830Z",
+      "updatedAt": "2026-07-24T02:12:07.830Z"
+    },
+    {
+      "id": "goal-mryb1h5j-82a5e051",
+      "title": "Attach lightweight orchestration result references",
+      "description": "Allow an orchestrator-managed Session Task to carry a small run or result reference, final outcome summary, and optional digest suitable for opening evidence in pi-orchestrator. Do not store worker logs, Git diffs, review reports, validation output, artifact bodies, leases, or recovery state in pi-worklist; those remain canonical in the orchestrator's run and artifact stores.",
+      "status": "open",
+      "createdAt": "2026-07-24T02:12:07.831Z",
+      "updatedAt": "2026-07-24T02:12:07.831Z"
+    },
+    {
+      "id": "goal-mrz7osuo-4849456d",
+      "title": "Ship a compiled pi-worklist CLI bin",
+      "description": "Publish an executable bin so npx pi-worklist works from the installed npm package. Compile the CLI to JavaScript at build or publish time, because Node refuses to type-strip TypeScript under node_modules (ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING), leaving the installed copy loadable only by Pi through jiti. External agents such as the global Claude Code worklist skill must currently reference a development checkout path instead of the package, which is not portable to other machines. A compiled bin also frees CLI users from the Node 22.18+ native type-stripping requirement while engines stays at >=20.",
+      "status": "open",
+      "createdAt": "2026-07-24T17:26:03.792Z",
+      "updatedAt": "2026-07-24T17:26:03.792Z"
+    }
+  ]
 }
