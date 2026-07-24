@@ -89,12 +89,15 @@ The model-facing tool instead requires `confirm=true`, and its prompt rules proh
 
 Session Tasks are stored as versioned Pi custom entries in the current session tree.
 Each snapshot carries an opaque concurrency token that follows the active `/tree`, `/fork`, `/clone`, or resumed branch.
-Snapshots written by earlier releases are still loaded, derive their token from the Pi custom entry ID, and drop any legacy Session Task descriptions during migration.
+Snapshot version 3 can retain a validated version 1 managed projection on a task.
+The projection contains the producer and external workflow-step identity, approved plan revision, orchestration run ID, timestamps, lightweight read-only execution state, and bounded result or session-contribution references.
+Attempts, retries, logs, dependencies, artifacts, evidence, and recovery remain canonical in pi-orchestrator and are omitted during projection normalization.
+Snapshots written by earlier releases are still loaded, derive their token from the Pi custom entry ID when necessary, retain existing task IDs, and drop legacy descriptions during in-memory migration.
+The next Session Task mutation writes the migrated state as snapshot version 3.
 A branch without a snapshot uses the opaque baseline token `0`.
-The snapshot version remains 2 because canonical queue order is already represented by the stored task array and older readers ignore the added token.
-Completed tasks remain in that canonical order.
-Session Tasks do not enter model context directly.
-Only the active goal and an intentionally bounded list of incomplete tasks are added to the current turn's system prompt, preserving their relative queue order.
+Completed tasks remain in canonical queue order.
+Ordinary Session Task reads and mutation results omit managed metadata.
+Only the active goal and an intentionally bounded list of incomplete task titles and statuses are added to the current turn's system prompt, preserving their relative queue order.
 
 Project Goals use a schema-versioned JSON file at `.pi/worklist.json` in the canonical Git root.
 The file carries a monotonic numeric revision, while application and protocol callers receive that revision as an opaque string.

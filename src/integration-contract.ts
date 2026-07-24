@@ -1,4 +1,28 @@
+import type {
+	ExternalWorkflowStepIdentity,
+	ExternalWorkItemIdentity,
+	ManagedExecutionProjection,
+	ManagedSessionTaskProjection,
+	WorklistProjectionProducer,
+} from "./managed-projection.ts";
 import type { ProjectGoalStatus, SessionTaskStatus } from "./types.ts";
+
+export type {
+	ExternalWorkflowStepIdentity,
+	ExternalWorkItemIdentity,
+	ManagedExecutionProjection,
+	ManagedExecutionState,
+	ManagedSessionTaskProjection,
+	WorklistProjectionProducer,
+} from "./managed-projection.ts";
+export {
+	MANAGED_EXECUTION_STATES,
+	MANAGED_SESSION_TASK_PROJECTION_VERSION,
+	MAX_MANAGED_EXECUTION_SUMMARY_BYTES,
+	MAX_MANAGED_IDENTITY_BYTES,
+	MAX_MANAGED_REFERENCE_BYTES,
+	normalizeManagedSessionTaskProjection,
+} from "./managed-projection.ts";
 
 /**
  * Stable wire contract shared by pi-worklist providers and automation consumers.
@@ -91,6 +115,7 @@ export interface WorklistCapabilityLimits {
 	maxTitleBytes?: number;
 	maxDescriptionBytes?: number;
 	maxSummaryBytes?: number;
+	maxReferenceBytes?: number;
 	defaultTimeoutMs?: number;
 	maxTimeoutMs?: number;
 }
@@ -133,55 +158,6 @@ export interface ProjectGoalDetailProjection extends ProjectGoalSummaryProjectio
 
 export type ProjectGoalSelector = { type: "active" } | { type: "id"; id: string };
 
-export type ManagedExecutionState =
-	| "planned"
-	| "ready"
-	| "blocked"
-	| "running"
-	| "validating"
-	| "paused"
-	| "succeeded"
-	| "failed"
-	| "cancelled";
-
-export interface ExternalWorkItemIdentity {
-	system: "pi-orchestrator";
-	kind: "roadmap" | "phase" | "project-goal" | "repository-run" | "workflow-step";
-	id: string;
-}
-
-export interface WorklistProjectionProducer {
-	id: "pi-orchestrator";
-	version: string;
-}
-
-/**
- * This is a lightweight projection only. Logs, dependencies, retries, artifacts,
- * workers, readiness, and recovery state remain owned by pi-orchestrator.
- */
-export interface ManagedExecutionProjection {
-	state: ManagedExecutionState;
-	updatedAt: string;
-	runId: string;
-	attempt?: number;
-	summary?: string;
-	runReference?: string;
-}
-
-export interface ManagedSessionTaskProjection {
-	version: 1;
-	owner: "pi-orchestrator";
-	producer: WorklistProjectionProducer;
-	external: ExternalWorkItemIdentity;
-	planRevision: number;
-	approvedPlanRevision: number;
-	createdAt: string;
-	updatedAt: string;
-	execution: ManagedExecutionProjection;
-	resultReference?: string;
-	sessionContributionReference?: string;
-}
-
 export interface SessionTaskSummaryProjection {
 	id: string;
 	title: string;
@@ -212,7 +188,7 @@ export interface ApprovedProjectGoalInput {
 }
 
 export interface ManagedSessionTaskInput {
-	external: ExternalWorkItemIdentity;
+	external: ExternalWorkflowStepIdentity;
 	title: string;
 	status: SessionTaskStatus;
 	producer: WorklistProjectionProducer;
@@ -224,7 +200,7 @@ export interface ManagedSessionTaskInput {
 }
 
 export interface ManagedExecutionUpdate {
-	external: ExternalWorkItemIdentity;
+	external: ExternalWorkflowStepIdentity;
 	execution: ManagedExecutionProjection;
 }
 

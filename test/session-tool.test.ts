@@ -135,6 +135,101 @@ describe("session state and tool", () => {
 		]);
 	});
 
+	it("migrates legacy snapshots on the next write without changing task IDs", async () => {
+		const { api, entries } = fakePi();
+		const store = new SessionStore(api);
+		store.reconstruct({
+			sessionManager: {
+				getBranch: () => [
+					{
+						type: "custom",
+						id: "legacy-snapshot",
+						customType: SESSION_SNAPSHOT_TYPE,
+						data: {
+							version: 1,
+							tasks: [
+								{
+									id: "stable-task",
+									title: "Legacy task",
+									description: "Legacy hidden context",
+									status: "todo",
+								},
+							],
+						},
+					},
+				],
+			},
+		} as unknown as ExtensionContext);
+
+		await store.setTaskStatus("stable-task", "doing", { expectedRevision: "legacy-snapshot" });
+
+		const snapshot = (entries.at(-1) as { data: { version: number; tasks: unknown[] } }).data;
+		expect(snapshot.version).toBe(3);
+		expect(snapshot.tasks).toEqual([{ id: "stable-task", title: "Legacy task", status: "doing" }]);
+	});
+
+	it("preserves valid managed projections while keeping them out of normal task reads", async () => {
+		const { api, entries } = fakePi();
+		const store = new SessionStore(api);
+		const managed = {
+			version: 1,
+			owner: "pi-orchestrator",
+			producer: { id: "pi-orchestrator", version: "0.8.0" },
+			external: { system: "pi-orchestrator", kind: "workflow-step", id: "step-secret" },
+			planRevision: 4,
+			approvedPlanRevision: 3,
+			createdAt: "2026-07-24T20:00:00.000Z",
+			updatedAt: "2026-07-24T20:05:00.000Z",
+			execution: {
+				state: "running",
+				updatedAt: "2026-07-24T20:05:00.000Z",
+				runId: "run-secret",
+				summary: "private projected summary",
+				runReference: "pi-orchestrator://runs/run-secret",
+			},
+			resultReference: "pi-orchestrator://results/result-secret",
+			sessionContributionReference: "pi://sessions/session-secret#entry-secret",
+		};
+		store.reconstruct({
+			sessionManager: {
+				getBranch: () => [
+					{
+						type: "custom",
+						id: "managed-snapshot",
+						customType: SESSION_SNAPSHOT_TYPE,
+						data: {
+							version: 3,
+							revision: "managed-revision",
+							tasks: [
+								{
+									id: "managed-task",
+									title: "Projected work",
+									status: "todo",
+									goalId: "goal-1",
+									managed,
+								},
+							],
+						},
+					},
+				],
+			},
+		} as unknown as ExtensionContext);
+
+		expect(store.getTasks()).toEqual([
+			{ id: "managed-task", title: "Projected work", status: "todo", goalId: "goal-1" },
+		]);
+		const outcome = await store.setTaskStatus("managed-task", "doing", {
+			expectedRevision: "managed-revision",
+		});
+		expect(outcome.result).not.toHaveProperty("managed");
+		const snapshot = (entries.at(-1) as { data: { tasks: Array<Record<string, unknown>> } }).data;
+		expect(snapshot.tasks[0]).toMatchObject({
+			id: "managed-task",
+			status: "doing",
+			managed,
+		});
+	});
+
 	it("ignores snapshots with unsupported versions", () => {
 		const { api } = fakePi();
 		const store = new SessionStore(api);
@@ -149,7 +244,7 @@ describe("session state and tool", () => {
 					{
 						type: "custom",
 						customType: SESSION_SNAPSHOT_TYPE,
-						data: { version: 3, tasks: [{ id: "b", title: "Future", status: "todo" }] },
+						data: { version: 4, tasks: [{ id: "b", title: "Future", status: "todo" }] },
 					},
 				],
 			},
@@ -303,7 +398,7 @@ describe("session state and tool", () => {
 		expect(entries[0]).toMatchObject({
 			type: "custom",
 			customType: SESSION_SNAPSHOT_TYPE,
-			data: { version: 2, revision: changedRevision },
+			data: { version: 3, revision: changedRevision },
 		});
 
 		await expect(

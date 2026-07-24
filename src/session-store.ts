@@ -1,7 +1,18 @@
 import { randomBytes } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { SessionSnapshot, SessionTask, SessionTaskPlacement, SessionTaskStatus } from "./types.ts";
-import { READABLE_SESSION_SNAPSHOT_VERSIONS, SESSION_SNAPSHOT_VERSION } from "./types.ts";
+import { normalizeManagedSessionTaskProjection } from "./managed-projection.ts";
+import type {
+	SessionSnapshot,
+	SessionTask,
+	SessionTaskPlacement,
+	SessionTaskStatus,
+	StoredSessionTask,
+} from "./types.ts";
+import {
+	MANAGED_SESSION_TASK_SNAPSHOT_VERSION,
+	READABLE_SESSION_SNAPSHOT_VERSIONS,
+	SESSION_SNAPSHOT_VERSION,
+} from "./types.ts";
 
 export const SESSION_SNAPSHOT_TYPE = "worklist-session-snapshot";
 
@@ -49,15 +60,30 @@ function isValidSessionTask(value: unknown): value is SessionTask {
 	return true;
 }
 
+function toPublicSessionTask(task: StoredSessionTask): SessionTask {
+	const { id, title, status, goalId } = task;
+	return { id, title, status, ...(goalId !== undefined ? { goalId } : {}) };
+}
+
+function normalizeStoredSessionTask(value: unknown, readManaged: boolean): StoredSessionTask | undefined {
+	if (!isValidSessionTask(value)) return undefined;
+	const task = toPublicSessionTask(value);
+	if (!readManaged) return task;
+	const managed = normalizeManagedSessionTaskProjection(
+		(value as unknown as Record<string, unknown>).managed,
+	);
+	return { ...task, ...(managed !== undefined ? { managed } : {}) };
+}
+
 export class SessionStore {
-	private tasks: SessionTask[] = [];
+	private tasks: StoredSessionTask[] = [];
 	private revision = "0";
 	private mutationQueue: Promise<unknown> = Promise.resolve();
 
 	constructor(private readonly pi: ExtensionAPI) {}
 
 	getTasks(): SessionTask[] {
-		return [...this.tasks];
+		return this.tasks.map(toPublicSessionTask);
 	}
 
 	getRevision(): string {
@@ -65,7 +91,7 @@ export class SessionStore {
 	}
 
 	setTasks(tasks: SessionTask[]): void {
-		this.tasks = [...tasks];
+		this.tasks = tasks.map(toPublicSessionTask);
 	}
 
 	reconstruct(ctx: ExtensionContext): void {
@@ -78,9 +104,11 @@ export class SessionStore {
 			const data = entry.data as SessionSnapshot | undefined;
 			if (data && READABLE_SESSION_SNAPSHOT_VERSIONS.includes(data.version) && Array.isArray(data.tasks)) {
 				this.tasks = data.tasks.flatMap((task) => {
-					if (!isValidSessionTask(task)) return [];
-					const { id, title, status, goalId } = task;
-					return [{ id, title, status, ...(goalId !== undefined ? { goalId } : {}) }];
+					const normalized = normalizeStoredSessionTask(
+						task,
+						data.version >= MANAGED_SESSION_TASK_SNAPSHOT_VERSION,
+					);
+					return normalized === undefined ? [] : [normalized];
 				});
 				this.revision = "0";
 				if (typeof data.revision === "string" && data.revision.length > 0) {
@@ -146,7 +174,9 @@ export class SessionStore {
 			if (sourceIndex === -1) return { result: null, changed: false, revision: this.revision };
 			const task = this.tasks[sourceIndex];
 			const anchorId = placement.beforeId ?? placement.afterId;
-			if (anchorId === id) return { result: task, changed: false, revision: this.revision };
+			if (anchorId === id) {
+				return { result: toPublicSessionTask(task), changed: false, revision: this.revision };
+			}
 
 			const remaining = [...this.tasks.slice(0, sourceIndex), ...this.tasks.slice(sourceIndex + 1)];
 			const anchorIndex = remaining.findIndex((candidate) => candidate.id === anchorId);
@@ -154,10 +184,10 @@ export class SessionStore {
 			const insertionIndex = placement.beforeId !== undefined ? anchorIndex : anchorIndex + 1;
 			const next = [...remaining.slice(0, insertionIndex), task, ...remaining.slice(insertionIndex)];
 			if (next.every((candidate, index) => candidate.id === this.tasks[index]?.id)) {
-				return { result: task, changed: false, revision: this.revision };
+				return { result: toPublicSessionTask(task), changed: false, revision: this.revision };
 			}
 			const revision = this.persist(next);
-			return { result: task, changed: true, revision };
+			return { result: toPublicSessionTask(task), changed: true, revision };
 		});
 	}
 
@@ -173,10 +203,10 @@ export class SessionStore {
 			const current = this.tasks[index];
 			const updated = { ...current, ...updates };
 			if (updated.title === current.title && updated.goalId === current.goalId) {
-				return { result: current, changed: false, revision: this.revision };
+				return { result: toPublicSessionTask(current), changed: false, revision: this.revision };
 			}
 			const revision = this.persist([...this.tasks.slice(0, index), updated, ...this.tasks.slice(index + 1)]);
-			return { result: updated, changed: true, revision };
+			return { result: toPublicSessionTask(updated), changed: true, revision };
 		});
 	}
 
@@ -191,11 +221,11 @@ export class SessionStore {
 			if (index === -1) return { result: null, changed: false, revision: this.revision };
 			const current = this.tasks[index];
 			if (current.status === status) {
-				return { result: current, changed: false, revision: this.revision };
+				return { result: toPublicSessionTask(current), changed: false, revision: this.revision };
 			}
 			const updated = { ...current, status };
 			const revision = this.persist([...this.tasks.slice(0, index), updated, ...this.tasks.slice(index + 1)]);
-			return { result: updated, changed: true, revision };
+			return { result: toPublicSessionTask(updated), changed: true, revision };
 		});
 	}
 
@@ -214,7 +244,7 @@ export class SessionStore {
 		});
 	}
 
-	private persist(tasks: SessionTask[]): string {
+	private persist(tasks: StoredSessionTask[]): string {
 		const revision = randomBytes(16).toString("hex");
 		this.pi.appendEntry(SESSION_SNAPSHOT_TYPE, {
 			version: SESSION_SNAPSHOT_VERSION,

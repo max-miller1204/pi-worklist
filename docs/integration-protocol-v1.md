@@ -127,6 +127,15 @@ A stored managed projection adds creation and update timestamps while preserving
 The response maps every external identity to its stable Session Task ID and reports whether it was created, updated, unchanged, removed, or preserved because of a user override.
 The operation must not append snapshots directly outside the shared worklist mutation service.
 
+Managed Session Task metadata uses projection schema version 1 inside Session Task snapshot version 3.
+The external identity must identify a `workflow-step`, and its `id` is the stable orchestration step ID.
+The execution `runId` is the orchestration run ID.
+Managed projections retain producer identity, plan and approved-plan revisions, creation and update timestamps, lightweight read-only execution state, and bounded summary, run, result, or session-contribution references.
+References are limited to 2,048 UTF-8 bytes and execution summaries are limited to 4,096 UTF-8 bytes.
+Normalization omits unknown fields rather than copying attempts, retries, dependencies, workers, logs, artifacts, evidence, or recovery state into pi-worklist.
+Ordinary Session Task list and mutation results omit managed metadata.
+Snapshots version 1 and 2 remain readable, preserve their existing Session Task IDs and branch revision behavior, and are written as version 3 only after the next real mutation.
+
 ### `session-tasks.update-execution`
 
 This operation atomically updates lightweight projected execution state for pi-orchestrator-managed Session Tasks.

@@ -159,7 +159,7 @@ describe("real Pi load", () => {
 		const movedSnapshots = movedEntries.entries.filter(
 			(entry) => entry.type === "custom" && entry.customType === "worklist-session-snapshot",
 		);
-		expect(movedSnapshots.at(-1)?.data).toMatchObject({ version: 2 });
+		expect(movedSnapshots.at(-1)?.data).toMatchObject({ version: 3 });
 		expect(movedSnapshots.at(-1)?.data?.tasks?.map((task) => task.title)).toEqual([
 			"RPC follow-up",
 			"RPC first step",

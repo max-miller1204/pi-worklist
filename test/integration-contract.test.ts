@@ -8,6 +8,9 @@ import {
 	createWorklistErrorResult,
 	isWorklistRequest,
 	isWorklistResult,
+	MANAGED_SESSION_TASK_PROJECTION_VERSION,
+	MAX_MANAGED_REFERENCE_BYTES,
+	normalizeManagedSessionTaskProjection,
 	SUPPORTED_WORKLIST_PROTOCOL_VERSIONS,
 	WORKLIST_CAPABILITIES,
 	WORKLIST_CHANGE_EVENT,
@@ -79,6 +82,66 @@ describe("pi-worklist integration contract", () => {
 		expect(Object.values(WORKLIST_OPERATIONS)).not.toContain("project-goals.archive");
 		expect(Object.values(WORKLIST_OPERATIONS)).not.toContain("project-goals.delete");
 		expect(Object.values(WORKLIST_CAPABILITIES)).toContain("changes.subscribe");
+	});
+
+	it("validates bounded managed workflow-step projections without copying canonical run details", () => {
+		const projection = {
+			version: MANAGED_SESSION_TASK_PROJECTION_VERSION,
+			owner: "pi-orchestrator",
+			producer: { id: "pi-orchestrator", version: "0.8.0" },
+			external: { system: "pi-orchestrator", kind: "workflow-step", id: "step-3" },
+			planRevision: 4,
+			approvedPlanRevision: 3,
+			createdAt: "2026-07-24T20:00:00.000Z",
+			updatedAt: "2026-07-24T20:05:00.000Z",
+			execution: {
+				state: "running",
+				updatedAt: "2026-07-24T20:05:00.000Z",
+				runId: "run-7",
+				summary: "Current projected state",
+				runReference: "pi-orchestrator://runs/run-7",
+				attempt: 8,
+				artifacts: ["artifact-secret"],
+			},
+			resultReference: "pi-orchestrator://results/result-9",
+			sessionContributionReference: "pi://sessions/session-2#entry-5",
+			recovery: { checkpoint: "recovery-secret" },
+		};
+
+		const normalized = normalizeManagedSessionTaskProjection(projection);
+		expect(normalized).toEqual({
+			version: 1,
+			owner: "pi-orchestrator",
+			producer: { id: "pi-orchestrator", version: "0.8.0" },
+			external: { system: "pi-orchestrator", kind: "workflow-step", id: "step-3" },
+			planRevision: 4,
+			approvedPlanRevision: 3,
+			createdAt: "2026-07-24T20:00:00.000Z",
+			updatedAt: "2026-07-24T20:05:00.000Z",
+			execution: {
+				state: "running",
+				updatedAt: "2026-07-24T20:05:00.000Z",
+				runId: "run-7",
+				summary: "Current projected state",
+				runReference: "pi-orchestrator://runs/run-7",
+			},
+			resultReference: "pi-orchestrator://results/result-9",
+			sessionContributionReference: "pi://sessions/session-2#entry-5",
+		});
+		expect(normalized?.execution).not.toHaveProperty("attempt");
+		expect(normalized).not.toHaveProperty("recovery");
+		expect(
+			normalizeManagedSessionTaskProjection({
+				...projection,
+				resultReference: "x".repeat(MAX_MANAGED_REFERENCE_BYTES + 1),
+			}),
+		).toBeUndefined();
+		expect(
+			normalizeManagedSessionTaskProjection({
+				...projection,
+				external: { ...projection.external, kind: "phase" },
+			}),
+		).toBeUndefined();
 	});
 
 	it("defines deterministic correlated error envelopes and canonical changed fields", () => {

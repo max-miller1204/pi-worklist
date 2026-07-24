@@ -1,3 +1,5 @@
+import type { ManagedSessionTaskProjection } from "./managed-projection.ts";
+
 export type SessionTaskStatus = "todo" | "doing" | "done";
 export type ProjectGoalStatus = "open" | "active" | "done" | "archived";
 
@@ -21,11 +23,16 @@ export interface ProjectGoal {
 	updatedAt: string;
 }
 
+export interface StoredSessionTask extends SessionTask {
+	/** Hidden orchestrator-owned metadata that ordinary Session Task reads must omit. */
+	managed?: ManagedSessionTaskProjection;
+}
+
 export interface SessionSnapshot {
 	version: number;
 	/** Opaque branch-aware concurrency token. Legacy snapshots derive this from their entry ID. */
 	revision?: string;
-	tasks: SessionTask[];
+	tasks: StoredSessionTask[];
 }
 
 export interface ProjectWorklist {
@@ -50,6 +57,7 @@ export interface WorklistOperationResult {
 
 export type WorklistToolDetails = WorklistOperationResult;
 
-export const SESSION_SNAPSHOT_VERSION = 2;
-export const READABLE_SESSION_SNAPSHOT_VERSIONS: readonly number[] = [1, 2];
+export const MANAGED_SESSION_TASK_SNAPSHOT_VERSION = 3;
+export const SESSION_SNAPSHOT_VERSION = MANAGED_SESSION_TASK_SNAPSHOT_VERSION;
+export const READABLE_SESSION_SNAPSHOT_VERSIONS: readonly number[] = [1, 2, 3];
 export const PROJECT_WORKLIST_VERSION = 1;
