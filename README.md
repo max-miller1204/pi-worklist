@@ -18,6 +18,7 @@ Project Goals track the larger outcomes shared by every Pi session in a Git repo
 - `/tasks` opens an interactive two-section dashboard.
 - A compact widget shows the active Project Goal and up to three unfinished Session Tasks.
 - The `worklist` model tool manages both scopes through one consistent API.
+- A Pi-free external CLI lets scripts and other agents manage Project Goals without a running Pi session.
 - Project Goal completion, reopening, archival, and deletion require explicit user intent.
 - Cross-process locking and atomic replacement prevent concurrent Pi processes from losing updates or corrupting the project file.
 
@@ -106,6 +107,26 @@ Agents are instructed to split non-trivial work into several concrete, independe
 Session Task statuses are `todo`, `doing`, and `done`.
 Project Goal statuses are `open`, `active`, `done`, and `archived`.
 Only activation is a non-destructive direct Project Goal status change.
+
+## External CLI
+
+External agents and scripts can manage Project Goals without a running Pi session:
+
+```sh
+node src/cli.ts project list
+node src/cli.ts project add Support goal templates -- Let teams share reusable goal outlines
+node src/cli.ts project update <id> Replace the title -- Replace the description
+node src/cli.ts project set_active <id>
+node src/cli.ts project complete <id> --confirm
+```
+
+The CLI routes every mutation through the same service, cross-process lock, and atomic replacement as a live Pi session, so concurrent use is safe.
+Lifecycle actions (`complete`, `reopen`, `archive`, `delete`) require `--confirm`, mirroring the model tool's explicit-intent rule; an omitted flag exits with code 3 and changes nothing.
+`--json` prints machine-readable results on stdout, `--cwd <dir>` resolves the Git root from another directory, and errors always go to stderr.
+Running the TypeScript CLI directly requires Node 22.18 or newer (for example Node 24), which strips types natively.
+On older Node versions, including the Node 20 floor of the package's `engines` range, the CLI fails with an `Unknown file extension ".ts"` error.
+Session Tasks are intentionally unavailable here because they live inside a Pi session tree.
+A Claude Code skill in `.claude/skills/worklist/` teaches Claude sessions in this repository to use the CLI under the same guardrails.
 
 ## Development
 
