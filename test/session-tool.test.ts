@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { SessionStore, SESSION_SNAPSHOT_TYPE } from "../src/session-store.ts";
-import { executeWorklist, formatSessionTasks } from "../src/tool.ts";
+import { formatSessionTasks } from "../src/format.ts";
+import { executeWorklist } from "../src/tool.ts";
 import worklistExtension from "../src/extension.ts";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";

@@ -107,6 +107,24 @@ Session Task statuses are `todo`, `doing`, and `done`.
 Project Goal statuses are `open`, `active`, `done`, and `archived`.
 Only activation is a non-destructive direct Project Goal status change.
 
+## External CLI
+
+External agents and scripts can manage Project Goals without a running Pi session:
+
+```sh
+node src/cli.ts project list
+node src/cli.ts project add Support goal templates -- Let teams share reusable goal outlines
+node src/cli.ts project update <id> Replace the title -- Replace the description
+node src/cli.ts project set_active <id>
+node src/cli.ts project complete <id> --confirm
+```
+
+The CLI routes every mutation through the same service, cross-process lock, and atomic replacement as a live Pi session, so concurrent use is safe.
+Lifecycle actions (`complete`, `reopen`, `archive`, `delete`) require `--confirm`, mirroring the model tool's explicit-intent rule; an omitted flag exits with code 3 and changes nothing.
+`--json` prints machine-readable results on stdout, `--cwd <dir>` resolves the Git root from another directory, and errors always go to stderr.
+Session Tasks are intentionally unavailable here because they live inside a Pi session tree.
+A Claude Code skill in `.claude/skills/worklist/` teaches Claude sessions in this repository to use the CLI under the same guardrails.
+
 ## Development
 
 ```sh
