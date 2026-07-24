@@ -87,6 +87,200 @@ describe("worklist application service", () => {
 		expect(await readFile(projectPath, "utf8")).toBe(beforeConflict);
 	});
 
+	it("preserves Project Goal files, revisions, and timestamps for semantic no-ops", async () => {
+		const projectPath = join(
+			await mkdtemp(join(tmpdir(), "pi-worklist-application-no-op-")),
+			".pi",
+			"worklist.json",
+		);
+		const service = new WorklistApplicationService({ projectPath });
+		const added = await service.execute(
+			{ scope: "project", action: "add", title: "Stable", description: "Unchanged" },
+			{ source: "cli" },
+		);
+		if (!added.ok || !added.result.goal) return;
+		const id = added.result.goal.id;
+		const createdUpdatedAt = added.result.goal.updatedAt;
+		const beforeUpdate = await readFile(projectPath, "utf8");
+
+		const sameUpdate = await service.execute(
+			{
+				scope: "project",
+				action: "update",
+				id,
+				title: "Stable",
+				description: "Unchanged",
+				expectedRevision: "1",
+			},
+			{ source: "protocol" },
+		);
+		expect(sameUpdate).toMatchObject({
+			ok: true,
+			result: { goal: { id, updatedAt: createdUpdatedAt } },
+			meta: {
+				changed: false,
+				semanticNoOp: true,
+				changedFields: [],
+				revisions: { project: "1" },
+			},
+		});
+		expect(await readFile(projectPath, "utf8")).toBe(beforeUpdate);
+
+		const activated = await service.execute(
+			{ scope: "project", action: "set_active", id, expectedRevision: "1" },
+			{ source: "dashboard" },
+		);
+		expect(activated).toMatchObject({ ok: true, meta: { changed: true, revisions: { project: "2" } } });
+		const beforeRepeatedActivation = await readFile(projectPath, "utf8");
+		const repeatedActivation = await service.execute(
+			{ scope: "project", action: "set_active", id, expectedRevision: "2" },
+			{ source: "protocol" },
+		);
+		expect(repeatedActivation).toMatchObject({
+			ok: true,
+			meta: { changed: false, semanticNoOp: true, revisions: { project: "2" } },
+		});
+		expect(await readFile(projectPath, "utf8")).toBe(beforeRepeatedActivation);
+
+		const completed = await service.execute(
+			{ scope: "project", action: "complete", id, confirm: true, expectedRevision: "2" },
+			{ source: "command" },
+		);
+		expect(completed).toMatchObject({ ok: true, meta: { changed: true, revisions: { project: "3" } } });
+		const beforeRepeatedCompletion = await readFile(projectPath, "utf8");
+		const repeatedCompletion = await service.execute(
+			{ scope: "project", action: "complete", id, confirm: true, expectedRevision: "3" },
+			{ source: "protocol" },
+		);
+		expect(repeatedCompletion).toMatchObject({
+			ok: true,
+			meta: { changed: false, semanticNoOp: true, revisions: { project: "3" } },
+		});
+		expect(await readFile(projectPath, "utf8")).toBe(beforeRepeatedCompletion);
+	});
+
+	it("rejects stale Session Task mutations and avoids snapshots for semantic no-ops", async () => {
+		const initialRevision = "snapshot-a";
+		const { entries, store } = createSessionStore();
+		store.reconstruct({
+			sessionManager: {
+				getBranch: () => [
+					{
+						type: "custom",
+						id: initialRevision,
+						customType: "worklist-session-snapshot",
+						data: {
+							version: 2,
+							tasks: [{ id: "task-1", title: "Original", status: "todo" }],
+						},
+					},
+				],
+			},
+		} as never);
+		const service = new WorklistApplicationService({ sessionStore: store });
+
+		const updated = await service.execute(
+			{
+				scope: "session",
+				action: "update",
+				id: "task-1",
+				title: "Newer title",
+				expectedRevision: initialRevision,
+			},
+			{ source: "dashboard" },
+		);
+		expect(updated).toMatchObject({
+			ok: true,
+			meta: { changed: true, semanticNoOp: false, revisions: { session: expect.any(String) } },
+		});
+		if (!updated.ok) return;
+		const currentRevision = updated.meta.revisions?.session;
+		expect(currentRevision).not.toBe(initialRevision);
+		expect(entries).toHaveLength(1);
+
+		const conflict = await service.execute(
+			{
+				scope: "session",
+				action: "update",
+				id: "task-1",
+				title: "Stale overwrite",
+				expectedRevision: initialRevision,
+			},
+			{ source: "protocol" },
+		);
+		expect(conflict).toEqual({
+			ok: false,
+			scope: "session",
+			action: "update",
+			error: {
+				code: WORKLIST_ERROR_CODES.CONFLICT,
+				message: `Session task revision changed from ${initialRevision} to ${currentRevision}.`,
+				retryable: true,
+				conflict: {
+					type: "revision",
+					expectedRevision: initialRevision,
+					actualRevision: currentRevision,
+					resolution: "refresh-and-retry",
+				},
+			},
+			meta: {
+				changed: false,
+				semanticNoOp: false,
+				changedFields: [],
+				revisions: { session: currentRevision },
+			},
+		});
+		expect(store.getTasks()[0]?.title).toBe("Newer title");
+		expect(entries).toHaveLength(1);
+
+		const noOp = await service.execute(
+			{
+				scope: "session",
+				action: "update",
+				id: "task-1",
+				title: "Newer title",
+				expectedRevision: currentRevision,
+			},
+			{ source: "protocol" },
+		);
+		expect(noOp).toMatchObject({
+			ok: true,
+			meta: {
+				changed: false,
+				semanticNoOp: true,
+				revisions: { session: currentRevision },
+			},
+		});
+		expect(entries).toHaveLength(1);
+	});
+
+	it("reports queued identical Session Task mutations as one change and one semantic no-op", async () => {
+		const { entries, store } = createSessionStore();
+		store.setTasks([{ id: "task-1", title: "Original", status: "todo" }]);
+		const service = new WorklistApplicationService({ sessionStore: store });
+
+		const [first, second] = await Promise.all([
+			service.execute(
+				{ scope: "session", action: "update", id: "task-1", title: "Shared result" },
+				{ source: "dashboard" },
+			),
+			service.execute(
+				{ scope: "session", action: "update", id: "task-1", title: "Shared result" },
+				{ source: "protocol" },
+			),
+		]);
+
+		expect(first).toMatchObject({
+			ok: true,
+			meta: { changed: true, semanticNoOp: false, revisions: { session: expect.any(String) } },
+		});
+		expect(second).toMatchObject({
+			ok: true,
+			meta: { changed: false, semanticNoOp: true, revisions: first.meta.revisions },
+		});
+		expect(entries).toHaveLength(1);
+	});
+
 	it("returns the same deterministic success and error envelopes to every interface", async () => {
 		const { store } = createSessionStore();
 		store.setTasks([{ id: "task-1", title: "Deterministic", status: "doing" }]);
@@ -112,7 +306,12 @@ describe("worklist application service", () => {
 					action: "list",
 					tasks: [{ id: "task-1", title: "Deterministic", status: "doing" }],
 				},
-				meta: { changed: false, semanticNoOp: false, changedFields: [] },
+				meta: {
+					changed: false,
+					semanticNoOp: false,
+					changedFields: [],
+					revisions: { session: "0" },
+				},
 			})),
 		);
 

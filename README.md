@@ -88,8 +88,10 @@ The model-facing tool instead requires `confirm=true`, and its prompt rules proh
 ## Storage semantics
 
 Session Tasks are stored as versioned Pi custom entries in the current session tree.
-Snapshots written by earlier releases are still loaded, and any legacy Session Task descriptions are dropped during migration.
-The snapshot version remains 2 because canonical queue order is already represented by the stored task array.
+Each snapshot carries an opaque concurrency token that follows the active `/tree`, `/fork`, `/clone`, or resumed branch.
+Snapshots written by earlier releases are still loaded, derive their token from the Pi custom entry ID, and drop any legacy Session Task descriptions during migration.
+A branch without a snapshot uses the opaque baseline token `0`.
+The snapshot version remains 2 because canonical queue order is already represented by the stored task array and older readers ignore the added token.
 Completed tasks remain in that canonical order.
 Session Tasks do not enter model context directly.
 Only the active goal and an intentionally bounded list of incomplete tasks are added to the current turn's system prompt, preserving their relative queue order.
@@ -98,6 +100,8 @@ Project Goals use a schema-versioned JSON file at `.pi/worklist.json` in the can
 The file carries a monotonic numeric revision, while application and protocol callers receive that revision as an opaque string.
 Legacy files without a revision remain readable at revision `0` and gain revision `1` on their next mutation.
 Optional expected-revision checks run under the same cross-process lock as persistence and return a typed conflict without rewriting stale state.
+Session Task expected-revision checks run inside the serialized mutation queue and return the active branch token in conflicts.
+A semantic no-op preserves the Project Worklist file bytes, Project Goal timestamps, Project Worklist revision, Session Task snapshot count, and Session Task branch token.
 The file is human-readable and suitable for version control.
 A malformed or unsupported file is reported and never overwritten automatically.
 Project Goal operations are unavailable outside a Git repository, while Session Tasks continue to work normally.
@@ -107,7 +111,7 @@ Project Goal operations are unavailable outside a Git repository, while Session 
 The `worklist` tool accepts `scope=session|project` and actions including `list`, `add`, `move`, `update`, `set_status`, `set_active`, `complete`, `reopen`, `archive`, and `delete`.
 For Session Tasks, `add` optionally accepts exactly one of `beforeId` or `afterId`, while `move` requires exactly one.
 Moves preserve the task ID, title, status, and Project Goal association.
-Self-placement and already-satisfied placement succeed without writing another session snapshot.
+Self-placement, already-satisfied placement, identical Session Task updates, and repeated status changes succeed without writing another session snapshot.
 Session Tasks use concise, self-contained titles without descriptions.
 Agents are instructed to split non-trivial work into several concrete, independently completable Session Tasks instead of copying the broad end goal into one task.
 Session Task statuses are `todo`, `doing`, and `done`.

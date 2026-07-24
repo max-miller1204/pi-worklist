@@ -53,9 +53,16 @@ interface WorklistApplicationResultBase {
 	meta: WorklistResultMeta;
 }
 
+interface SessionExecutionResult {
+	result: WorklistOperationResult;
+	revision: string;
+	changed: boolean;
+}
+
 interface ProjectExecutionResult {
 	result: WorklistOperationResult;
 	revision: string;
+	changed: boolean;
 }
 
 export interface WorklistApplicationSuccess extends WorklistApplicationResultBase {
@@ -175,27 +182,27 @@ function normalizePlacement(operation: WorklistOperation): SessionTaskPlacement 
 
 function metadataForSuccess(
 	operation: WorklistOperation,
-	result: WorklistOperationResult,
-	previousSessionTasks?: SessionTask[],
+	changed: boolean,
+	sessionRevision?: string,
 	projectRevision?: string,
 ): WorklistResultMeta {
+	const revisions = {
+		...(sessionRevision !== undefined ? { session: sessionRevision } : {}),
+		...(projectRevision !== undefined ? { project: projectRevision } : {}),
+	};
 	if (operation.action === "list") {
 		return {
 			...cloneEmptyResultMeta(),
-			...(projectRevision !== undefined ? { revisions: { project: projectRevision } } : {}),
+			...(Object.keys(revisions).length > 0 ? { revisions } : {}),
 		};
 	}
 
-	let changed = true;
-	if (operation.scope === "session" && previousSessionTasks && result.tasks) {
-		changed = JSON.stringify(previousSessionTasks) !== JSON.stringify(result.tasks);
-	}
 	const changedRoot = operation.scope === "session" ? "/tasks" : "/goals";
 	return {
 		changed,
 		semanticNoOp: !changed,
 		changedFields: changed ? canonicalChangedFields([changedRoot]) : [],
-		...(projectRevision !== undefined ? { revisions: { project: projectRevision } } : {}),
+		...(Object.keys(revisions).length > 0 ? { revisions } : {}),
 	};
 }
 
@@ -204,6 +211,17 @@ function isSessionTaskAnchorNotFoundError(error: unknown): error is Error & { an
 		error instanceof Error &&
 		error.name === "SessionTaskAnchorNotFoundError" &&
 		typeof (error as { anchorId?: unknown }).anchorId === "string"
+	);
+}
+
+function isSessionRevisionConflictError(
+	error: unknown,
+): error is Error & { expectedRevision: string; actualRevision: string } {
+	return (
+		error instanceof Error &&
+		error.name === "SessionRevisionConflictError" &&
+		typeof (error as { expectedRevision?: unknown }).expectedRevision === "string" &&
+		typeof (error as { actualRevision?: unknown }).actualRevision === "string"
 	);
 }
 
@@ -286,22 +304,32 @@ async function addSessionTask(
 	sessionStore: SessionStore,
 	operation: WorklistOperation,
 	placement: SessionTaskPlacement | undefined,
-): Promise<WorklistOperationResult> {
+): Promise<SessionExecutionResult> {
 	if (!operation.title) {
 		throw validationError("title is required for session add.", {
 			fields: ["title"],
 			resolution: "provide-title",
 		});
 	}
-	const task = await sessionStore.addTask(operation.title, operation.goalId, placement);
-	return { scope: "session", action: "add", task, tasks: sessionStore.getTasks() };
+	const {
+		result: task,
+		changed,
+		revision,
+	} = await sessionStore.addTask(operation.title, operation.goalId, placement, {
+		expectedRevision: operation.expectedRevision,
+	});
+	return {
+		result: { scope: "session", action: "add", task, tasks: sessionStore.getTasks() },
+		changed,
+		revision,
+	};
 }
 
 async function moveSessionTask(
 	sessionStore: SessionStore,
 	operation: WorklistOperation,
 	placement: SessionTaskPlacement | undefined,
-): Promise<WorklistOperationResult> {
+): Promise<SessionExecutionResult> {
 	const id = requireOperationId(operation, "session-task");
 	if (!placement) {
 		throw validationError("Session move requires exactly one of beforeId or afterId.", {
@@ -309,28 +337,48 @@ async function moveSessionTask(
 			resolution: "provide-one-placement-anchor",
 		});
 	}
-	const task = await sessionStore.moveTask(id, placement);
+	const {
+		result: task,
+		changed,
+		revision,
+	} = await sessionStore.moveTask(id, placement, {
+		expectedRevision: operation.expectedRevision,
+	});
 	if (!task) throw notFoundError("session-task", id);
-	return { scope: "session", action: "move", task, tasks: sessionStore.getTasks() };
+	return {
+		result: { scope: "session", action: "move", task, tasks: sessionStore.getTasks() },
+		changed,
+		revision,
+	};
 }
 
 async function updateSessionTask(
 	sessionStore: SessionStore,
 	operation: WorklistOperation,
-): Promise<WorklistOperationResult> {
+): Promise<SessionExecutionResult> {
 	const id = requireOperationId(operation, "session-task");
 	const updates: Partial<Pick<SessionTask, "title" | "goalId">> = {};
 	if (operation.title !== undefined) updates.title = operation.title;
 	if (operation.goalId !== undefined) updates.goalId = operation.goalId;
-	const task = await sessionStore.updateTask(id, updates);
+	const {
+		result: task,
+		changed,
+		revision,
+	} = await sessionStore.updateTask(id, updates, {
+		expectedRevision: operation.expectedRevision,
+	});
 	if (!task) throw notFoundError("session-task", id);
-	return { scope: "session", action: "update", task, tasks: sessionStore.getTasks() };
+	return {
+		result: { scope: "session", action: "update", task, tasks: sessionStore.getTasks() },
+		changed,
+		revision,
+	};
 }
 
 async function setSessionTaskStatus(
 	sessionStore: SessionStore,
 	operation: WorklistOperation,
-): Promise<WorklistOperationResult> {
+): Promise<SessionExecutionResult> {
 	const id = requireOperationId(operation, "session-task");
 	if (!operation.status || !["todo", "doing", "done"].includes(operation.status)) {
 		throw validationError("status must be todo, doing, or done for session tasks.", {
@@ -339,19 +387,39 @@ async function setSessionTaskStatus(
 			supportedStatuses: ["doing", "done", "todo"],
 		});
 	}
-	const task = await sessionStore.setTaskStatus(id, operation.status as SessionTaskStatus);
+	const {
+		result: task,
+		changed,
+		revision,
+	} = await sessionStore.setTaskStatus(id, operation.status as SessionTaskStatus, {
+		expectedRevision: operation.expectedRevision,
+	});
 	if (!task) throw notFoundError("session-task", id);
-	return { scope: "session", action: "set_status", task, tasks: sessionStore.getTasks() };
+	return {
+		result: { scope: "session", action: "set_status", task, tasks: sessionStore.getTasks() },
+		changed,
+		revision,
+	};
 }
 
 async function deleteSessionTask(
 	sessionStore: SessionStore,
 	operation: WorklistOperation,
-): Promise<WorklistOperationResult> {
+): Promise<SessionExecutionResult> {
 	const id = requireOperationId(operation, "session-task");
-	const removed = await sessionStore.deleteTask(id);
+	const {
+		result: removed,
+		changed,
+		revision,
+	} = await sessionStore.deleteTask(id, {
+		expectedRevision: operation.expectedRevision,
+	});
 	if (!removed) throw notFoundError("session-task", id);
-	return { scope: "session", action: "delete", tasks: sessionStore.getTasks() };
+	return {
+		result: { scope: "session", action: "delete", tasks: sessionStore.getTasks() },
+		changed,
+		revision,
+	};
 }
 
 /**
@@ -394,17 +462,20 @@ export class WorklistApplicationService {
 		_context: WorklistOperationContext,
 	): Promise<WorklistApplicationResult> {
 		try {
-			const previousSessionTasks =
-				operation.scope === "session" && this.options.sessionStore
-					? this.options.sessionStore.getTasks()
-					: undefined;
 			const placement = normalizePlacement(operation);
 			let result: WorklistOperationResult;
+			let changed = false;
+			let sessionRevision: string | undefined;
 			let projectRevision: string | undefined;
-			if (operation.scope === "session") result = await this.executeSession(operation, placement);
-			else if (operation.scope === "project") {
+			if (operation.scope === "session") {
+				const sessionExecution = await this.executeSession(operation, placement);
+				result = sessionExecution.result;
+				changed = sessionExecution.changed;
+				sessionRevision = sessionExecution.revision;
+			} else if (operation.scope === "project") {
 				const projectExecution = await this.executeProject(operation);
 				result = projectExecution.result;
+				changed = projectExecution.changed;
 				projectRevision = projectExecution.revision;
 			} else {
 				throw createApplicationError(
@@ -418,7 +489,7 @@ export class WorklistApplicationService {
 				scope: operation.scope,
 				action: operation.action,
 				result,
-				meta: metadataForSuccess(operation, result, previousSessionTasks, projectRevision),
+				meta: metadataForSuccess(operation, changed, sessionRevision, projectRevision),
 			};
 		} catch (error) {
 			let typedError: WorklistProtocolError;
@@ -439,6 +510,19 @@ export class WorklistApplicationService {
 					},
 				};
 				failureMeta = { ...failureMeta, revisions: { project: error.actualRevision } };
+			} else if (isSessionRevisionConflictError(error)) {
+				typedError = {
+					code: WORKLIST_ERROR_CODES.CONFLICT,
+					message: error.message,
+					retryable: true,
+					conflict: {
+						type: "revision",
+						expectedRevision: error.expectedRevision,
+						actualRevision: error.actualRevision,
+						resolution: "refresh-and-retry",
+					},
+				};
+				failureMeta = { ...failureMeta, revisions: { session: error.actualRevision } };
 			} else if (error instanceof ProjectGoalActivationBlockedError) {
 				typedError = validationError(
 					"A done or archived Project Goal must be reopened with confirm=true before activation.",
@@ -466,7 +550,7 @@ export class WorklistApplicationService {
 	private async executeSession(
 		operation: WorklistOperation,
 		placement: SessionTaskPlacement | undefined,
-	): Promise<WorklistOperationResult> {
+	): Promise<SessionExecutionResult> {
 		const sessionStore = this.requireSessionStore();
 		if (operation.description !== undefined) {
 			throw validationError("description is only supported for project goals.", {
@@ -477,7 +561,11 @@ export class WorklistApplicationService {
 
 		switch (operation.action) {
 			case "list":
-				return { scope: "session", action: "list", tasks: sessionStore.getTasks() };
+				return {
+					result: { scope: "session", action: "list", tasks: sessionStore.getTasks() },
+					changed: false,
+					revision: sessionStore.getRevision(),
+				};
 			case "add":
 				return addSessionTask(sessionStore, operation, placement);
 			case "move":
@@ -503,7 +591,7 @@ export class WorklistApplicationService {
 		switch (operation.action) {
 			case "list": {
 				const { goals, revision } = await readProjectGoals(projectPath);
-				return { result: { scope: "project", action: "list", goals }, revision };
+				return { result: { scope: "project", action: "list", goals }, revision, changed: false };
 			}
 			case "add": {
 				if (!operation.title) {
@@ -512,13 +600,13 @@ export class WorklistApplicationService {
 						resolution: "provide-title",
 					});
 				}
-				const { goal, goals, revision } = await addProjectGoal(
+				const { goal, goals, revision, changed } = await addProjectGoal(
 					projectPath,
 					operation.title,
 					operation.description,
 					options,
 				);
-				return { result: { scope: "project", action: "add", goal, goals }, revision };
+				return { result: { scope: "project", action: "add", goal, goals }, revision, changed };
 			}
 			case "update": {
 				if (!operation.id) {
@@ -527,7 +615,7 @@ export class WorklistApplicationService {
 						resolution: "provide-project-goal-id",
 					});
 				}
-				const { goal, goals, revision } = await updateProjectGoal(
+				const { goal, goals, revision, changed } = await updateProjectGoal(
 					projectPath,
 					operation.id,
 					{
@@ -536,7 +624,7 @@ export class WorklistApplicationService {
 					},
 					options,
 				);
-				return { result: { scope: "project", action: "update", goal, goals }, revision };
+				return { result: { scope: "project", action: "update", goal, goals }, revision, changed };
 			}
 			case "set_status":
 				if (operation.status !== "active") {
@@ -587,10 +675,10 @@ export class WorklistApplicationService {
 				resolution: "provide-project-goal-id",
 			});
 		}
-		const { goal, goals, revision } = await activateProjectGoal(projectPath, operation.id, {
+		const { goal, goals, revision, changed } = await activateProjectGoal(projectPath, operation.id, {
 			expectedRevision: operation.expectedRevision,
 		});
-		return { result: { scope: "project", action: "set_active", goal, goals }, revision };
+		return { result: { scope: "project", action: "set_active", goal, goals }, revision, changed };
 	}
 
 	private async transitionProjectGoal(
@@ -614,10 +702,10 @@ export class WorklistApplicationService {
 			);
 		}
 		if (operation.action === "delete") {
-			const { goals, revision } = await deleteProjectGoal(projectPath, operation.id, {
+			const { goals, revision, changed } = await deleteProjectGoal(projectPath, operation.id, {
 				expectedRevision: operation.expectedRevision,
 			});
-			return { result: { scope: "project", action: "delete", goals }, revision };
+			return { result: { scope: "project", action: "delete", goals }, revision, changed };
 		}
 		if (!isProjectLifecycleAction(operation.action)) {
 			throw createApplicationError(
@@ -626,13 +714,13 @@ export class WorklistApplicationService {
 			);
 		}
 		const action = operation.action;
-		const { goal, goals, revision } = await transitionProjectGoal(
+		const { goal, goals, revision, changed } = await transitionProjectGoal(
 			projectPath,
 			operation.id,
 			PROJECT_LIFECYCLE_TARGET_STATUS[action],
 			{ expectedRevision: operation.expectedRevision },
 		);
-		return { result: { scope: "project", action, goal, goals }, revision };
+		return { result: { scope: "project", action, goal, goals }, revision, changed };
 	}
 
 	private requireSessionStore(): SessionStore {

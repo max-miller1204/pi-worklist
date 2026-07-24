@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { SessionSnapshot, SessionTask, SessionTaskPlacement, SessionTaskStatus } from "./types.ts";
 import { READABLE_SESSION_SNAPSHOT_VERSIONS, SESSION_SNAPSHOT_VERSION } from "./types.ts";
@@ -16,6 +17,28 @@ export class SessionTaskAnchorNotFoundError extends Error {
 	}
 }
 
+export interface SessionMutationOptions {
+	expectedRevision?: string;
+}
+
+export interface SessionMutationOutcome<T> {
+	result: T;
+	changed: boolean;
+	revision: string;
+}
+
+export class SessionRevisionConflictError extends Error {
+	readonly expectedRevision: string;
+	readonly actualRevision: string;
+
+	constructor(expectedRevision: string, actualRevision: string) {
+		super(`Session task revision changed from ${expectedRevision} to ${actualRevision}.`);
+		this.name = "SessionRevisionConflictError";
+		this.expectedRevision = expectedRevision;
+		this.actualRevision = actualRevision;
+	}
+}
+
 function isValidSessionTask(value: unknown): value is SessionTask {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
 	const task = value as Record<string, unknown>;
@@ -28,6 +51,7 @@ function isValidSessionTask(value: unknown): value is SessionTask {
 
 export class SessionStore {
 	private tasks: SessionTask[] = [];
+	private revision = "0";
 	private mutationQueue: Promise<unknown> = Promise.resolve();
 
 	constructor(private readonly pi: ExtensionAPI) {}
@@ -36,12 +60,17 @@ export class SessionStore {
 		return [...this.tasks];
 	}
 
+	getRevision(): string {
+		return this.revision;
+	}
+
 	setTasks(tasks: SessionTask[]): void {
 		this.tasks = [...tasks];
 	}
 
 	reconstruct(ctx: ExtensionContext): void {
 		this.tasks = [];
+		this.revision = "0";
 		const branch = ctx.sessionManager.getBranch();
 		for (const entry of branch) {
 			if (entry.type !== "custom") continue;
@@ -53,6 +82,12 @@ export class SessionStore {
 					const { id, title, status, goalId } = task;
 					return [{ id, title, status, ...(goalId !== undefined ? { goalId } : {}) }];
 				});
+				this.revision = "0";
+				if (typeof data.revision === "string" && data.revision.length > 0) {
+					this.revision = data.revision;
+				} else if (typeof entry.id === "string" && entry.id.length > 0) {
+					this.revision = entry.id;
+				}
 			}
 		}
 	}
@@ -63,8 +98,20 @@ export class SessionStore {
 		return next;
 	}
 
-	async addTask(title: string, goalId?: string, placement?: SessionTaskPlacement): Promise<SessionTask> {
+	private assertExpectedRevision(options: SessionMutationOptions): void {
+		if (options.expectedRevision !== undefined && options.expectedRevision !== this.revision) {
+			throw new SessionRevisionConflictError(options.expectedRevision, this.revision);
+		}
+	}
+
+	async addTask(
+		title: string,
+		goalId?: string,
+		placement?: SessionTaskPlacement,
+		options: SessionMutationOptions = {},
+	): Promise<SessionMutationOutcome<SessionTask>> {
 		return this.serialized(async () => {
+			this.assertExpectedRevision(options);
 			let insertionIndex = this.tasks.length;
 			if (placement) {
 				const anchorId = placement.beforeId ?? placement.afterId;
@@ -79,71 +126,103 @@ export class SessionStore {
 				status: "todo",
 				...(goalId !== undefined ? { goalId } : {}),
 			};
-			this.tasks = [...this.tasks.slice(0, insertionIndex), task, ...this.tasks.slice(insertionIndex)];
-			this.persist();
-			return task;
+			const revision = this.persist([
+				...this.tasks.slice(0, insertionIndex),
+				task,
+				...this.tasks.slice(insertionIndex),
+			]);
+			return { result: task, changed: true, revision };
 		});
 	}
 
-	async moveTask(id: string, placement: SessionTaskPlacement): Promise<SessionTask | null> {
+	async moveTask(
+		id: string,
+		placement: SessionTaskPlacement,
+		options: SessionMutationOptions = {},
+	): Promise<SessionMutationOutcome<SessionTask | null>> {
 		return this.serialized(async () => {
+			this.assertExpectedRevision(options);
 			const sourceIndex = this.tasks.findIndex((task) => task.id === id);
-			if (sourceIndex === -1) return null;
+			if (sourceIndex === -1) return { result: null, changed: false, revision: this.revision };
 			const task = this.tasks[sourceIndex];
 			const anchorId = placement.beforeId ?? placement.afterId;
-			if (anchorId === id) return task;
+			if (anchorId === id) return { result: task, changed: false, revision: this.revision };
 
 			const remaining = [...this.tasks.slice(0, sourceIndex), ...this.tasks.slice(sourceIndex + 1)];
 			const anchorIndex = remaining.findIndex((candidate) => candidate.id === anchorId);
 			if (anchorIndex === -1) throw new SessionTaskAnchorNotFoundError(anchorId);
 			const insertionIndex = placement.beforeId !== undefined ? anchorIndex : anchorIndex + 1;
 			const next = [...remaining.slice(0, insertionIndex), task, ...remaining.slice(insertionIndex)];
-			if (next.every((candidate, index) => candidate.id === this.tasks[index]?.id)) return task;
-			this.tasks = next;
-			this.persist();
-			return task;
+			if (next.every((candidate, index) => candidate.id === this.tasks[index]?.id)) {
+				return { result: task, changed: false, revision: this.revision };
+			}
+			const revision = this.persist(next);
+			return { result: task, changed: true, revision };
 		});
 	}
 
 	async updateTask(
 		id: string,
 		updates: Partial<Pick<SessionTask, "title" | "goalId">>,
-	): Promise<SessionTask | null> {
+		options: SessionMutationOptions = {},
+	): Promise<SessionMutationOutcome<SessionTask | null>> {
 		return this.serialized(async () => {
-			const index = this.tasks.findIndex((t) => t.id === id);
-			if (index === -1) return null;
-			const updated = { ...this.tasks[index], ...updates };
-			this.tasks = [...this.tasks.slice(0, index), updated, ...this.tasks.slice(index + 1)];
-			this.persist();
-			return updated;
+			this.assertExpectedRevision(options);
+			const index = this.tasks.findIndex((task) => task.id === id);
+			if (index === -1) return { result: null, changed: false, revision: this.revision };
+			const current = this.tasks[index];
+			const updated = { ...current, ...updates };
+			if (updated.title === current.title && updated.goalId === current.goalId) {
+				return { result: current, changed: false, revision: this.revision };
+			}
+			const revision = this.persist([...this.tasks.slice(0, index), updated, ...this.tasks.slice(index + 1)]);
+			return { result: updated, changed: true, revision };
 		});
 	}
 
-	async setTaskStatus(id: string, status: SessionTaskStatus): Promise<SessionTask | null> {
+	async setTaskStatus(
+		id: string,
+		status: SessionTaskStatus,
+		options: SessionMutationOptions = {},
+	): Promise<SessionMutationOutcome<SessionTask | null>> {
 		return this.serialized(async () => {
-			const index = this.tasks.findIndex((t) => t.id === id);
-			if (index === -1) return null;
-			const updated = { ...this.tasks[index], status };
-			this.tasks = [...this.tasks.slice(0, index), updated, ...this.tasks.slice(index + 1)];
-			this.persist();
-			return updated;
+			this.assertExpectedRevision(options);
+			const index = this.tasks.findIndex((task) => task.id === id);
+			if (index === -1) return { result: null, changed: false, revision: this.revision };
+			const current = this.tasks[index];
+			if (current.status === status) {
+				return { result: current, changed: false, revision: this.revision };
+			}
+			const updated = { ...current, status };
+			const revision = this.persist([...this.tasks.slice(0, index), updated, ...this.tasks.slice(index + 1)]);
+			return { result: updated, changed: true, revision };
 		});
 	}
 
-	async deleteTask(id: string): Promise<boolean> {
+	async deleteTask(
+		id: string,
+		options: SessionMutationOptions = {},
+	): Promise<SessionMutationOutcome<boolean>> {
 		return this.serialized(async () => {
-			const before = this.tasks.length;
-			this.tasks = this.tasks.filter((t) => t.id !== id);
-			if (this.tasks.length === before) return false;
-			this.persist();
-			return true;
+			this.assertExpectedRevision(options);
+			const tasks = this.tasks.filter((task) => task.id !== id);
+			if (tasks.length === this.tasks.length) {
+				return { result: false, changed: false, revision: this.revision };
+			}
+			const revision = this.persist(tasks);
+			return { result: true, changed: true, revision };
 		});
 	}
 
-	private persist(): void {
+	private persist(tasks: SessionTask[]): string {
+		const revision = randomBytes(16).toString("hex");
 		this.pi.appendEntry(SESSION_SNAPSHOT_TYPE, {
 			version: SESSION_SNAPSHOT_VERSION,
-			tasks: [...this.tasks],
+			revision,
+			tasks: [...tasks],
 		});
+		this.tasks = tasks;
+		this.revision = revision;
+		return revision;
 	}
 }

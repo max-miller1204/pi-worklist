@@ -23,6 +23,8 @@ export interface ProjectGoal {
 
 export interface SessionSnapshot {
 	version: number;
+	/** Opaque branch-aware concurrency token. Legacy snapshots derive this from their entry ID. */
+	revision?: string;
 	tasks: SessionTask[];
 }
 

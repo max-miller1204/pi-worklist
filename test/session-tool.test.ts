@@ -47,6 +47,61 @@ describe("session state and tool", () => {
 		expect(store.getTasks()).toEqual([{ id: "b", title: "new", status: "doing" }]);
 	});
 
+	it("restores branch-specific revisions and derives tokens for legacy snapshots", () => {
+		const { api } = fakePi();
+		const store = new SessionStore(api);
+		const legacySnapshot = {
+			type: "custom",
+			id: "legacy-common",
+			customType: SESSION_SNAPSHOT_TYPE,
+			data: { version: 1, tasks: [{ id: "common", title: "Common", status: "todo" }] },
+		};
+		const branches = {
+			first: [
+				legacySnapshot,
+				{
+					type: "custom",
+					id: "entry-first",
+					customType: SESSION_SNAPSHOT_TYPE,
+					data: {
+						version: 2,
+						revision: "branch-first",
+						tasks: [{ id: "first", title: "First branch", status: "doing" }],
+					},
+				},
+			],
+			second: [
+				legacySnapshot,
+				{
+					type: "custom",
+					id: "entry-second",
+					customType: SESSION_SNAPSHOT_TYPE,
+					data: {
+						version: 2,
+						revision: "branch-second",
+						tasks: [{ id: "second", title: "Second branch", status: "done" }],
+					},
+				},
+			],
+		};
+		const reconstruct = (branch: unknown[]) =>
+			store.reconstruct({
+				sessionManager: { getBranch: () => branch },
+			} as unknown as ExtensionContext);
+
+		reconstruct(branches.first);
+		expect(store.getRevision()).toBe("branch-first");
+		expect(store.getTasks()[0]?.id).toBe("first");
+
+		reconstruct(branches.second);
+		expect(store.getRevision()).toBe("branch-second");
+		expect(store.getTasks()[0]?.id).toBe("second");
+
+		reconstruct([legacySnapshot]);
+		expect(store.getRevision()).toBe("legacy-common");
+		expect(store.getTasks()[0]?.id).toBe("common");
+	});
+
 	it("skips malformed tasks while keeping valid ones during reconstruction", () => {
 		const { api } = fakePi();
 		const store = new SessionStore(api);
@@ -217,6 +272,55 @@ describe("session state and tool", () => {
 		expect(entries).toHaveLength(1);
 	});
 
+	it("does not append snapshots or advance revisions for semantic no-ops", async () => {
+		const { api, entries } = fakePi();
+		const store = new SessionStore(api);
+		store.setTasks([
+			{ id: "a", title: "Stable", status: "doing", goalId: "goal-1" },
+			{ id: "b", title: "Anchor", status: "todo" },
+		]);
+
+		await expect(
+			store.updateTask("a", { title: "Stable", goalId: "goal-1" }, { expectedRevision: "0" }),
+		).resolves.toMatchObject({ result: { id: "a" }, changed: false, revision: "0" });
+		await expect(store.setTaskStatus("a", "doing", { expectedRevision: "0" })).resolves.toMatchObject({
+			result: { id: "a" },
+			changed: false,
+			revision: "0",
+		});
+		await expect(store.moveTask("a", { beforeId: "a" }, { expectedRevision: "0" })).resolves.toMatchObject({
+			result: { id: "a" },
+			changed: false,
+			revision: "0",
+		});
+		expect(entries).toHaveLength(0);
+		expect(store.getRevision()).toBe("0");
+
+		await store.updateTask("a", { title: "Changed" }, { expectedRevision: "0" });
+		const changedRevision = store.getRevision();
+		expect(changedRevision).not.toBe("0");
+		expect(entries).toHaveLength(1);
+		expect(entries[0]).toMatchObject({
+			type: "custom",
+			customType: SESSION_SNAPSHOT_TYPE,
+			data: { version: 2, revision: changedRevision },
+		});
+
+		await expect(
+			store.updateTask("a", { title: "Changed" }, { expectedRevision: changedRevision }),
+		).resolves.toMatchObject({ result: { id: "a" }, changed: false, revision: changedRevision });
+		expect(entries).toHaveLength(1);
+		expect(store.getRevision()).toBe(changedRevision);
+		await expect(
+			store.updateTask("a", { title: "Changed" }, { expectedRevision: "0" }),
+		).rejects.toMatchObject({
+			name: "SessionRevisionConflictError",
+			expectedRevision: "0",
+			actualRevision: changedRevision,
+		});
+		expect(entries).toHaveLength(1);
+	});
+
 	it("rejects invalid placement without poisoning serialized mutations", async () => {
 		const { api, entries } = fakePi();
 		const store = new SessionStore(api);
@@ -282,9 +386,13 @@ describe("session state and tool", () => {
 
 		const deleting = store.deleteTask("b");
 		const staleAdd = store.addTask("Stale anchor", undefined, { afterId: "b" });
-		await expect(deleting).resolves.toBe(true);
-		await expect(staleAdd).rejects.toThrow("anchor b not found");
-		await expect(store.addTask("Queue recovered")).resolves.toMatchObject({ title: "Queue recovered" });
+		const staleAddExpectation = expect(staleAdd).rejects.toThrow("anchor b not found");
+		await expect(deleting).resolves.toMatchObject({ result: true, changed: true });
+		await staleAddExpectation;
+		await expect(store.addTask("Queue recovered")).resolves.toMatchObject({
+			result: { title: "Queue recovered" },
+			changed: true,
+		});
 		expect(store.getTasks().map((task) => task.title)).toEqual(["First", "Queue recovered"]);
 		expect(entries).toHaveLength(2);
 	});
@@ -300,16 +408,20 @@ describe("session state and tool", () => {
 
 		const deleteAnchor = store.deleteTask("b");
 		const staleMove = store.moveTask("c", { afterId: "b" });
-		await expect(deleteAnchor).resolves.toBe(true);
-		await expect(staleMove).rejects.toThrow("anchor b not found");
-		await expect(store.moveTask("c", { beforeId: "a" })).resolves.toMatchObject({ id: "c" });
+		const staleMoveExpectation = expect(staleMove).rejects.toThrow("anchor b not found");
+		await expect(deleteAnchor).resolves.toMatchObject({ result: true, changed: true });
+		await staleMoveExpectation;
+		await expect(store.moveTask("c", { beforeId: "a" })).resolves.toMatchObject({
+			result: { id: "c" },
+			changed: true,
+		});
 		expect(store.getTasks().map((task) => task.id)).toEqual(["c", "a"]);
 		expect(entries).toHaveLength(2);
 
 		const deleteSource = store.deleteTask("c");
 		const missingSourceMove = store.moveTask("c", { afterId: "a" });
-		await expect(deleteSource).resolves.toBe(true);
-		await expect(missingSourceMove).resolves.toBeNull();
+		await expect(deleteSource).resolves.toMatchObject({ result: true, changed: true });
+		await expect(missingSourceMove).resolves.toMatchObject({ result: null, changed: false });
 		expect(entries).toHaveLength(3);
 	});
 

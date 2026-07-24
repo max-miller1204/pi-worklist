@@ -147,8 +147,15 @@ Those lifecycle actions stay under pi-worklist control and retain their existing
 
 Project and session revisions are opaque strings.
 Consumers compare them for equality and must not parse or increment them.
+The Project revision represents the canonical `.pi/worklist.json` file, while the Session revision represents the latest worklist snapshot on the active Pi session branch.
+Legacy Session Task snapshots derive their revision from the Pi custom entry ID, and a branch without a snapshot uses the baseline token `0`.
+The first mutation on two branches that share a snapshot produces distinct successor tokens, so a resumed consumer cannot silently overwrite a newer mutation on either branch.
 Mutation operations can carry the relevant expected revision.
+The expected-revision check occurs before no-op detection, so a stale request conflicts even when its requested state happens to match current state.
 A mismatch returns `CONFLICT` with expected and actual revisions plus `resolution: "refresh-and-retry"`.
+
+Identical updates, already-satisfied moves or activations, and repeated status transitions are semantic no-ops.
+A semantic no-op does not rewrite `.pi/worklist.json`, change Project Goal timestamps, append a Session Task snapshot, increment a Project revision, replace a Session token, or emit a change event.
 
 A repeated mutation with the same idempotency key and identical semantic input returns the original mapping or an equivalent semantic no-op result.
 Reusing an idempotency key for different semantic input returns `CONFLICT` with `type: "idempotency-key"`.

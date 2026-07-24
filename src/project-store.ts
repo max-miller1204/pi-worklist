@@ -9,6 +9,8 @@ export interface ProjectStoreResult<T> {
 	data: T;
 	revision?: number;
 	error?: string;
+	/** Present and false only when a successful mutation made no canonical change. */
+	changed?: false;
 }
 
 export interface ProjectMutationOptions {
@@ -129,7 +131,7 @@ export async function mutateProjectWorklist<T>(
 				error: "Project mutation produced an invalid worklist",
 			};
 		}
-		if (!changed) return { data: result, revision: readResult.data.revision };
+		if (!changed) return { data: result, revision: readResult.data.revision, changed: false };
 
 		const revision = readResult.data.revision + 1;
 		if (!Number.isSafeInteger(revision)) {
