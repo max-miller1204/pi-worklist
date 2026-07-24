@@ -1,13 +1,7 @@
 /* eslint-disable no-case-declarations */
 import type { ExtensionContext, ToolExecutionMode } from "@earendil-works/pi-coding-agent";
-import type {
-	ProjectGoalStatus,
-	SessionTask,
-	SessionTaskPlacement,
-	SessionTaskStatus,
-	WorklistToolDetails,
-} from "./types.ts";
 import { formatProjectGoals, formatSessionTasks } from "./format.ts";
+import { getWorklistPath, resolveGitRoot } from "./git.ts";
 import {
 	activateProjectGoal,
 	addProjectGoal,
@@ -19,7 +13,13 @@ import {
 	updateProjectGoal,
 } from "./project-mutations.ts";
 import type { SessionStore } from "./session-store.ts";
-import { getWorklistPath, resolveGitRoot } from "./git.ts";
+import type {
+	ProjectGoalStatus,
+	SessionTask,
+	SessionTaskPlacement,
+	SessionTaskStatus,
+	WorklistToolDetails,
+} from "./types.ts";
 
 export interface ToolDeps {
 	sessionStore: SessionStore;

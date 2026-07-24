@@ -1,9 +1,9 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { WorklistParamsSchema } from "./schema.ts";
-import { readProjectWorklist } from "./project-store.ts";
-import { SessionStore } from "./session-store.ts";
 import { formatProjectGoals, formatSessionTasks } from "./format.ts";
+import { readProjectWorklist } from "./project-store.ts";
+import { WorklistParamsSchema } from "./schema.ts";
+import { SessionStore } from "./session-store.ts";
 import { executeWorklist, getProjectPath, WORKLIST_EXECUTION_MODE } from "./tool.ts";
 import type { ProjectGoal, ProjectGoalStatus, SessionTaskStatus } from "./types.ts";
 import {

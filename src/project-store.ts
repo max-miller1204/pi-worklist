@@ -1,6 +1,6 @@
+import { randomBytes } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { randomBytes } from "node:crypto";
 import lockfile from "proper-lockfile";
 import type { ProjectGoal, ProjectWorklist } from "./types.ts";
 import { PROJECT_WORKLIST_VERSION } from "./types.ts";

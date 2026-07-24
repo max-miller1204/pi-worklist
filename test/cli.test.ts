@@ -1,9 +1,9 @@
-import { describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { describe, expect, it } from "vitest";
 import type { ProjectGoal, ProjectWorklist } from "../src/types.ts";
 
 const execFileAsync = promisify(execFile);

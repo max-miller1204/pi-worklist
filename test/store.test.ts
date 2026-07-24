@@ -1,12 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { describe, expect, it } from "vitest";
+import { createEmptyWorklist, mutateProjectWorklist, readProjectWorklist } from "../src/project-store.ts";
 
 const execFileAsync = promisify(execFile);
-import { createEmptyWorklist, mutateProjectWorklist, readProjectWorklist } from "../src/project-store.ts";
 
 async function tempPath() {
 	const root = await mkdtemp(join(tmpdir(), "pi-worklist-"));

@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
 import type { Theme } from "@earendil-works/pi-coding-agent";
+import { describe, expect, it } from "vitest";
+import { parseTasksCommand, WORKLIST_PROMPT_GUIDELINES } from "../src/extension.ts";
+import type { ProjectGoal, SessionTask } from "../src/types.ts";
 import {
 	buildPromptSummary,
 	buildWidgetLines,
@@ -7,8 +9,6 @@ import {
 	type DashboardResult,
 	type DashboardState,
 } from "../src/ui.ts";
-import { parseTasksCommand, WORKLIST_PROMPT_GUIDELINES } from "../src/extension.ts";
-import type { ProjectGoal, SessionTask } from "../src/types.ts";
 
 const tasks: SessionTask[] = Array.from({ length: 6 }, (_, index) => ({
 	id: `t${index}`,

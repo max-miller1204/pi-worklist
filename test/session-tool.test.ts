@@ -1,12 +1,12 @@
-import { describe, expect, it } from "vitest";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { SessionStore, SESSION_SNAPSHOT_TYPE } from "../src/session-store.ts";
-import { formatSessionTasks } from "../src/format.ts";
-import { executeWorklist } from "../src/tool.ts";
-import worklistExtension from "../src/extension.ts";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { describe, expect, it } from "vitest";
+import worklistExtension from "../src/extension.ts";
+import { formatSessionTasks } from "../src/format.ts";
+import { SESSION_SNAPSHOT_TYPE, SessionStore } from "../src/session-store.ts";
+import { executeWorklist } from "../src/tool.ts";
 
 function fakePi(entries: unknown[] = []) {
 	return {

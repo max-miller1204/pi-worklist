@@ -1,5 +1,5 @@
 import { StringEnum } from "@earendil-works/pi-ai";
-import { Type, type TUnsafe } from "typebox";
+import { type TUnsafe, Type } from "typebox";
 
 const ScopeSchema: TUnsafe<"session" | "project"> = StringEnum(["session", "project"] as const, {
 	description: "Whether to operate on session tasks or project goals.",
