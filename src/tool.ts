@@ -13,6 +13,7 @@ import {
 	addProjectGoal,
 	deleteProjectGoal,
 	listProjectGoals,
+	PROJECT_LIFECYCLE_TARGET_STATUS,
 	ProjectGoalActivationBlockedError,
 	transitionProjectGoal,
 	updateProjectGoal,
@@ -233,8 +234,7 @@ export async function executeWorklist(
 						details: { scope: "project", action: "delete", goals },
 					};
 				}
-				const targetStatus: ProjectGoalStatus =
-					params.action === "complete" ? "done" : params.action === "reopen" ? "open" : "archived";
+				const targetStatus = PROJECT_LIFECYCLE_TARGET_STATUS[params.action];
 				const { goal, goals } = await transitionProjectGoal(projectPath, id, targetStatus);
 				return {
 					content: `Project goal ${goal.id} is now ${goal.status}`,

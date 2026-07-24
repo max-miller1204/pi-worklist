@@ -8,6 +8,12 @@ import type { ProjectGoal, ProjectGoalStatus, ProjectWorklist } from "./types.ts
  * persistence rules stay identical everywhere.
  */
 
+export const PROJECT_LIFECYCLE_TARGET_STATUS: Record<"complete" | "reopen" | "archive", ProjectGoalStatus> = {
+	complete: "done",
+	reopen: "open",
+	archive: "archived",
+};
+
 export class ProjectGoalNotFoundError extends Error {
 	constructor(id: string) {
 		super(`Project goal ${id} not found`);

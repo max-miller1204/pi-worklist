@@ -6,11 +6,12 @@ import {
 	addProjectGoal,
 	deleteProjectGoal,
 	listProjectGoals,
+	PROJECT_LIFECYCLE_TARGET_STATUS,
 	ProjectGoalActivationBlockedError,
 	transitionProjectGoal,
 	updateProjectGoal,
 } from "./project-mutations.ts";
-import type { ProjectGoal, ProjectGoalStatus } from "./types.ts";
+import type { ProjectGoal } from "./types.ts";
 
 /**
  * Pi-free command line for Project Goals, so external agents and scripts can
@@ -24,7 +25,7 @@ import type { ProjectGoal, ProjectGoalStatus } from "./types.ts";
 const LIFECYCLE_ACTIONS = ["complete", "reopen", "archive", "delete"] as const;
 type LifecycleAction = (typeof LIFECYCLE_ACTIONS)[number];
 
-const USAGE = `Usage: pi-worklist project <action> [arguments] [flags]
+const USAGE = `Usage: node src/cli.ts project <action> [arguments] [flags]
 
 Actions:
   list                                     Show all project goals
@@ -75,7 +76,7 @@ function parseArgs(argv: string[]): CliInvocation {
 		else if (part === "--confirm") confirm = true;
 		else if (part === "--cwd") {
 			const value = head[index + 1];
-			if (!value) fail(`--cwd requires a directory\n\n${USAGE}`, 2);
+			if (!value || value.startsWith("--")) fail(`--cwd requires a directory\n\n${USAGE}`, 2);
 			cwd = value;
 			index++;
 		} else if (part.startsWith("--")) fail(`Unknown flag ${part}\n\n${USAGE}`, 2);
@@ -129,8 +130,7 @@ async function runLifecycle(
 		report(invocation, `Deleted project goal ${id}`, goals);
 		return;
 	}
-	const status: ProjectGoalStatus =
-		action === "complete" ? "done" : action === "reopen" ? "open" : "archived";
+	const status = PROJECT_LIFECYCLE_TARGET_STATUS[action];
 	const { goal, goals } = await transitionProjectGoal(projectPath, id, status);
 	report(invocation, `Project goal ${goal.id} is now ${goal.status}`, goals, goal);
 }
@@ -178,7 +178,7 @@ async function run(invocation: CliInvocation): Promise<void> {
 				report(invocation, `Activated project goal ${goal.id}`, goals, goal);
 			} catch (error) {
 				if (error instanceof ProjectGoalActivationBlockedError) {
-					fail(`${error.message}. Reopen it first: pi-worklist project reopen ${id} --confirm`, 1);
+					fail(`${error.message}. Reopen it first: node src/cli.ts project reopen ${id} --confirm`, 1);
 				}
 				throw error;
 			}

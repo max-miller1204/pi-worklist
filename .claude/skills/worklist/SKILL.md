@@ -56,3 +56,4 @@ node src/cli.ts project set_active goal-abc123-deadbeef
 
 - Exit code 1 with a "Malformed" message means `.pi/worklist.json` is corrupt; report it to the user and never rewrite the file by hand.
 - Exit code 1 with a "git repository" message means the working directory is outside a repo; rerun with `--cwd <repo-root>`.
+- An `Unknown file extension ".ts"` error means the Node version is too old; the CLI runs TypeScript through native type stripping and needs Node 23.6 or newer (for example Node 24).

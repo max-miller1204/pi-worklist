@@ -127,6 +127,10 @@ describe("project goal CLI", () => {
 
 		const missingTitle = await runCli(root, ["project", "add"]);
 		expect(missingTitle.code).toBe(2);
+
+		const flagAsCwd = await runCli(root, ["project", "list", "--cwd", "--json"]);
+		expect(flagAsCwd.code).toBe(2);
+		expect(flagAsCwd.stderr).toContain("--cwd requires a directory");
 	});
 
 	it("fails cleanly outside a git repository and honors --cwd", async () => {
