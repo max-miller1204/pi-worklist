@@ -23,11 +23,18 @@
 	},
 	"files": [
 		"src",
+		"docs",
 		"AGENTS.md",
 		"README.md",
 		"package.json"
 	],
 	"main": "./src/extension.ts",
+	"exports": {
+		".": "./src/extension.ts",
+		"./integration-contract": "./src/integration-contract.ts",
+		"./src/*": "./src/*",
+		"./package.json": "./package.json"
+	},
 	"pi": {
 		"extensions": [
 			"./src/extension.ts"

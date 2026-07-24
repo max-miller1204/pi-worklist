@@ -1,3 +1,5 @@
+<!-- markdownlint-disable MD013 -->
+
 # pi-worklist
 
 [![npm version](https://img.shields.io/npm/v/pi-worklist.svg)](https://www.npmjs.com/package/pi-worklist)
@@ -21,6 +23,7 @@ Project Goals track the larger outcomes shared by every Pi session in a Git repo
 - A Pi-free external CLI lets scripts and other agents manage Project Goals without a running Pi session.
 - Project Goal completion, reopening, archival, and deletion require explicit user intent.
 - Cross-process locking and atomic replacement prevent concurrent Pi processes from losing updates or corrupting the project file.
+- A versioned inter-extension contract defines bounded, capability-negotiated integration over Pi's shared event bus.
 
 ## Install
 
@@ -108,6 +111,16 @@ Session Task statuses are `todo`, `doing`, and `done`.
 Project Goal statuses are `open`, `active`, `done`, and `archived`.
 Only activation is a non-destructive direct Project Goal status change.
 
+## Inter-extension contract
+
+The version 1 machine-readable contract is exported from `pi-worklist/integration-contract`.
+It defines stable `pi.events` channel names, protocol and capability versions, request and result unions, actor and run correlation metadata, bounded projections, managed external identities, revisions, idempotency, deterministic mutation metadata, typed errors, timeouts, and change events.
+The contract deliberately excludes Project Goal completion, archival, deletion, and rewriting operations.
+Approved Project Goal batch creation requires explicit approval evidence in its payload.
+
+See [Pi Worklist Integration Protocol v1](docs/integration-protocol-v1.md) for the transport rules, fallback behavior, operation ownership, and approval boundary shared with pi-orchestrator.
+Importing the contract has no side effects and does not instantiate a SessionStore or register an event handler.
+
 ## External CLI
 
 External agents and scripts can manage Project Goals without a running Pi session:
@@ -138,7 +151,8 @@ npm run check
 npm run pack:check
 ```
 
-The test suite includes a real Pi RPC load test in a temporary Git repository.
+The test suite includes real Pi RPC load tests in temporary repositories.
+One RPC test loads separate provider and consumer fixtures and verifies a capability-negotiation round trip over the shared `pi.events` bus.
 The package uses TypeScript source directly because Pi loads extensions through jiti.
 
 ## Publishing and the Pi gallery

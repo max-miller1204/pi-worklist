@@ -37,9 +37,9 @@
       "id": "goal-mryb1h5b-f5473d74",
       "title": "Add a versioned inter-extension worklist API",
       "description": "Expose a machine-oriented integration protocol over Pi's shared pi.events bus so pi-orchestrator can discover capabilities, read the active or selected Project Goal, list Session Tasks, reconcile task projections, and update projected execution state without invoking the model-facing tool, instantiating another SessionStore, editing .pi/worklist.json, or appending snapshots directly. Include protocol versions, request IDs, actor and run correlation metadata, deterministic result envelopes, changed-field and semantic no-op reporting, typed error codes with retryability and conflict details, bounded read projections, timeouts, capability negotiation, and a graceful unavailable or incompatible fallback. Route the tool, command, dashboard, CLI, and inter-extension requests through one mutation service so every interface applies identical validation and persistence rules.",
-      "status": "open",
+      "status": "active",
       "createdAt": "2026-07-24T02:12:07.823Z",
-      "updatedAt": "2026-07-24T18:18:33.260Z"
+      "updatedAt": "2026-07-24T19:34:49.183Z"
     },
     {
       "id": "goal-mryb1h5d-8654f513",
