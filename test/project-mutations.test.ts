@@ -8,6 +8,7 @@ import {
 	deleteProjectGoal,
 	ProjectGoalActivationBlockedError,
 	ProjectGoalNotFoundError,
+	readProjectGoals,
 	transitionProjectGoal,
 	updateProjectGoal,
 } from "../src/project-mutations.ts";
@@ -23,7 +24,9 @@ describe("project mutation service", () => {
 		const first = await addProjectGoal(path, "First");
 		const second = await addProjectGoal(path, "Second", "With description");
 		expect(first.goals.map((goal) => goal.title)).toEqual(["First"]);
+		expect(first.revision).toBe("1");
 		expect(second.goals.map((goal) => goal.title)).toEqual(["First", "Second"]);
+		expect(second.revision).toBe("2");
 		expect(second.goal.description).toBe("With description");
 	});
 
@@ -35,6 +38,7 @@ describe("project mutation service", () => {
 		await expect(activateProjectGoal(path, "missing")).rejects.toThrow(ProjectGoalNotFoundError);
 		await expect(transitionProjectGoal(path, "missing", "done")).rejects.toThrow(ProjectGoalNotFoundError);
 		await expect(deleteProjectGoal(path, "missing")).rejects.toThrow(ProjectGoalNotFoundError);
+		expect((await readProjectGoals(path)).revision).toBe("0");
 	});
 
 	it("blocks activating done or archived goals with a typed error", async () => {
@@ -42,6 +46,7 @@ describe("project mutation service", () => {
 		const { goal } = await addProjectGoal(path, "Finished");
 		await transitionProjectGoal(path, goal.id, "done");
 		await expect(activateProjectGoal(path, goal.id)).rejects.toThrow(ProjectGoalActivationBlockedError);
+		expect((await readProjectGoals(path)).revision).toBe("2");
 		await transitionProjectGoal(path, goal.id, "archived");
 		await expect(activateProjectGoal(path, goal.id)).rejects.toThrow(ProjectGoalActivationBlockedError);
 	});

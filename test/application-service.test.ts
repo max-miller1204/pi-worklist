@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -20,6 +20,73 @@ function createSessionStore() {
 }
 
 describe("worklist application service", () => {
+	it("rejects stale Project Goal mutations with the current persisted revision", async () => {
+		const projectPath = join(
+			await mkdtemp(join(tmpdir(), "pi-worklist-application-revision-")),
+			".pi",
+			"worklist.json",
+		);
+		const firstClient = new WorklistApplicationService({ projectPath });
+		const secondClient = new WorklistApplicationService({ projectPath });
+
+		const added = await firstClient.execute(
+			{ scope: "project", action: "add", title: "Revision guarded", expectedRevision: "0" },
+			{ source: "protocol" },
+		);
+		expect(added).toMatchObject({
+			ok: true,
+			meta: { changed: true, semanticNoOp: false, revisions: { project: "1" } },
+		});
+		if (!added.ok || !added.result.goal) return;
+
+		const updated = await secondClient.execute(
+			{
+				scope: "project",
+				action: "update",
+				id: added.result.goal.id,
+				title: "Newer title",
+				expectedRevision: "1",
+			},
+			{ source: "dashboard" },
+		);
+		expect(updated).toMatchObject({ ok: true, meta: { revisions: { project: "2" } } });
+		const beforeConflict = await readFile(projectPath, "utf8");
+
+		const conflict = await firstClient.execute(
+			{
+				scope: "project",
+				action: "update",
+				id: added.result.goal.id,
+				title: "Stale overwrite",
+				expectedRevision: "1",
+			},
+			{ source: "protocol" },
+		);
+		expect(conflict).toEqual({
+			ok: false,
+			scope: "project",
+			action: "update",
+			error: {
+				code: WORKLIST_ERROR_CODES.CONFLICT,
+				message: "Project worklist revision changed from 1 to 2.",
+				retryable: true,
+				conflict: {
+					type: "revision",
+					expectedRevision: "1",
+					actualRevision: "2",
+					resolution: "refresh-and-retry",
+				},
+			},
+			meta: {
+				changed: false,
+				semanticNoOp: false,
+				changedFields: [],
+				revisions: { project: "2" },
+			},
+		});
+		expect(await readFile(projectPath, "utf8")).toBe(beforeConflict);
+	});
+
 	it("returns the same deterministic success and error envelopes to every interface", async () => {
 		const { store } = createSessionStore();
 		store.setTasks([{ id: "task-1", title: "Deterministic", status: "doing" }]);

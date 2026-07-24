@@ -1,5 +1,11 @@
-import { generateId, mutateProjectWorklist, readProjectWorklist, sortGoals } from "./project-store.ts";
-import type { ProjectGoal, ProjectGoalStatus, ProjectWorklist } from "./types.ts";
+import {
+	generateId,
+	mutateProjectWorklist,
+	type ProjectMutationOptions,
+	readProjectWorklist,
+	sortGoals,
+} from "./project-store.ts";
+import type { ProjectGoal, ProjectGoalStatus } from "./types.ts";
 
 /**
  * Pi-free Project Goal persistence primitives.
@@ -31,6 +37,12 @@ export class ProjectGoalActivationBlockedError extends Error {
 export interface ProjectMutationOutcome {
 	goal: ProjectGoal;
 	goals: ProjectGoal[];
+	revision: string;
+}
+
+export interface ProjectGoalsSnapshot {
+	goals: ProjectGoal[];
+	revision: string;
 }
 
 export interface ProjectGoalUpdate {
@@ -38,16 +50,32 @@ export interface ProjectGoalUpdate {
 	description?: string;
 }
 
-export async function listProjectGoals(path: string): Promise<ProjectGoal[]> {
+export async function readProjectGoals(path: string): Promise<ProjectGoalsSnapshot> {
 	const { data, error } = await readProjectWorklist(path);
 	if (error) throw new Error(error);
-	return data.goals;
+	return { goals: data.goals, revision: String(data.revision) };
+}
+
+export async function listProjectGoals(path: string): Promise<ProjectGoal[]> {
+	const snapshot = await readProjectGoals(path);
+	return snapshot.goals;
+}
+
+function mutationOutcome(result: {
+	data: Omit<ProjectMutationOutcome, "revision">;
+	revision?: number;
+	error?: string;
+}): ProjectMutationOutcome {
+	if (result.error) throw new Error(result.error);
+	if (result.revision === undefined) throw new Error("Project mutation did not return a revision");
+	return { ...result.data, revision: String(result.revision) };
 }
 
 export async function addProjectGoal(
 	path: string,
 	title: string,
 	description?: string,
+	options?: ProjectMutationOptions,
 ): Promise<ProjectMutationOutcome> {
 	const now = new Date().toISOString();
 	const goal: ProjectGoal = {
@@ -58,44 +86,67 @@ export async function addProjectGoal(
 		createdAt: now,
 		updatedAt: now,
 	};
-	const result = await mutateProjectWorklist(path, (worklist) => {
-		const goals = sortGoals([...worklist.goals, goal]);
-		return { worklist: { ...worklist, goals }, result: { goal, goals } };
-	});
-	if (result.error) throw new Error(result.error);
-	return result.data;
+	const result = await mutateProjectWorklist(
+		path,
+		(worklist) => {
+			const goals = sortGoals([...worklist.goals, goal]);
+			return { worklist: { ...worklist, goals }, result: { goal, goals } };
+		},
+		options,
+	);
+	return mutationOutcome(result);
 }
 
 export async function updateProjectGoal(
 	path: string,
 	id: string,
 	updates: ProjectGoalUpdate,
+	options?: ProjectMutationOptions,
 ): Promise<ProjectMutationOutcome> {
-	const result = await mutateProjectWorklist(path, (worklist) => {
-		const index = worklist.goals.findIndex((goal) => goal.id === id);
-		if (index === -1) return { worklist, result: null };
-		const updated: ProjectGoal = { ...worklist.goals[index] };
-		if (updates.title !== undefined) updated.title = updates.title;
-		if (updates.description !== undefined) updated.description = updates.description;
-		updated.updatedAt = new Date().toISOString();
-		const goals = [...worklist.goals];
-		goals[index] = updated;
-		return { worklist: { ...worklist, goals }, result: { goal: updated, goals } };
-	});
-	if (result.error) throw new Error(result.error);
-	if (!result.data) throw new ProjectGoalNotFoundError(id);
-	return result.data;
-}
-
-export async function activateProjectGoal(path: string, id: string): Promise<ProjectMutationOutcome> {
-	type ActivationResult = { outcome: ProjectMutationOutcome | null; blocked: boolean };
 	const result = await mutateProjectWorklist(
 		path,
-		(worklist): { worklist: ProjectWorklist; result: ActivationResult } => {
+		(worklist) => {
+			const index = worklist.goals.findIndex((goal) => goal.id === id);
+			if (index === -1) return { worklist, result: null, changed: false };
+			const updated: ProjectGoal = { ...worklist.goals[index] };
+			if (updates.title !== undefined) updated.title = updates.title;
+			if (updates.description !== undefined) updated.description = updates.description;
+			updated.updatedAt = new Date().toISOString();
+			const goals = [...worklist.goals];
+			goals[index] = updated;
+			return { worklist: { ...worklist, goals }, result: { goal: updated, goals } };
+		},
+		options,
+	);
+	if (result.error) throw new Error(result.error);
+	if (!result.data) throw new ProjectGoalNotFoundError(id);
+	return mutationOutcome({ ...result, data: result.data });
+}
+
+export async function activateProjectGoal(
+	path: string,
+	id: string,
+	options?: ProjectMutationOptions,
+): Promise<ProjectMutationOutcome> {
+	type ActivationResult = {
+		outcome: Omit<ProjectMutationOutcome, "revision"> | null;
+		blocked: boolean;
+	};
+	const result = await mutateProjectWorklist(
+		path,
+		(
+			worklist,
+		): {
+			worklist: typeof worklist;
+			result: ActivationResult;
+			changed?: boolean;
+		} => {
 			const target = worklist.goals.find((goal) => goal.id === id);
-			if (!target) return { worklist, result: { outcome: null, blocked: false } };
+			if (!target) {
+				return { worklist, result: { outcome: null, blocked: false }, changed: false };
+			}
 			if (target.status === "done" || target.status === "archived") {
-				return { worklist, result: { outcome: null, blocked: true } };
+				return { worklist, result: { outcome: null, blocked: true }, changed: false };
 			}
 			const now = new Date().toISOString();
 			const goals = worklist.goals.map((goal) => {
@@ -113,42 +164,61 @@ export async function activateProjectGoal(path: string, id: string): Promise<Pro
 				result: { outcome: activated ? { goal: activated, goals } : null, blocked: false },
 			};
 		},
+		options,
 	);
 	if (result.error) throw new Error(result.error);
 	if (result.data.blocked) throw new ProjectGoalActivationBlockedError(id);
 	if (!result.data.outcome) throw new ProjectGoalNotFoundError(id);
-	return result.data.outcome;
+	return mutationOutcome({ ...result, data: result.data.outcome });
 }
 
 export async function transitionProjectGoal(
 	path: string,
 	id: string,
 	status: ProjectGoalStatus,
+	options?: ProjectMutationOptions,
 ): Promise<ProjectMutationOutcome> {
-	const result = await mutateProjectWorklist(path, (worklist) => {
-		const index = worklist.goals.findIndex((goal) => goal.id === id);
-		if (index === -1) return { worklist, result: null };
-		const updated: ProjectGoal = {
-			...worklist.goals[index],
-			status,
-			updatedAt: new Date().toISOString(),
-		};
-		const goals = [...worklist.goals];
-		goals[index] = updated;
-		return { worklist: { ...worklist, goals }, result: { goal: updated, goals } };
-	});
+	const result = await mutateProjectWorklist(
+		path,
+		(worklist) => {
+			const index = worklist.goals.findIndex((goal) => goal.id === id);
+			if (index === -1) return { worklist, result: null, changed: false };
+			const updated: ProjectGoal = {
+				...worklist.goals[index],
+				status,
+				updatedAt: new Date().toISOString(),
+			};
+			const goals = [...worklist.goals];
+			goals[index] = updated;
+			return { worklist: { ...worklist, goals }, result: { goal: updated, goals } };
+		},
+		options,
+	);
 	if (result.error) throw new Error(result.error);
 	if (!result.data) throw new ProjectGoalNotFoundError(id);
-	return result.data;
+	return mutationOutcome({ ...result, data: result.data });
 }
 
-export async function deleteProjectGoal(path: string, id: string): Promise<{ goals: ProjectGoal[] }> {
-	const result = await mutateProjectWorklist(path, (worklist) => {
-		const goals = worklist.goals.filter((goal) => goal.id !== id);
-		const removed = goals.length !== worklist.goals.length;
-		return { worklist: { ...worklist, goals }, result: removed ? { goals } : null };
-	});
+export async function deleteProjectGoal(
+	path: string,
+	id: string,
+	options?: ProjectMutationOptions,
+): Promise<{ goals: ProjectGoal[]; revision: string }> {
+	const result = await mutateProjectWorklist(
+		path,
+		(worklist) => {
+			const goals = worklist.goals.filter((goal) => goal.id !== id);
+			const removed = goals.length !== worklist.goals.length;
+			return {
+				worklist: removed ? { ...worklist, goals } : worklist,
+				result: removed ? { goals } : null,
+				changed: removed,
+			};
+		},
+		options,
+	);
 	if (result.error) throw new Error(result.error);
 	if (!result.data) throw new ProjectGoalNotFoundError(id);
-	return result.data;
+	if (result.revision === undefined) throw new Error("Project mutation did not return a revision");
+	return { ...result.data, revision: String(result.revision) };
 }

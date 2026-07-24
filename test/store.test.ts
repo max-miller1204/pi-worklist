@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { createEmptyWorklist, mutateProjectWorklist, readProjectWorklist } from "../src/project-store.ts";
+import {
+	createEmptyWorklist,
+	isProjectWorklist,
+	mutateProjectWorklist,
+	readProjectWorklist,
+} from "../src/project-store.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -17,6 +22,25 @@ describe("project store", () => {
 	it("treats a missing file as an empty worklist", async () => {
 		const result = await readProjectWorklist(await tempPath());
 		expect(result).toEqual({ data: createEmptyWorklist() });
+	});
+
+	it("reads legacy worklists at revision zero and persists revision one on mutation", async () => {
+		const path = await tempPath();
+		await mkdir(join(path, ".."), { recursive: true });
+		const legacyValue = { version: 1, goals: [] };
+		const legacy = `${JSON.stringify(legacyValue, null, 2)}\n`;
+		await writeFile(path, legacy);
+
+		expect(isProjectWorklist(legacyValue)).toBe(true);
+		const readResult = await readProjectWorklist(path);
+		expect(readResult).toEqual({ data: { version: 1, revision: 0, goals: [] } });
+		expect(await readFile(path, "utf8")).toBe(legacy);
+
+		const mutation = await mutateProjectWorklist(path, (worklist) => ({ worklist, result: "migrated" }), {
+			expectedRevision: "0",
+		});
+		expect(mutation).toEqual({ data: "migrated", revision: 1 });
+		expect(JSON.parse(await readFile(path, "utf8"))).toEqual({ version: 1, revision: 1, goals: [] });
 	});
 
 	it("refuses to overwrite malformed data", async () => {
@@ -37,5 +61,23 @@ describe("project store", () => {
 		const result = await readProjectWorklist(path);
 		expect(result.error).toBeUndefined();
 		expect(result.data.goals).toHaveLength(12);
+		expect(result.data.revision).toBe(12);
+	});
+
+	it("checks expected revisions inside the cross-process lock", async () => {
+		const path = await tempPath();
+		const fixture = resolve("test/fixtures/mutate.ts");
+		const attempts = await Promise.allSettled([
+			execFileAsync(process.execPath, [fixture, path, "first", "0"]),
+			execFileAsync(process.execPath, [fixture, path, "second", "0"]),
+		]);
+
+		expect(attempts.filter((attempt) => attempt.status === "fulfilled")).toHaveLength(1);
+		const rejected = attempts.filter((attempt) => attempt.status === "rejected");
+		expect(rejected).toHaveLength(1);
+		expect(String(rejected[0]?.reason.stderr)).toContain("ProjectRevisionConflictError");
+		const result = await readProjectWorklist(path);
+		expect(result.data.revision).toBe(1);
+		expect(result.data.goals).toHaveLength(1);
 	});
 });

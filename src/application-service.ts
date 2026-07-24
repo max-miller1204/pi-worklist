@@ -12,9 +12,11 @@ import {
 	PROJECT_LIFECYCLE_TARGET_STATUS,
 	ProjectGoalActivationBlockedError,
 	ProjectGoalNotFoundError,
+	readProjectGoals,
 	transitionProjectGoal,
 	updateProjectGoal,
 } from "./project-mutations.ts";
+import { ProjectRevisionConflictError } from "./project-store.ts";
 import type { SessionStore } from "./session-store.ts";
 import type {
 	ProjectGoal,
@@ -42,12 +44,18 @@ export interface WorklistOperation {
 	beforeId?: string;
 	afterId?: string;
 	confirm?: boolean;
+	expectedRevision?: string;
 }
 
 interface WorklistApplicationResultBase {
 	scope: WorklistOperation["scope"];
 	action: string;
 	meta: WorklistResultMeta;
+}
+
+interface ProjectExecutionResult {
+	result: WorklistOperationResult;
+	revision: string;
 }
 
 export interface WorklistApplicationSuccess extends WorklistApplicationResultBase {
@@ -169,8 +177,14 @@ function metadataForSuccess(
 	operation: WorklistOperation,
 	result: WorklistOperationResult,
 	previousSessionTasks?: SessionTask[],
+	projectRevision?: string,
 ): WorklistResultMeta {
-	if (operation.action === "list") return cloneEmptyResultMeta();
+	if (operation.action === "list") {
+		return {
+			...cloneEmptyResultMeta(),
+			...(projectRevision !== undefined ? { revisions: { project: projectRevision } } : {}),
+		};
+	}
 
 	let changed = true;
 	if (operation.scope === "session" && previousSessionTasks && result.tasks) {
@@ -181,6 +195,7 @@ function metadataForSuccess(
 		changed,
 		semanticNoOp: !changed,
 		changedFields: changed ? canonicalChangedFields([changedRoot]) : [],
+		...(projectRevision !== undefined ? { revisions: { project: projectRevision } } : {}),
 	};
 }
 
@@ -385,9 +400,13 @@ export class WorklistApplicationService {
 					: undefined;
 			const placement = normalizePlacement(operation);
 			let result: WorklistOperationResult;
+			let projectRevision: string | undefined;
 			if (operation.scope === "session") result = await this.executeSession(operation, placement);
-			else if (operation.scope === "project") result = await this.executeProject(operation);
-			else {
+			else if (operation.scope === "project") {
+				const projectExecution = await this.executeProject(operation);
+				result = projectExecution.result;
+				projectRevision = projectExecution.revision;
+			} else {
 				throw createApplicationError(
 					WORKLIST_ERROR_CODES.INVALID_REQUEST,
 					`Unknown worklist scope: ${String(operation.scope)}.`,
@@ -399,13 +418,27 @@ export class WorklistApplicationService {
 				scope: operation.scope,
 				action: operation.action,
 				result,
-				meta: metadataForSuccess(operation, result, previousSessionTasks),
+				meta: metadataForSuccess(operation, result, previousSessionTasks, projectRevision),
 			};
 		} catch (error) {
 			let typedError: WorklistProtocolError;
+			let failureMeta = cloneEmptyResultMeta();
 			if (error instanceof WorklistApplicationError) typedError = error.toResultError();
 			else if (error instanceof ProjectGoalNotFoundError) {
 				typedError = notFoundError("project-goal", operation.id ?? "unknown").toResultError();
+			} else if (error instanceof ProjectRevisionConflictError) {
+				typedError = {
+					code: WORKLIST_ERROR_CODES.CONFLICT,
+					message: error.message,
+					retryable: true,
+					conflict: {
+						type: "revision",
+						expectedRevision: error.expectedRevision,
+						actualRevision: error.actualRevision,
+						resolution: "refresh-and-retry",
+					},
+				};
+				failureMeta = { ...failureMeta, revisions: { project: error.actualRevision } };
 			} else if (error instanceof ProjectGoalActivationBlockedError) {
 				typedError = validationError(
 					"A done or archived Project Goal must be reopened with confirm=true before activation.",
@@ -425,7 +458,7 @@ export class WorklistApplicationService {
 				scope: operation.scope,
 				action: operation.action,
 				error: typedError,
-				meta: cloneEmptyResultMeta(),
+				meta: failureMeta,
 			};
 		}
 	}
@@ -464,12 +497,13 @@ export class WorklistApplicationService {
 		}
 	}
 
-	private async executeProject(operation: WorklistOperation): Promise<WorklistOperationResult> {
+	private async executeProject(operation: WorklistOperation): Promise<ProjectExecutionResult> {
 		const projectPath = this.requireProjectPath();
+		const options = { expectedRevision: operation.expectedRevision };
 		switch (operation.action) {
 			case "list": {
-				const goals = await listProjectGoals(projectPath);
-				return { scope: "project", action: "list", goals };
+				const { goals, revision } = await readProjectGoals(projectPath);
+				return { result: { scope: "project", action: "list", goals }, revision };
 			}
 			case "add": {
 				if (!operation.title) {
@@ -478,8 +512,13 @@ export class WorklistApplicationService {
 						resolution: "provide-title",
 					});
 				}
-				const { goal, goals } = await addProjectGoal(projectPath, operation.title, operation.description);
-				return { scope: "project", action: "add", goal, goals };
+				const { goal, goals, revision } = await addProjectGoal(
+					projectPath,
+					operation.title,
+					operation.description,
+					options,
+				);
+				return { result: { scope: "project", action: "add", goal, goals }, revision };
 			}
 			case "update": {
 				if (!operation.id) {
@@ -488,11 +527,16 @@ export class WorklistApplicationService {
 						resolution: "provide-project-goal-id",
 					});
 				}
-				const { goal, goals } = await updateProjectGoal(projectPath, operation.id, {
-					title: operation.title,
-					description: operation.description,
-				});
-				return { scope: "project", action: "update", goal, goals };
+				const { goal, goals, revision } = await updateProjectGoal(
+					projectPath,
+					operation.id,
+					{
+						title: operation.title,
+						description: operation.description,
+					},
+					options,
+				);
+				return { result: { scope: "project", action: "update", goal, goals }, revision };
 			}
 			case "set_status":
 				if (operation.status !== "active") {
@@ -536,21 +580,23 @@ export class WorklistApplicationService {
 	private async activateProjectGoal(
 		projectPath: string,
 		operation: WorklistOperation,
-	): Promise<WorklistOperationResult> {
+	): Promise<ProjectExecutionResult> {
 		if (!operation.id) {
 			throw validationError("id is required for project set_active.", {
 				fields: ["id"],
 				resolution: "provide-project-goal-id",
 			});
 		}
-		const { goal, goals } = await activateProjectGoal(projectPath, operation.id);
-		return { scope: "project", action: "set_active", goal, goals };
+		const { goal, goals, revision } = await activateProjectGoal(projectPath, operation.id, {
+			expectedRevision: operation.expectedRevision,
+		});
+		return { result: { scope: "project", action: "set_active", goal, goals }, revision };
 	}
 
 	private async transitionProjectGoal(
 		projectPath: string,
 		operation: WorklistOperation,
-	): Promise<WorklistOperationResult> {
+	): Promise<ProjectExecutionResult> {
 		if (!operation.id) {
 			throw validationError(`id is required for project ${operation.action}.`, {
 				fields: ["id"],
@@ -568,8 +614,10 @@ export class WorklistApplicationService {
 			);
 		}
 		if (operation.action === "delete") {
-			const { goals } = await deleteProjectGoal(projectPath, operation.id);
-			return { scope: "project", action: "delete", goals };
+			const { goals, revision } = await deleteProjectGoal(projectPath, operation.id, {
+				expectedRevision: operation.expectedRevision,
+			});
+			return { result: { scope: "project", action: "delete", goals }, revision };
 		}
 		if (!isProjectLifecycleAction(operation.action)) {
 			throw createApplicationError(
@@ -578,12 +626,13 @@ export class WorklistApplicationService {
 			);
 		}
 		const action = operation.action;
-		const { goal, goals } = await transitionProjectGoal(
+		const { goal, goals, revision } = await transitionProjectGoal(
 			projectPath,
 			operation.id,
 			PROJECT_LIFECYCLE_TARGET_STATUS[action],
+			{ expectedRevision: operation.expectedRevision },
 		);
-		return { scope: "project", action, goal, goals };
+		return { result: { scope: "project", action, goal, goals }, revision };
 	}
 
 	private requireSessionStore(): SessionStore {

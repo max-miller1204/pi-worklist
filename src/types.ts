@@ -28,7 +28,13 @@ export interface SessionSnapshot {
 
 export interface ProjectWorklist {
 	version: number;
+	/** Absent only in legacy version 1 files, which readers normalize to revision 0. */
+	revision?: number;
 	goals: ProjectGoal[];
+}
+
+export interface RevisionedProjectWorklist extends ProjectWorklist {
+	revision: number;
 }
 
 export interface WorklistOperationResult {

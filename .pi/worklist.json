@@ -37,9 +37,9 @@
       "id": "goal-mryb1h5b-f5473d74",
       "title": "Add a versioned inter-extension worklist API",
       "description": "Expose a machine-oriented integration protocol over Pi's shared pi.events bus so pi-orchestrator can discover capabilities, read the active or selected Project Goal, list Session Tasks, reconcile task projections, and update projected execution state without invoking the model-facing tool, instantiating another SessionStore, editing .pi/worklist.json, or appending snapshots directly. Include protocol versions, request IDs, actor and run correlation metadata, deterministic result envelopes, changed-field and semantic no-op reporting, typed error codes with retryability and conflict details, bounded read projections, timeouts, capability negotiation, and a graceful unavailable or incompatible fallback. Route the tool, command, dashboard, CLI, and inter-extension requests through one mutation service so every interface applies identical validation and persistence rules.",
-      "status": "active",
+      "status": "open",
       "createdAt": "2026-07-24T02:12:07.823Z",
-      "updatedAt": "2026-07-24T19:34:49.183Z"
+      "updatedAt": "2026-07-24T20:42:00.386Z"
     },
     {
       "id": "goal-mryb1h5d-8654f513",
@@ -61,9 +61,9 @@
       "id": "goal-mryb1h5f-49db693f",
       "title": "Add revisions and idempotent external mutations",
       "description": "Add monotonic revisions to Project Worklists and branch-aware concurrency tokens or snapshot entry IDs to Session Task snapshots, support optional expectedRevision checks, and accept idempotency keys for external batch creation and status updates. A semantic no-op must not rewrite .pi/worklist.json, append a Session Task snapshot, increment a revision, or emit a change event. Preserve the existing cross-process lock, atomic rename, branch-aware snapshot semantics, and backward readers while returning explicit typed conflicts instead of allowing a resumed orchestrator to overwrite newer user changes.",
-      "status": "open",
+      "status": "active",
       "createdAt": "2026-07-24T02:12:07.827Z",
-      "updatedAt": "2026-07-24T18:18:33.260Z"
+      "updatedAt": "2026-07-24T20:42:00.386Z"
     },
     {
       "id": "goal-mryb1h5h-bb98956e",

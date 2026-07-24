@@ -95,6 +95,9 @@ Session Tasks do not enter model context directly.
 Only the active goal and an intentionally bounded list of incomplete tasks are added to the current turn's system prompt, preserving their relative queue order.
 
 Project Goals use a schema-versioned JSON file at `.pi/worklist.json` in the canonical Git root.
+The file carries a monotonic numeric revision, while application and protocol callers receive that revision as an opaque string.
+Legacy files without a revision remain readable at revision `0` and gain revision `1` on their next mutation.
+Optional expected-revision checks run under the same cross-process lock as persistence and return a typed conflict without rewriting stale state.
 The file is human-readable and suitable for version control.
 A malformed or unsupported file is reported and never overwritten automatically.
 Project Goal operations are unavailable outside a Git repository, while Session Tasks continue to work normally.
