@@ -1,3 +1,4 @@
+import type { ReconciledSessionTaskProjection } from "./integration-contract.ts";
 import type { ManagedSessionTaskProjection } from "./managed-projection.ts";
 
 export type SessionTaskStatus = "todo" | "doing" | "done";
@@ -28,11 +29,20 @@ export interface StoredSessionTask extends SessionTask {
 	managed?: ManagedSessionTaskProjection;
 }
 
+export interface SessionProjectionReconciliationRecord {
+	idempotencyKey: string;
+	fingerprint: string;
+	goalId: string;
+	tasks: ReconciledSessionTaskProjection[];
+}
+
 export interface SessionSnapshot {
 	version: number;
 	/** Opaque branch-aware concurrency token. Legacy snapshots derive this from their entry ID. */
 	revision?: string;
 	tasks: StoredSessionTask[];
+	/** Bounded replay records for committed managed projection batches. */
+	projectionReconciliations?: SessionProjectionReconciliationRecord[];
 }
 
 export interface ProjectWorklist {
@@ -53,6 +63,7 @@ export interface WorklistOperationResult {
 	tasks?: SessionTask[];
 	goal?: ProjectGoal;
 	goals?: ProjectGoal[];
+	reconciliation?: { tasks: ReconciledSessionTaskProjection[] };
 }
 
 export type WorklistToolDetails = WorklistOperationResult;

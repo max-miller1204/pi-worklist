@@ -1,7 +1,16 @@
 import { randomBytes } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ManagedSessionTaskInput, ReconciledSessionTaskProjection } from "./integration-contract.ts";
 import { normalizeManagedSessionTaskProjection } from "./managed-projection.ts";
+import {
+	assertRecordedIdentitiesBelongToGoal,
+	normalizeProjectionReconciliationRecord,
+	planManagedProjectionReconciliation,
+	projectionIdempotencyKeyConflictError,
+	projectionReconciliationFingerprint,
+} from "./projection-reconciliation.ts";
 import type {
+	SessionProjectionReconciliationRecord,
 	SessionSnapshot,
 	SessionTask,
 	SessionTaskPlacement,
@@ -15,6 +24,7 @@ import {
 } from "./types.ts";
 
 export const SESSION_SNAPSHOT_TYPE = "worklist-session-snapshot";
+export const SESSION_RECONCILIATION_RECEIPT_TYPE = "worklist-session-reconciliation-receipt";
 
 const SESSION_TASK_STATUSES: readonly SessionTaskStatus[] = ["todo", "doing", "done"];
 
@@ -34,6 +44,12 @@ export interface SessionMutationOptions {
 
 export interface SessionMutationOutcome<T> {
 	result: T;
+	changed: boolean;
+	revision: string;
+}
+
+export interface ManagedTaskReconciliationOutcome {
+	tasks: ReconciledSessionTaskProjection[];
 	changed: boolean;
 	revision: string;
 }
@@ -78,9 +94,21 @@ function normalizeStoredSessionTask(value: unknown, readManaged: boolean): Store
 	};
 }
 
+function createSessionTaskId(): string {
+	return `st-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
+function upsertReconciliationRecord(
+	records: SessionProjectionReconciliationRecord[],
+	record: SessionProjectionReconciliationRecord,
+): SessionProjectionReconciliationRecord[] {
+	return [...records.filter((candidate) => candidate.idempotencyKey !== record.idempotencyKey), record];
+}
+
 export class SessionStore {
 	private tasks: StoredSessionTask[] = [];
 	private revision = "0";
+	private projectionReconciliations: SessionProjectionReconciliationRecord[] = [];
 	private mutationQueue: Promise<unknown> = Promise.resolve();
 
 	constructor(private readonly pi: ExtensionAPI) {}
@@ -100,9 +128,17 @@ export class SessionStore {
 	reconstruct(ctx: ExtensionContext): void {
 		this.tasks = [];
 		this.revision = "0";
+		this.projectionReconciliations = [];
 		const branch = ctx.sessionManager.getBranch();
 		for (const entry of branch) {
 			if (entry.type !== "custom") continue;
+			if (entry.customType === SESSION_RECONCILIATION_RECEIPT_TYPE) {
+				const record = normalizeProjectionReconciliationRecord(entry.data);
+				if (record) {
+					this.projectionReconciliations = upsertReconciliationRecord(this.projectionReconciliations, record);
+				}
+				continue;
+			}
 			if (entry.customType !== SESSION_SNAPSHOT_TYPE) continue;
 			const data = entry.data as SessionSnapshot | undefined;
 			if (data && READABLE_SESSION_SNAPSHOT_VERSIONS.includes(data.version) && Array.isArray(data.tasks)) {
@@ -113,6 +149,13 @@ export class SessionStore {
 					);
 					return normalized === undefined ? [] : [normalized];
 				});
+				this.projectionReconciliations = [];
+				if (Array.isArray(data.projectionReconciliations)) {
+					for (const record of data.projectionReconciliations) {
+						const normalized = normalizeProjectionReconciliationRecord(record);
+						if (normalized !== undefined) this.projectionReconciliations.push(normalized);
+					}
+				}
 				this.revision = "0";
 				if (typeof data.revision === "string" && data.revision.length > 0) {
 					this.revision = data.revision;
@@ -123,7 +166,7 @@ export class SessionStore {
 		}
 	}
 
-	private async serialized<T>(fn: () => Promise<T>): Promise<T> {
+	private serialized<T>(fn: () => T | Promise<T>): Promise<T> {
 		const next = this.mutationQueue.then(fn);
 		this.mutationQueue = next.catch(() => undefined);
 		return next;
@@ -135,13 +178,13 @@ export class SessionStore {
 		}
 	}
 
-	async addTask(
+	addTask(
 		title: string,
 		goalId?: string,
 		placement?: SessionTaskPlacement,
 		options: SessionMutationOptions = {},
 	): Promise<SessionMutationOutcome<SessionTask>> {
-		return this.serialized(async () => {
+		return this.serialized(() => {
 			this.assertExpectedRevision(options);
 			let insertionIndex = this.tasks.length;
 			if (placement) {
@@ -150,7 +193,7 @@ export class SessionStore {
 				if (anchorIndex === -1) throw new SessionTaskAnchorNotFoundError(anchorId);
 				insertionIndex = placement.beforeId !== undefined ? anchorIndex : anchorIndex + 1;
 			}
-			const id = `st-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+			const id = createSessionTaskId();
 			const task: SessionTask = {
 				id,
 				title,
@@ -166,12 +209,12 @@ export class SessionStore {
 		});
 	}
 
-	async moveTask(
+	moveTask(
 		id: string,
 		placement: SessionTaskPlacement,
 		options: SessionMutationOptions = {},
 	): Promise<SessionMutationOutcome<SessionTask | null>> {
-		return this.serialized(async () => {
+		return this.serialized(() => {
 			this.assertExpectedRevision(options);
 			const sourceIndex = this.tasks.findIndex((task) => task.id === id);
 			if (sourceIndex === -1) return { result: null, changed: false, revision: this.revision };
@@ -194,12 +237,12 @@ export class SessionStore {
 		});
 	}
 
-	async updateTask(
+	updateTask(
 		id: string,
 		updates: Partial<Pick<SessionTask, "title" | "goalId">>,
 		options: SessionMutationOptions = {},
 	): Promise<SessionMutationOutcome<SessionTask | null>> {
-		return this.serialized(async () => {
+		return this.serialized(() => {
 			this.assertExpectedRevision(options);
 			const index = this.tasks.findIndex((task) => task.id === id);
 			if (index === -1) return { result: null, changed: false, revision: this.revision };
@@ -213,12 +256,12 @@ export class SessionStore {
 		});
 	}
 
-	async setTaskStatus(
+	setTaskStatus(
 		id: string,
 		status: SessionTaskStatus,
 		options: SessionMutationOptions = {},
 	): Promise<SessionMutationOutcome<SessionTask | null>> {
-		return this.serialized(async () => {
+		return this.serialized(() => {
 			this.assertExpectedRevision(options);
 			const index = this.tasks.findIndex((task) => task.id === id);
 			if (index === -1) return { result: null, changed: false, revision: this.revision };
@@ -232,11 +275,8 @@ export class SessionStore {
 		});
 	}
 
-	async deleteTask(
-		id: string,
-		options: SessionMutationOptions = {},
-	): Promise<SessionMutationOutcome<boolean>> {
-		return this.serialized(async () => {
+	deleteTask(id: string, options: SessionMutationOptions = {}): Promise<SessionMutationOutcome<boolean>> {
+		return this.serialized(() => {
 			this.assertExpectedRevision(options);
 			const tasks = this.tasks.filter((task) => task.id !== id);
 			if (tasks.length === this.tasks.length) {
@@ -247,14 +287,74 @@ export class SessionStore {
 		});
 	}
 
-	private persist(tasks: StoredSessionTask[]): string {
+	getManagedTaskReconciliationReplay(
+		goalId: string,
+		desiredTasks: ManagedSessionTaskInput[],
+		idempotencyKey: string,
+	): ManagedTaskReconciliationOutcome | undefined {
+		const record = this.projectionReconciliations.find(
+			(candidate) => candidate.idempotencyKey === idempotencyKey,
+		);
+		if (!record) return undefined;
+		if (record.fingerprint !== projectionReconciliationFingerprint(goalId, desiredTasks)) {
+			throw projectionIdempotencyKeyConflictError(idempotencyKey);
+		}
+		return { tasks: record.tasks, changed: false, revision: this.revision };
+	}
+
+	reconcileManagedTasks(
+		goalId: string,
+		desiredTasks: ManagedSessionTaskInput[],
+		idempotencyKey: string,
+		options: SessionMutationOptions = {},
+	): Promise<ManagedTaskReconciliationOutcome> {
+		return this.serialized(() => {
+			const replay = this.getManagedTaskReconciliationReplay(goalId, desiredTasks, idempotencyKey);
+			if (replay) return replay;
+			this.assertExpectedRevision(options);
+			assertRecordedIdentitiesBelongToGoal(this.projectionReconciliations, goalId, desiredTasks);
+			const { tasks, nextTasks, changed } = planManagedProjectionReconciliation({
+				currentTasks: this.tasks,
+				goalId,
+				desiredTasks,
+				now: new Date().toISOString(),
+				createTaskId: createSessionTaskId,
+			});
+			const record = {
+				idempotencyKey,
+				fingerprint: projectionReconciliationFingerprint(goalId, desiredTasks),
+				goalId,
+				tasks,
+			};
+			const projectionReconciliations = upsertReconciliationRecord(this.projectionReconciliations, record);
+			if (!changed) {
+				this.pi.appendEntry(SESSION_RECONCILIATION_RECEIPT_TYPE, record);
+				this.projectionReconciliations = projectionReconciliations;
+				return { tasks, changed: false, revision: this.revision };
+			}
+			return {
+				tasks,
+				changed: true,
+				revision: this.persist(nextTasks, projectionReconciliations),
+			};
+		});
+	}
+
+	private persist(
+		tasks: StoredSessionTask[],
+		projectionReconciliations = this.projectionReconciliations,
+	): string {
 		const revision = randomBytes(16).toString("hex");
 		this.pi.appendEntry(SESSION_SNAPSHOT_TYPE, {
 			version: SESSION_SNAPSHOT_VERSION,
 			revision,
 			tasks: [...tasks],
+			...(projectionReconciliations.length > 0
+				? { projectionReconciliations: [...projectionReconciliations] }
+				: {}),
 		});
 		this.tasks = tasks;
+		this.projectionReconciliations = projectionReconciliations;
 		this.revision = revision;
 		return revision;
 	}

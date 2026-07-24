@@ -45,9 +45,9 @@
       "id": "goal-mryb1h5d-8654f513",
       "title": "Add atomic Session Task projection reconciliation",
       "description": "Provide one serialized batch operation that upserts all Session Task projections for an orchestration run by stable external identity, updates existing projections, creates missing projections, preserves unrelated user-created tasks and canonical queue order, and appends exactly one session snapshot. Make reconciliation idempotent across retries, recovery, /tree, /fork, /clone, and /resume so pi-orchestrator can safely rebuild the current session view without duplicating tasks.",
-      "status": "open",
+      "status": "active",
       "createdAt": "2026-07-24T02:12:07.825Z",
-      "updatedAt": "2026-07-24T02:12:07.825Z"
+      "updatedAt": "2026-07-24T22:46:21.833Z"
     },
     {
       "id": "goal-mryb1h5e-e452f08c",

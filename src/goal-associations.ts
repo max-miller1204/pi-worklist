@@ -47,26 +47,29 @@ export interface ManagedGoalAssociationValidationOptions {
 
 export class ProjectGoalOrchestrationBlockedError extends Error {
 	readonly name = "ProjectGoalOrchestrationBlockedError";
+	readonly goalId: string;
+	readonly status: Extract<ProjectGoalStatus, "done" | "archived">;
 
-	constructor(
-		readonly goalId: string,
-		readonly status: Extract<ProjectGoalStatus, "done" | "archived">,
-	) {
+	constructor(goalId: string, status: Extract<ProjectGoalStatus, "done" | "archived">) {
 		super(`Project goal ${goalId} is ${status} and must be explicitly reopened before orchestration`);
+		this.goalId = goalId;
+		this.status = status;
 	}
 }
 
 export class ProjectGoalAssociationChangedError extends Error {
 	readonly name = "ProjectGoalAssociationChangedError";
+	readonly goalId: string;
+	readonly expectedGoalUpdatedAt: string;
+	readonly actualGoalUpdatedAt: string;
 
-	constructor(
-		readonly goalId: string,
-		readonly expectedGoalUpdatedAt: string,
-		readonly actualGoalUpdatedAt: string,
-	) {
+	constructor(goalId: string, expectedGoalUpdatedAt: string, actualGoalUpdatedAt: string) {
 		super(
 			`Project goal ${goalId} changed from ${expectedGoalUpdatedAt} to ${actualGoalUpdatedAt}; refresh the goal before continuing`,
 		);
+		this.goalId = goalId;
+		this.expectedGoalUpdatedAt = expectedGoalUpdatedAt;
+		this.actualGoalUpdatedAt = actualGoalUpdatedAt;
 	}
 }
 

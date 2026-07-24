@@ -1,9 +1,20 @@
 import {
+	ProjectGoalAssociationChangedError,
+	ProjectGoalOrchestrationBlockedError,
+	validateManagedGoalAssociation,
+} from "./goal-associations.ts";
+import {
 	canonicalChangedFields,
+	type ManagedSessionTaskInput,
 	WORKLIST_ERROR_CODES,
+	type WorklistOperationPayloads,
 	type WorklistProtocolError,
 	type WorklistResultMeta,
 } from "./integration-contract.ts";
+import {
+	MANAGED_SESSION_TASK_PROJECTION_VERSION,
+	normalizeManagedSessionTaskProjection,
+} from "./managed-projection.ts";
 import {
 	activateProjectGoal,
 	addProjectGoal,
@@ -45,6 +56,7 @@ export interface WorklistOperation {
 	afterId?: string;
 	confirm?: boolean;
 	expectedRevision?: string;
+	reconciliation?: WorklistOperationPayloads["session-tasks.reconcile"];
 }
 
 interface WorklistApplicationResultBase {
@@ -56,6 +68,7 @@ interface WorklistApplicationResultBase {
 interface SessionExecutionResult {
 	result: WorklistOperationResult;
 	revision: string;
+	projectRevision?: string;
 	changed: boolean;
 }
 
@@ -211,6 +224,32 @@ function isSessionTaskAnchorNotFoundError(error: unknown): error is Error & { an
 		error instanceof Error &&
 		error.name === "SessionTaskAnchorNotFoundError" &&
 		typeof (error as { anchorId?: unknown }).anchorId === "string"
+	);
+}
+
+function isSessionIdempotencyKeyConflictError(error: unknown): error is Error & { idempotencyKey: string } {
+	return (
+		error instanceof Error &&
+		error.name === "SessionIdempotencyKeyConflictError" &&
+		typeof (error as { idempotencyKey?: unknown }).idempotencyKey === "string"
+	);
+}
+
+function isSessionProjectionGoalConflictError(error: unknown): error is Error & {
+	externalId: string;
+	taskId: string;
+	existingGoalId: string;
+	requestedGoalId: string;
+} {
+	if (!(error instanceof Error) || error.name !== "SessionProjectionGoalConflictError") return false;
+	const conflict = error as Partial<{
+		externalId: unknown;
+		taskId: unknown;
+		existingGoalId: unknown;
+		requestedGoalId: unknown;
+	}>;
+	return [conflict.externalId, conflict.taskId, conflict.existingGoalId, conflict.requestedGoalId].every(
+		(value) => typeof value === "string",
 	);
 }
 
@@ -422,6 +461,147 @@ async function deleteSessionTask(
 	};
 }
 
+function validateManagedTaskInput(value: unknown, index: number): asserts value is ManagedSessionTaskInput {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		throw validationError(`Reconciliation task ${index} must be an object.`, {
+			field: `tasks[${index}]`,
+			resolution: "provide-valid-managed-projection",
+		});
+	}
+	const task = value as ManagedSessionTaskInput;
+	if (typeof task.title !== "string" || !task.title.trim()) {
+		throw validationError(`Reconciliation task ${index} requires a non-blank title.`, {
+			field: `tasks[${index}].title`,
+			resolution: "provide-title",
+		});
+	}
+	if (!(["todo", "doing", "done"] as const).includes(task.status)) {
+		throw validationError(`Reconciliation task ${index} has an unsupported status.`, {
+			field: `tasks[${index}].status`,
+			resolution: "provide-supported-session-status",
+			supportedStatuses: ["doing", "done", "todo"],
+		});
+	}
+	const timestamp = "1970-01-01T00:00:00.000Z";
+	const normalized = normalizeManagedSessionTaskProjection({
+		version: MANAGED_SESSION_TASK_PROJECTION_VERSION,
+		owner: "pi-orchestrator",
+		producer: task.producer,
+		external: task.external,
+		planRevision: task.planRevision,
+		approvedPlanRevision: task.approvedPlanRevision,
+		createdAt: timestamp,
+		updatedAt: timestamp,
+		execution: task.execution,
+		resultReference: task.resultReference,
+		sessionContributionReference: task.sessionContributionReference,
+	});
+	if (!normalized) {
+		throw validationError(`Reconciliation task ${index} has invalid managed projection data.`, {
+			field: `tasks[${index}]`,
+			resolution: "provide-valid-managed-projection",
+		});
+	}
+}
+
+function requireReconciliationPayload(
+	operation: WorklistOperation,
+): WorklistOperationPayloads["session-tasks.reconcile"] {
+	const payload = operation.reconciliation;
+	if (!payload || typeof payload !== "object") {
+		throw validationError("reconciliation is required for session reconcile.", {
+			fields: ["reconciliation"],
+			resolution: "provide-reconciliation-payload",
+		});
+	}
+	if (payload.owner !== "pi-orchestrator") {
+		throw validationError("Reconciliation owner must be pi-orchestrator.", {
+			field: "reconciliation.owner",
+			resolution: "provide-supported-owner",
+		});
+	}
+	if (!payload.idempotencyKey?.trim()) {
+		throw validationError("Reconciliation idempotencyKey must not be blank.", {
+			field: "reconciliation.idempotencyKey",
+			resolution: "provide-idempotency-key",
+		});
+	}
+	if (!payload.goalId?.trim()) {
+		throw validationError("Reconciliation goalId must not be blank.", {
+			field: "reconciliation.goalId",
+			resolution: "provide-project-goal-id",
+		});
+	}
+	if (!payload.expectedGoalUpdatedAt?.trim()) {
+		throw validationError("Reconciliation expectedGoalUpdatedAt must not be blank.", {
+			field: "reconciliation.expectedGoalUpdatedAt",
+			resolution: "refresh-project-goal",
+		});
+	}
+	if (!Array.isArray(payload.tasks)) {
+		throw validationError("Reconciliation tasks must be an array.", {
+			field: "reconciliation.tasks",
+			resolution: "provide-task-array",
+		});
+	}
+	const externalIds = new Set<string>();
+	for (const [index, task] of payload.tasks.entries()) {
+		validateManagedTaskInput(task, index);
+		if (externalIds.has(task.external.id)) {
+			throw validationError(`Reconciliation contains duplicate external identity ${task.external.id}.`, {
+				field: `tasks[${index}].external.id`,
+				id: task.external.id,
+				resolution: "deduplicate-external-identities",
+			});
+		}
+		externalIds.add(task.external.id);
+	}
+	return payload;
+}
+
+async function reconcileSessionTaskProjections(
+	sessionStore: SessionStore,
+	projectPath: string,
+	operation: WorklistOperation,
+): Promise<SessionExecutionResult> {
+	const payload = requireReconciliationPayload(operation);
+	const replay = sessionStore.getManagedTaskReconciliationReplay(
+		payload.goalId,
+		payload.tasks,
+		payload.idempotencyKey,
+	);
+	if (replay) {
+		return {
+			result: {
+				scope: "session",
+				action: "reconcile",
+				reconciliation: { tasks: replay.tasks },
+			},
+			changed: false,
+			revision: replay.revision,
+		};
+	}
+	const association = await validateManagedGoalAssociation(projectPath, payload.goalId, {
+		expectedGoalUpdatedAt: payload.expectedGoalUpdatedAt,
+	});
+	const { tasks, changed, revision } = await sessionStore.reconcileManagedTasks(
+		payload.goalId,
+		payload.tasks,
+		payload.idempotencyKey,
+		{ expectedRevision: payload.expectedSessionRevision },
+	);
+	return {
+		result: {
+			scope: "session",
+			action: "reconcile",
+			reconciliation: { tasks },
+		},
+		changed,
+		revision,
+		projectRevision: association.revision,
+	};
+}
+
 /**
  * Canonical application boundary for every worklist interface.
  *
@@ -472,6 +652,7 @@ export class WorklistApplicationService {
 				result = sessionExecution.result;
 				changed = sessionExecution.changed;
 				sessionRevision = sessionExecution.revision;
+				projectRevision = sessionExecution.projectRevision;
 			} else if (operation.scope === "project") {
 				const projectExecution = await this.executeProject(operation);
 				result = projectExecution.result;
@@ -496,7 +677,59 @@ export class WorklistApplicationService {
 			let failureMeta = cloneEmptyResultMeta();
 			if (error instanceof WorklistApplicationError) typedError = error.toResultError();
 			else if (error instanceof ProjectGoalNotFoundError) {
-				typedError = notFoundError("project-goal", operation.id ?? "unknown").toResultError();
+				typedError = notFoundError(
+					"project-goal",
+					operation.reconciliation?.goalId ?? operation.id ?? "unknown",
+				).toResultError();
+			} else if (error instanceof ProjectGoalAssociationChangedError) {
+				typedError = {
+					code: WORKLIST_ERROR_CODES.CONFLICT,
+					message: error.message,
+					retryable: true,
+					conflict: {
+						type: "revision",
+						expectedRevision: error.expectedGoalUpdatedAt,
+						actualRevision: error.actualGoalUpdatedAt,
+						conflictingIds: [error.goalId],
+						resolution: "refresh-and-retry",
+					},
+				};
+			} else if (error instanceof ProjectGoalOrchestrationBlockedError) {
+				typedError = validationError(
+					`Project goal ${error.goalId} is ${error.status} and must be explicitly reopened before orchestration.`,
+					{
+						id: error.goalId,
+						status: error.status,
+						resolution: "reopen-project-goal",
+					},
+				).toResultError();
+			} else if (isSessionIdempotencyKeyConflictError(error)) {
+				typedError = {
+					code: WORKLIST_ERROR_CODES.CONFLICT,
+					message: error.message,
+					retryable: false,
+					conflict: {
+						type: "idempotency-key",
+						resolution: "use-new-idempotency-key",
+					},
+					details: { idempotencyKey: error.idempotencyKey },
+				};
+			} else if (isSessionProjectionGoalConflictError(error)) {
+				typedError = {
+					code: WORKLIST_ERROR_CODES.CONFLICT,
+					message: error.message,
+					retryable: false,
+					conflict: {
+						type: "user-override",
+						conflictingIds: [error.taskId],
+						resolution: "request-user-decision",
+					},
+					details: {
+						externalId: error.externalId,
+						existingGoalId: error.existingGoalId,
+						requestedGoalId: error.requestedGoalId,
+					},
+				};
 			} else if (error instanceof ProjectRevisionConflictError) {
 				typedError = {
 					code: WORKLIST_ERROR_CODES.CONFLICT,
@@ -576,11 +809,15 @@ export class WorklistApplicationService {
 				return setSessionTaskStatus(sessionStore, operation);
 			case "delete":
 				return deleteSessionTask(sessionStore, operation);
+			case "reconcile":
+				return reconcileSessionTaskProjections(sessionStore, this.requireProjectPath(), operation);
 			default:
 				throw createApplicationError(
 					WORKLIST_ERROR_CODES.INVALID_REQUEST,
 					`Unknown session action: ${operation.action}.`,
-					{ supportedActions: ["add", "delete", "list", "move", "set_status", "update"] },
+					{
+						supportedActions: ["add", "delete", "list", "move", "reconcile", "set_status", "update"],
+					},
 				);
 		}
 	}
