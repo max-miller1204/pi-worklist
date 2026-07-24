@@ -5,6 +5,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { describe, expect, it } from "vitest";
 import worklistExtension from "../src/extension.ts";
 import { formatSessionTasks } from "../src/format.ts";
+import { WORKLIST_ERROR_CODES } from "../src/integration-contract.ts";
 import { SESSION_SNAPSHOT_TYPE, SessionStore } from "../src/session-store.ts";
 import { executeWorklist } from "../src/tool.ts";
 
@@ -256,19 +257,28 @@ describe("session state and tool", () => {
 				sessionStore: store,
 				projectPath: null,
 			}),
-		).rejects.toThrow("anchor missing not found");
+		).rejects.toMatchObject({
+			code: WORKLIST_ERROR_CODES.NOT_FOUND,
+			details: { entity: "session-task-anchor", id: "missing" },
+		});
 		await expect(
 			executeWorklist({ scope: "session", action: "move", id: "missing", beforeId: "a" }, ctx, {
 				sessionStore: store,
 				projectPath: null,
 			}),
-		).rejects.toThrow("Session task missing not found");
+		).rejects.toMatchObject({
+			code: WORKLIST_ERROR_CODES.NOT_FOUND,
+			details: { entity: "session-task", id: "missing" },
+		});
 		await expect(
 			executeWorklist({ scope: "session", action: "move", id: "a", afterId: "missing" }, ctx, {
 				sessionStore: store,
 				projectPath: null,
 			}),
-		).rejects.toThrow("anchor missing not found");
+		).rejects.toMatchObject({
+			code: WORKLIST_ERROR_CODES.NOT_FOUND,
+			details: { entity: "session-task-anchor", id: "missing" },
+		});
 
 		const deleting = store.deleteTask("b");
 		const staleAdd = store.addTask("Stale anchor", undefined, { afterId: "b" });
@@ -313,11 +323,15 @@ describe("session state and tool", () => {
 		});
 		const id = added.details.goals?.[0]?.id;
 		for (const action of ["complete", "reopen", "archive", "delete"]) {
-			const result = await executeWorklist({ scope: "project", action, id }, ctx, {
-				sessionStore: store,
-				projectPath: path,
+			await expect(
+				executeWorklist({ scope: "project", action, id }, ctx, {
+					sessionStore: store,
+					projectPath: path,
+				}),
+			).rejects.toMatchObject({
+				code: WORKLIST_ERROR_CODES.APPROVAL_REQUIRED,
+				retryable: false,
 			});
-			expect(result.details.requiresConfirm).toBe(true);
 		}
 		await expect(
 			executeWorklist({ scope: "project", action: "set_status", id, status: "done" }, ctx, {

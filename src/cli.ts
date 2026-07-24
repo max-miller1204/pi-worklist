@@ -1,7 +1,13 @@
 #!/usr/bin/env node
-import { WorklistApplicationService } from "./application-service.ts";
+import {
+	unwrapWorklistApplicationResult,
+	WorklistApplicationError,
+	WorklistApplicationService,
+	type WorklistOperation,
+} from "./application-service.ts";
 import { formatProjectGoals } from "./format.ts";
 import { getWorklistPath, resolveGitRoot } from "./git.ts";
+import { WORKLIST_ERROR_CODES } from "./integration-contract.ts";
 import type { ProjectGoal } from "./types.ts";
 
 /**
@@ -93,6 +99,10 @@ function requireId(invocation: CliInvocation): string {
 	return id;
 }
 
+async function executeCliOperation(service: WorklistApplicationService, operation: WorklistOperation) {
+	return unwrapWorklistApplicationResult(await service.execute(operation, { source: "cli" }));
+}
+
 function report(invocation: CliInvocation, message: string, goals: ProjectGoal[], goal?: ProjectGoal): void {
 	if (invocation.json) {
 		const payload: Record<string, unknown> = { ok: true, action: invocation.action, goals };
@@ -109,17 +119,12 @@ async function runLifecycle(
 	action: LifecycleAction,
 ): Promise<void> {
 	const id = requireId(invocation);
-	const result = await service.execute(
-		{ scope: "project", action, id, confirm: invocation.confirm },
-		{ source: "cli" },
-	);
-	if (result.requiresConfirm) {
-		fail(
-			`project ${action} is a lifecycle action and requires --confirm. ` +
-				"Pass --confirm only when the user explicitly requested this action.",
-			3,
-		);
-	}
+	const result = await executeCliOperation(service, {
+		scope: "project",
+		action,
+		id,
+		confirm: invocation.confirm,
+	});
 	const goals = result.goals ?? [];
 	if (action === "delete") {
 		report(invocation, `Deleted project goal ${id}`, goals);
@@ -132,7 +137,7 @@ async function runLifecycle(
 async function runSetActive(invocation: CliInvocation, service: WorklistApplicationService): Promise<void> {
 	const id = requireId(invocation);
 	try {
-		const result = await service.execute({ scope: "project", action: "set_active", id }, { source: "cli" });
+		const result = await executeCliOperation(service, { scope: "project", action: "set_active", id });
 		if (!result.goal) throw new Error(`Activated Project Goal ${id} was not returned`);
 		report(invocation, `Activated project goal ${result.goal.id}`, result.goals ?? [], result.goal);
 	} catch (error) {
@@ -154,7 +159,7 @@ async function run(invocation: CliInvocation): Promise<void> {
 
 	switch (invocation.action) {
 		case "list": {
-			const result = await service.execute({ scope: "project", action: "list" }, { source: "cli" });
+			const result = await executeCliOperation(service, { scope: "project", action: "list" });
 			const goals = result.goals ?? [];
 			report(invocation, formatProjectGoals(goals), goals);
 			return;
@@ -163,10 +168,12 @@ async function run(invocation: CliInvocation): Promise<void> {
 			const title = invocation.rest.join(" ").trim();
 			if (!title) fail(`project add requires a title\n\n${USAGE}`, 2);
 			const description = invocation.description?.trim() || undefined;
-			const result = await service.execute(
-				{ scope: "project", action: "add", title, description },
-				{ source: "cli" },
-			);
+			const result = await executeCliOperation(service, {
+				scope: "project",
+				action: "add",
+				title,
+				description,
+			});
 			if (!result.goal) throw new Error("Added Project Goal was not returned");
 			report(
 				invocation,
@@ -182,16 +189,13 @@ async function run(invocation: CliInvocation): Promise<void> {
 			if (title === undefined && invocation.description === undefined) {
 				fail(`project update requires a new title, a -- description, or both\n\n${USAGE}`, 2);
 			}
-			const result = await service.execute(
-				{
-					scope: "project",
-					action: "update",
-					id,
-					title,
-					description: invocation.description,
-				},
-				{ source: "cli" },
-			);
+			const result = await executeCliOperation(service, {
+				scope: "project",
+				action: "update",
+				id,
+				title,
+				description: invocation.description,
+			});
 			if (!result.goal) throw new Error(`Updated Project Goal ${id} was not returned`);
 			report(invocation, `Updated project goal ${result.goal.id}`, result.goals ?? [], result.goal);
 			return;
@@ -213,5 +217,8 @@ async function run(invocation: CliInvocation): Promise<void> {
 try {
 	await run(parseArgs(process.argv.slice(2)));
 } catch (error) {
+	if (error instanceof WorklistApplicationError && error.code === WORKLIST_ERROR_CODES.APPROVAL_REQUIRED) {
+		fail(`${error.message} Pass --confirm only when the user explicitly requested this action.`, 3);
+	}
 	fail(error instanceof Error ? error.message : String(error), 1);
 }

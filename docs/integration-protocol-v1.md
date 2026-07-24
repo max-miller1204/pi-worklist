@@ -6,7 +6,12 @@
 
 This document defines the version 1 contract between pi-worklist and automation consumers such as pi-orchestrator.
 The exported TypeScript contract in `src/integration-contract.ts` is the normative machine-readable definition.
-This session defines the wire contract but does not implement the pi-worklist protocol provider or a pi-orchestrator client.
+The wire contract and shared application result boundary are implemented, but the pi-worklist protocol provider and pi-orchestrator client are not yet implemented.
+
+`WorklistApplicationService.execute` returns a deterministic discriminated envelope for every tool, command, dashboard, CLI, or future protocol operation.
+Success envelopes contain `ok: true`, the requested scope and action, the operation result, and canonical change metadata.
+Failure envelopes contain `ok: false`, the requested scope and action, a typed error with explicit retryability and bounded resolution details, and unchanged metadata.
+Adapters whose host signals failures with exceptions use `unwrapWorklistApplicationResult`, which throws `WorklistApplicationError` without discarding the stable error code or actionable details.
 
 The protocol lets a consumer negotiate capabilities, read the active or explicitly selected Project Goal, list bounded Session Task projections, reconcile managed Session Task projections, update projected execution state, and create an explicitly approved Project Goal batch.
 The protocol does not grant an automation consumer unrestricted access to worklist storage or Pi session snapshots.

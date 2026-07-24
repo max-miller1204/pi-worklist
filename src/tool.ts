@@ -1,5 +1,6 @@
 import type { ExtensionContext, ToolExecutionMode } from "@earendil-works/pi-coding-agent";
 import {
+	unwrapWorklistApplicationResult,
 	WorklistApplicationService,
 	type WorklistOperation,
 	type WorklistOperationSource,
@@ -30,9 +31,6 @@ function getApplicationService(deps: ToolDeps): WorklistApplicationService {
 }
 
 function formatResult(operation: WorklistOperation, result: WorklistOperationResult): string {
-	if (result.requiresConfirm) {
-		return `Project goal ${operation.action} requires explicit user intent. Set confirm=true only when the user explicitly requested this action.`;
-	}
 	if (operation.scope === "session") {
 		switch (operation.action) {
 			case "list":
@@ -81,7 +79,8 @@ export async function executeWorklist(
 	deps: ToolDeps,
 	source: WorklistOperationSource = "tool",
 ): Promise<{ content: string; details: WorklistToolDetails }> {
-	const result = await getApplicationService(deps).execute(params, { source });
+	const envelope = await getApplicationService(deps).execute(params, { source });
+	const result = unwrapWorklistApplicationResult(envelope);
 	return {
 		content: formatResult(params, result),
 		details: result,

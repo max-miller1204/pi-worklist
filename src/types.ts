@@ -38,8 +38,6 @@ export interface WorklistOperationResult {
 	tasks?: SessionTask[];
 	goal?: ProjectGoal;
 	goals?: ProjectGoal[];
-	error?: string;
-	requiresConfirm?: boolean;
 }
 
 export type WorklistToolDetails = WorklistOperationResult;

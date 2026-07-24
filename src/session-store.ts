@@ -6,6 +6,16 @@ export const SESSION_SNAPSHOT_TYPE = "worklist-session-snapshot";
 
 const SESSION_TASK_STATUSES: readonly SessionTaskStatus[] = ["todo", "doing", "done"];
 
+export class SessionTaskAnchorNotFoundError extends Error {
+	readonly anchorId: string;
+
+	constructor(anchorId: string) {
+		super(`Session task anchor ${anchorId} not found`);
+		this.name = "SessionTaskAnchorNotFoundError";
+		this.anchorId = anchorId;
+	}
+}
+
 function isValidSessionTask(value: unknown): value is SessionTask {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
 	const task = value as Record<string, unknown>;
@@ -23,11 +33,11 @@ export class SessionStore {
 	constructor(private readonly pi: ExtensionAPI) {}
 
 	getTasks(): SessionTask[] {
-		return this.tasks.slice();
+		return [...this.tasks];
 	}
 
 	setTasks(tasks: SessionTask[]): void {
-		this.tasks = tasks.slice();
+		this.tasks = [...tasks];
 	}
 
 	reconstruct(ctx: ExtensionContext): void {
@@ -38,12 +48,11 @@ export class SessionStore {
 			if (entry.customType !== SESSION_SNAPSHOT_TYPE) continue;
 			const data = entry.data as SessionSnapshot | undefined;
 			if (data && READABLE_SESSION_SNAPSHOT_VERSIONS.includes(data.version) && Array.isArray(data.tasks)) {
-				this.tasks = data.tasks.filter(isValidSessionTask).map(({ id, title, status, goalId }) => ({
-					id,
-					title,
-					status,
-					...(goalId !== undefined ? { goalId } : {}),
-				}));
+				this.tasks = data.tasks.flatMap((task) => {
+					if (!isValidSessionTask(task)) return [];
+					const { id, title, status, goalId } = task;
+					return [{ id, title, status, ...(goalId !== undefined ? { goalId } : {}) }];
+				});
 			}
 		}
 	}
@@ -60,7 +69,7 @@ export class SessionStore {
 			if (placement) {
 				const anchorId = placement.beforeId ?? placement.afterId;
 				const anchorIndex = this.tasks.findIndex((task) => task.id === anchorId);
-				if (anchorIndex === -1) throw new Error(`Session task anchor ${anchorId} not found`);
+				if (anchorIndex === -1) throw new SessionTaskAnchorNotFoundError(anchorId);
 				insertionIndex = placement.beforeId !== undefined ? anchorIndex : anchorIndex + 1;
 			}
 			const id = `st-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
@@ -86,7 +95,7 @@ export class SessionStore {
 
 			const remaining = [...this.tasks.slice(0, sourceIndex), ...this.tasks.slice(sourceIndex + 1)];
 			const anchorIndex = remaining.findIndex((candidate) => candidate.id === anchorId);
-			if (anchorIndex === -1) throw new Error(`Session task anchor ${anchorId} not found`);
+			if (anchorIndex === -1) throw new SessionTaskAnchorNotFoundError(anchorId);
 			const insertionIndex = placement.beforeId !== undefined ? anchorIndex : anchorIndex + 1;
 			const next = [...remaining.slice(0, insertionIndex), task, ...remaining.slice(insertionIndex)];
 			if (next.every((candidate, index) => candidate.id === this.tasks[index]?.id)) return task;
@@ -134,7 +143,7 @@ export class SessionStore {
 	private persist(): void {
 		this.pi.appendEntry(SESSION_SNAPSHOT_TYPE, {
 			version: SESSION_SNAPSHOT_VERSION,
-			tasks: this.tasks.slice(),
+			tasks: [...this.tasks],
 		});
 	}
 }
