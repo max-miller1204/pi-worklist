@@ -119,7 +119,10 @@ The request can filter by Project Goal and Session Task status.
 The provider reads only the current Pi session branch managed by its existing session service.
 The consumer can request a limit and continue with an opaque cursor.
 The result always includes `page.limit`, `page.returned`, and `page.truncated`.
-The provider must not return more than its advertised maximum.
+The provider must not return more than its advertised maximum, and it clamps larger requested limits to that maximum.
+A cursor that is malformed, or whose anchor left the filtered view, returns `VALIDATION_FAILED` with `resolution: "restart-list-from-beginning"`.
+List items stay compact: projected titles are truncated to the advertised byte limit and truncated items carry `projection.truncatedFields`.
+Managed projections appear on list items so a consumer can locate its own workflow steps, and full Session Task text beyond the advertised bounds is never returned.
 
 ### `session-tasks.reconcile`
 

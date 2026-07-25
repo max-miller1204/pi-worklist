@@ -101,9 +101,9 @@
       "id": "goal-mrz9kazz-630a45ae",
       "title": "Provide bounded list and explicit detail projections",
       "description": "Make model tool, command, and CLI list operations return a compact projection containing ID, title, status, goal association, and lightweight projected execution state. Truncate long descriptions with an explicit show or get --full path, support allow-listed fields, status filters, archived filters, and result limits, and provide complete structured details only when requested. Preserve complete stored data and do not introduce TOON as a dependency.",
-      "status": "open",
+      "status": "done",
       "createdAt": "2026-07-24T18:18:33.263Z",
-      "updatedAt": "2026-07-24T18:18:33.263Z"
+      "updatedAt": "2026-07-25T17:51:49.888Z"
     },
     {
       "id": "goal-mrz9kb00-72e82709",
@@ -130,5 +130,5 @@
       "updatedAt": "2026-07-24T18:31:54.214Z"
     }
   ],
-  "revision": 3
+  "revision": 5
 }

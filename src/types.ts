@@ -1,4 +1,9 @@
-import type { ReconciledSessionTaskProjection } from "./integration-contract.ts";
+import type {
+	ProjectGoalDetailProjection,
+	ReconciledSessionTaskProjection,
+	SessionTaskSummaryProjection,
+	WorklistProjectionPage,
+} from "./integration-contract.ts";
 import type { ManagedSessionTaskProjection } from "./managed-projection.ts";
 
 export type SessionTaskStatus = "todo" | "doing" | "done";
@@ -81,6 +86,8 @@ export interface WorklistOperationResult {
 	goal?: ProjectGoal;
 	goals?: ProjectGoal[];
 	reconciliation?: { tasks: ReconciledSessionTaskProjection[] };
+	taskProjections?: { tasks: SessionTaskSummaryProjection[]; page: WorklistProjectionPage };
+	goalProjection?: ProjectGoalDetailProjection | null;
 }
 
 export type WorklistToolDetails = WorklistOperationResult;

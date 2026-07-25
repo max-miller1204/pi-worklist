@@ -42,6 +42,22 @@ export const WORKLIST_CHANGE_EVENT = "pi-worklist:change" as const;
 export const DEFAULT_WORKLIST_REQUEST_TIMEOUT_MS = 2_000;
 export const MAX_WORKLIST_REQUEST_TIMEOUT_MS = 30_000;
 
+/**
+ * Bounds enforced by this provider implementation and advertised during negotiation.
+ * Consumers must obey the limits reported by the provider they selected.
+ */
+export const WORKLIST_PROVIDER_LIMITS = {
+	defaultListLimit: 20,
+	maxListLimit: 100,
+	maxBatchItems: 20,
+	maxTitleBytes: 512,
+	maxDescriptionBytes: 4_096,
+	maxSummaryBytes: 4_096,
+	maxReferenceBytes: 2_048,
+	defaultTimeoutMs: DEFAULT_WORKLIST_REQUEST_TIMEOUT_MS,
+	maxTimeoutMs: MAX_WORKLIST_REQUEST_TIMEOUT_MS,
+} as const;
+
 export const WORKLIST_CAPABILITIES = {
 	PROJECT_GOALS_READ: "project-goals.read",
 	PROJECT_GOALS_CREATE_APPROVED_BATCH: "project-goals.create-approved-batch",
@@ -164,6 +180,8 @@ export interface SessionTaskSummaryProjection {
 	status: SessionTaskStatus;
 	goalId?: string;
 	managed?: ManagedSessionTaskProjection;
+	/** Present only when projected text was truncated to the advertised byte limits. */
+	projection?: WorklistProjectionNotice;
 }
 
 export interface ReconciledSessionTaskProjection {

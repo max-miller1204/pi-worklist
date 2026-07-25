@@ -1,13 +1,16 @@
 import {
 	ProjectGoalAssociationChangedError,
 	ProjectGoalOrchestrationBlockedError,
+	resolveProjectGoalForOrchestration,
 	validateManagedGoalAssociation,
 } from "./goal-associations.ts";
 import {
 	canonicalChangedFields,
 	type ManagedExecutionUpdate,
 	type ManagedSessionTaskInput,
+	type ProjectGoalSelector,
 	WORKLIST_ERROR_CODES,
+	WORKLIST_PROVIDER_LIMITS,
 	type WorklistOperationPayloads,
 	type WorklistProtocolError,
 	type WorklistResultMeta,
@@ -31,6 +34,11 @@ import {
 	updateProjectGoal,
 } from "./project-mutations.ts";
 import { ProjectRevisionConflictError } from "./project-store.ts";
+import {
+	ListCursorError,
+	planSessionTaskListProjection,
+	toProjectGoalDetailProjection,
+} from "./projections.ts";
 import { SessionRevisionConflictError, type SessionStore } from "./session-store.ts";
 import type {
 	ProjectGoal,
@@ -61,6 +69,8 @@ export interface WorklistOperation {
 	expectedRevision?: string;
 	reconciliation?: WorklistOperationPayloads["session-tasks.reconcile"];
 	executionUpdate?: WorklistOperationPayloads["session-tasks.update-execution"];
+	listProjection?: WorklistOperationPayloads["session-tasks.list"];
+	goalSelector?: ProjectGoalSelector;
 }
 
 interface WorklistApplicationResultBase {
@@ -197,6 +207,8 @@ function normalizePlacement(operation: WorklistOperation): SessionTaskPlacement 
 	return placement;
 }
 
+const READ_ACTIONS = new Set(["list", "list_projection", "get_projection"]);
+
 function metadataForSuccess(
 	operation: WorklistOperation,
 	changed: boolean,
@@ -207,7 +219,7 @@ function metadataForSuccess(
 		...(sessionRevision !== undefined ? { session: sessionRevision } : {}),
 		...(projectRevision !== undefined ? { project: projectRevision } : {}),
 	};
-	if (operation.action === "list") {
+	if (READ_ACTIONS.has(operation.action)) {
 		return {
 			...cloneEmptyResultMeta(),
 			...(Object.keys(revisions).length > 0 ? { revisions } : {}),
@@ -487,6 +499,16 @@ function validateManagedTaskInput(value: unknown, index: number): asserts value 
 			resolution: "provide-title",
 		});
 	}
+	if (Buffer.byteLength(task.title, "utf8") > WORKLIST_PROVIDER_LIMITS.maxTitleBytes) {
+		throw validationError(
+			`Reconciliation task ${index} title exceeds ${WORKLIST_PROVIDER_LIMITS.maxTitleBytes} bytes.`,
+			{
+				field: `tasks[${index}].title`,
+				maxTitleBytes: WORKLIST_PROVIDER_LIMITS.maxTitleBytes,
+				resolution: "shorten-title",
+			},
+		);
+	}
 	if (!(["todo", "doing", "done"] as const).includes(task.status)) {
 		throw validationError(`Reconciliation task ${index} has an unsupported status.`, {
 			field: `tasks[${index}].status`,
@@ -569,6 +591,69 @@ function requireReconciliationPayload(
 		externalIds.add(task.external.id);
 	}
 	return payload;
+}
+
+function requireListProjectionPayload(
+	operation: WorklistOperation,
+): WorklistOperationPayloads["session-tasks.list"] {
+	const payload = operation.listProjection ?? {};
+	if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+		throw validationError("listProjection must be an object for session list_projection.", {
+			fields: ["listProjection"],
+			resolution: "provide-list-projection-payload",
+		});
+	}
+	if (payload.goalId !== undefined && (typeof payload.goalId !== "string" || !payload.goalId.trim())) {
+		throw validationError("listProjection goalId must be a non-blank string.", {
+			field: "listProjection.goalId",
+			resolution: "provide-project-goal-id",
+		});
+	}
+	if (payload.statuses !== undefined) {
+		const supported = ["todo", "doing", "done"];
+		if (!Array.isArray(payload.statuses) || payload.statuses.some((status) => !supported.includes(status))) {
+			throw validationError("listProjection statuses must contain only todo, doing, or done.", {
+				field: "listProjection.statuses",
+				resolution: "provide-supported-session-status",
+				supportedStatuses: ["doing", "done", "todo"],
+			});
+		}
+	}
+	if (
+		payload.limit !== undefined &&
+		(!Number.isSafeInteger(payload.limit) || (payload.limit as number) < 1)
+	) {
+		throw validationError("listProjection limit must be a positive integer.", {
+			field: "listProjection.limit",
+			maxLimit: WORKLIST_PROVIDER_LIMITS.maxListLimit,
+			resolution: "provide-positive-limit",
+		});
+	}
+	if (payload.cursor !== undefined && (typeof payload.cursor !== "string" || !payload.cursor)) {
+		throw validationError("listProjection cursor must be a non-empty string.", {
+			field: "listProjection.cursor",
+			resolution: "restart-list-from-beginning",
+		});
+	}
+	return payload;
+}
+
+function requireGoalSelector(operation: WorklistOperation): ProjectGoalSelector {
+	const selector = operation.goalSelector;
+	if (selector?.type === "active") return { type: "active" };
+	if (selector?.type === "id") {
+		if (typeof selector.id !== "string" || !selector.id.trim()) {
+			throw validationError("goalSelector id must be a non-blank string.", {
+				field: "goalSelector.id",
+				resolution: "provide-project-goal-id",
+			});
+		}
+		return { type: "id", id: selector.id };
+	}
+	throw validationError('goalSelector must be { type: "active" } or { type: "id", id }.', {
+		fields: ["goalSelector"],
+		resolution: "provide-goal-selector",
+	});
 }
 
 function validateExecutionUpdateItem(value: unknown, index: number): asserts value is ManagedExecutionUpdate {
@@ -800,6 +885,11 @@ export class WorklistApplicationService {
 			if (error instanceof WorklistApplicationError) typedError = error.toResultError();
 			else if (error instanceof ProjectGoalNotFoundError) {
 				typedError = notFoundError("project-goal", error.goalId).toResultError();
+			} else if (error instanceof ListCursorError) {
+				typedError = validationError(error.message, {
+					field: "listProjection.cursor",
+					resolution: "restart-list-from-beginning",
+				}).toResultError();
 			} else if (isSessionExecutionTargetNotFoundError(error)) {
 				typedError = createApplicationError(WORKLIST_ERROR_CODES.NOT_FOUND, error.message, {
 					entity: "managed-session-task",
@@ -924,6 +1014,15 @@ export class WorklistApplicationService {
 					changed: false,
 					revision: sessionStore.getRevision(),
 				};
+			case "list_projection": {
+				const payload = requireListProjectionPayload(operation);
+				const projection = planSessionTaskListProjection(sessionStore.getStoredTasks(), payload);
+				return {
+					result: { scope: "session", action: "list_projection", taskProjections: projection },
+					changed: false,
+					revision: sessionStore.getRevision(),
+				};
+			}
 			case "add":
 				return addSessionTask(sessionStore, operation, placement);
 			case "move":
@@ -947,6 +1046,7 @@ export class WorklistApplicationService {
 							"add",
 							"delete",
 							"list",
+							"list_projection",
 							"move",
 							"reconcile",
 							"set_status",
@@ -965,6 +1065,19 @@ export class WorklistApplicationService {
 			case "list": {
 				const { goals, revision } = await readProjectGoals(projectPath);
 				return { result: { scope: "project", action: "list", goals }, revision, changed: false };
+			}
+			case "get_projection": {
+				const selector = requireGoalSelector(operation);
+				const snapshot = await resolveProjectGoalForOrchestration(projectPath, selector);
+				return {
+					result: {
+						scope: "project",
+						action: "get_projection",
+						goalProjection: snapshot.goal === null ? null : toProjectGoalDetailProjection(snapshot.goal),
+					},
+					revision: snapshot.revision,
+					changed: false,
+				};
 			}
 			case "add": {
 				if (!operation.title) {
@@ -1027,6 +1140,7 @@ export class WorklistApplicationService {
 							"archive",
 							"complete",
 							"delete",
+							"get_projection",
 							"list",
 							"reopen",
 							"set_active",

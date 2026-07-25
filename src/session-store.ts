@@ -131,6 +131,17 @@ export class SessionStore {
 		return this.tasks.map(toPublicSessionTask);
 	}
 
+	/**
+	 * Protocol-facing read that retains managed metadata for bounded projections.
+	 * Ordinary Session Task reads must keep using getTasks, which omits it.
+	 */
+	getStoredTasks(): StoredSessionTask[] {
+		return this.tasks.map((task) => ({
+			...toPublicSessionTask(task),
+			...(task.managed !== undefined ? { managed: structuredClone(task.managed) } : {}),
+		}));
+	}
+
 	getRevision(): string {
 		return this.revision;
 	}
