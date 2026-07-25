@@ -46,9 +46,7 @@ describe("single CLI command contract", () => {
 			expect(skill, `SKILL.md is missing action usage \`${action.usage}\``).toContain(action.usage);
 		}
 		for (const exitCode of CLI_COMMAND_CONTRACT.exitCodes.filter((entry) => entry.code >= 3)) {
-			expect(skill, `SKILL.md is missing exit code ${exitCode.code}`).toContain(
-				`Exit code ${exitCode.code}`,
-			);
+			expect(skill, `SKILL.md is missing exit code ${exitCode.code}`).toContain(`Exit code ${exitCode.code}`);
 		}
 	});
 
