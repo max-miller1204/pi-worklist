@@ -74,10 +74,21 @@ function parseArgs(argv: string[]): CliInvocation {
 	return { scope, action, rest, description, json, confirm, cwd };
 }
 
-function resolveProjectPath(cwd: string): string {
-	const result = resolveGitRoot(cwd);
+function resolveProjectPath(invocation: CliInvocation): string {
+	const result = resolveGitRoot(invocation.cwd);
 	if (!result.isGit || !result.root) {
-		fail("Project goals require a git repository. Run inside a repository or pass --cwd <dir>.", 1);
+		throw new WorklistCliFailure({
+			ok: false,
+			scope: "project",
+			action: invocation.action,
+			error: {
+				code: WORKLIST_ERROR_CODES.UNAVAILABLE,
+				message: "Project goals require a git repository. Run inside a repository or pass --cwd <dir>.",
+				retryable: false,
+				details: { resolution: "run-inside-git-repository" },
+			},
+			meta: { changed: false, semanticNoOp: false, changedFields: [] },
+		});
 	}
 	return getWorklistPath(result.root);
 }
@@ -193,7 +204,7 @@ async function run(invocation: CliInvocation): Promise<void> {
 		}
 		fail(`Unknown scope ${invocation.scope}\n\n${USAGE}`, 2);
 	}
-	const service = new WorklistApplicationService({ projectPath: resolveProjectPath(invocation.cwd) });
+	const service = new WorklistApplicationService({ projectPath: resolveProjectPath(invocation) });
 
 	switch (invocation.action) {
 		case "help": {

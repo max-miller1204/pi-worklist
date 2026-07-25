@@ -195,6 +195,17 @@ describe("project goal CLI", () => {
 		expect(outside.code).toBe(1);
 		expect(outside.stderr).toContain("git repository");
 
+		const outsideJson = await runCli(bare, ["project", "list", "--json"]);
+		expect(outsideJson.code).toBe(1);
+		expect(outsideJson.stdout).toBe("");
+		expect(JSON.parse(outsideJson.stderr)).toMatchObject({
+			ok: false,
+			scope: "project",
+			action: "list",
+			error: { code: "UNAVAILABLE", retryable: false, details: { resolution: "run-inside-git-repository" } },
+			meta: { changed: false, semanticNoOp: false, changedFields: [] },
+		});
+
 		const root = await tempGitRepo();
 		const viaCwd = await runCli(bare, ["project", "add", "From", "elsewhere", "--cwd", root]);
 		expect(viaCwd.code).toBe(0);
