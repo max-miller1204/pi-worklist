@@ -1,3 +1,4 @@
+import type { WorklistChangePublisher } from "./change-events.ts";
 import {
 	ProjectGoalAssociationChangedError,
 	ProjectGoalOrchestrationBlockedError,
@@ -11,6 +12,10 @@ import {
 	type ProjectGoalSelector,
 	WORKLIST_ERROR_CODES,
 	WORKLIST_PROVIDER_LIMITS,
+	type WorklistActor,
+	type WorklistChangedEntities,
+	type WorklistCorrelation,
+	type WorklistMutationType,
 	type WorklistOperationPayloads,
 	type WorklistProtocolError,
 	type WorklistResultMeta,
@@ -53,6 +58,11 @@ export type WorklistOperationSource = "tool" | "command" | "dashboard" | "cli" |
 
 export interface WorklistOperationContext {
 	source: WorklistOperationSource;
+	/** Overrides the source-derived default actor in results and change events. */
+	actor?: WorklistActor;
+	correlation?: WorklistCorrelation;
+	/** Protocol request ID that caused the mutation, echoed on change events. */
+	sourceRequestId?: string;
 }
 
 export interface WorklistOperation {
@@ -84,12 +94,14 @@ interface SessionExecutionResult {
 	revision: string;
 	projectRevision?: string;
 	changed: boolean;
+	changedTaskIds?: string[];
 }
 
 interface ProjectExecutionResult {
 	result: WorklistOperationResult;
 	revision: string;
 	changed: boolean;
+	changedGoalIds?: string[];
 }
 
 export interface WorklistApplicationSuccess extends WorklistApplicationResultBase {
@@ -109,6 +121,8 @@ export type WorklistApplicationResult = WorklistApplicationSuccess | WorklistApp
 export interface WorklistApplicationServiceOptions {
 	sessionStore?: SessionStore;
 	projectPath?: string | null;
+	/** Invoked after every committed canonical change. Never invoked for reads, failures, or semantic no-ops. */
+	publishChange?: WorklistChangePublisher;
 }
 
 type ProjectLifecycleAction = keyof typeof PROJECT_LIFECYCLE_TARGET_STATUS;
@@ -209,12 +223,21 @@ function normalizePlacement(operation: WorklistOperation): SessionTaskPlacement 
 
 const READ_ACTIONS = new Set(["list", "list_projection", "get_projection"]);
 
-function metadataForSuccess(
-	operation: WorklistOperation,
-	changed: boolean,
-	sessionRevision?: string,
-	projectRevision?: string,
-): WorklistResultMeta {
+interface SuccessMetadataInput {
+	operation: WorklistOperation;
+	changed: boolean;
+	sessionRevision?: string;
+	projectRevision?: string;
+	changedTaskIds?: string[];
+	changedGoalIds?: string[];
+}
+
+function canonicalIds(ids: string[] | undefined): string[] {
+	return [...new Set(ids ?? [])].sort();
+}
+
+function metadataForSuccess(input: SuccessMetadataInput): WorklistResultMeta {
+	const { operation, changed, sessionRevision, projectRevision } = input;
 	const revisions = {
 		...(sessionRevision !== undefined ? { session: sessionRevision } : {}),
 		...(projectRevision !== undefined ? { project: projectRevision } : {}),
@@ -226,13 +249,39 @@ function metadataForSuccess(
 		};
 	}
 
+	const changedEntities: WorklistChangedEntities = {
+		projectGoalIds: canonicalIds(input.changedGoalIds),
+		sessionTaskIds: canonicalIds(input.changedTaskIds),
+	};
 	const changedRoot = operation.scope === "session" ? "/tasks" : "/goals";
 	return {
 		changed,
 		semanticNoOp: !changed,
 		changedFields: changed ? canonicalChangedFields([changedRoot]) : [],
+		...(changed ? { changedEntities } : {}),
 		...(Object.keys(revisions).length > 0 ? { revisions } : {}),
 	};
+}
+
+const SOURCE_ACTOR_TYPES: Record<WorklistOperationSource, WorklistActor["type"]> = {
+	tool: "tool",
+	command: "command",
+	dashboard: "dashboard",
+	cli: "cli",
+	protocol: "extension",
+};
+
+function actorForContext(context: WorklistOperationContext): WorklistActor {
+	return context.actor ?? { type: SOURCE_ACTOR_TYPES[context.source], id: "pi-worklist" };
+}
+
+function mutationTypeFor(operation: WorklistOperation): WorklistMutationType {
+	if (operation.scope === "session") {
+		if (operation.action === "reconcile") return "session-tasks.reconciled";
+		if (operation.action === "update_execution") return "session-tasks.execution-updated";
+		return "session-tasks.changed-manually";
+	}
+	return "project-goals.changed-manually";
 }
 
 function isSessionTaskAnchorNotFoundError(error: unknown): error is Error & { anchorId: string } {
@@ -385,6 +434,7 @@ async function addSessionTask(
 		result: { scope: "session", action: "add", task, tasks: sessionStore.getTasks() },
 		changed,
 		revision,
+		changedTaskIds: [task.id],
 	};
 }
 
@@ -412,6 +462,7 @@ async function moveSessionTask(
 		result: { scope: "session", action: "move", task, tasks: sessionStore.getTasks() },
 		changed,
 		revision,
+		changedTaskIds: [id],
 	};
 }
 
@@ -435,6 +486,7 @@ async function updateSessionTask(
 		result: { scope: "session", action: "update", task, tasks: sessionStore.getTasks() },
 		changed,
 		revision,
+		changedTaskIds: [id],
 	};
 }
 
@@ -462,6 +514,7 @@ async function setSessionTaskStatus(
 		result: { scope: "session", action: "set_status", task, tasks: sessionStore.getTasks() },
 		changed,
 		revision,
+		changedTaskIds: [id],
 	};
 }
 
@@ -482,6 +535,7 @@ async function deleteSessionTask(
 		result: { scope: "session", action: "delete", tasks: sessionStore.getTasks() },
 		changed,
 		revision,
+		changedTaskIds: [id],
 	};
 }
 
@@ -763,7 +817,14 @@ async function updateManagedExecutionProjections(
 		},
 		changed,
 		revision,
+		changedTaskIds: changedProjectionTaskIds(tasks),
 	};
+}
+
+function changedProjectionTaskIds(tasks: Array<{ taskId: string; action: string }>): string[] {
+	return tasks
+		.filter((task) => task.action !== "unchanged" && task.action !== "preserved-user-override")
+		.map((task) => task.taskId);
 }
 
 async function reconcileSessionTaskProjections(
@@ -806,6 +867,7 @@ async function reconcileSessionTaskProjections(
 		changed,
 		revision,
 		projectRevision: association.revision,
+		changedTaskIds: changedProjectionTaskIds(tasks),
 	};
 }
 
@@ -846,7 +908,7 @@ export class WorklistApplicationService {
 
 	async execute(
 		operation: WorklistOperation,
-		_context: WorklistOperationContext,
+		context: WorklistOperationContext,
 	): Promise<WorklistApplicationResult> {
 		try {
 			const placement = normalizePlacement(operation);
@@ -854,17 +916,21 @@ export class WorklistApplicationService {
 			let changed = false;
 			let sessionRevision: string | undefined;
 			let projectRevision: string | undefined;
+			let changedTaskIds: string[] | undefined;
+			let changedGoalIds: string[] | undefined;
 			if (operation.scope === "session") {
 				const sessionExecution = await this.executeSession(operation, placement);
 				result = sessionExecution.result;
 				changed = sessionExecution.changed;
 				sessionRevision = sessionExecution.revision;
 				projectRevision = sessionExecution.projectRevision;
+				changedTaskIds = sessionExecution.changedTaskIds;
 			} else if (operation.scope === "project") {
 				const projectExecution = await this.executeProject(operation);
 				result = projectExecution.result;
 				changed = projectExecution.changed;
 				projectRevision = projectExecution.revision;
+				changedGoalIds = projectExecution.changedGoalIds;
 			} else {
 				throw createApplicationError(
 					WORKLIST_ERROR_CODES.INVALID_REQUEST,
@@ -872,12 +938,21 @@ export class WorklistApplicationService {
 					{ supportedScopes: ["project", "session"] },
 				);
 			}
+			const meta = metadataForSuccess({
+				operation,
+				changed,
+				sessionRevision,
+				projectRevision,
+				changedTaskIds,
+				changedGoalIds,
+			});
+			if (meta.changed) this.publishCommittedChange(operation, context, meta);
 			return {
 				ok: true,
 				scope: operation.scope,
 				action: operation.action,
 				result,
-				meta: metadataForSuccess(operation, changed, sessionRevision, projectRevision),
+				meta,
 			};
 		} catch (error) {
 			let typedError: WorklistProtocolError;
@@ -1092,7 +1167,12 @@ export class WorklistApplicationService {
 					operation.description,
 					options,
 				);
-				return { result: { scope: "project", action: "add", goal, goals }, revision, changed };
+				return {
+					result: { scope: "project", action: "add", goal, goals },
+					revision,
+					changed,
+					changedGoalIds: [goal.id],
+				};
 			}
 			case "update": {
 				if (!operation.id) {
@@ -1110,7 +1190,12 @@ export class WorklistApplicationService {
 					},
 					options,
 				);
-				return { result: { scope: "project", action: "update", goal, goals }, revision, changed };
+				return {
+					result: { scope: "project", action: "update", goal, goals },
+					revision,
+					changed,
+					changedGoalIds: [operation.id],
+				};
 			}
 			case "set_status":
 				if (operation.status !== "active") {
@@ -1162,10 +1247,17 @@ export class WorklistApplicationService {
 				resolution: "provide-project-goal-id",
 			});
 		}
-		const { goal, goals, revision, changed } = await activateProjectGoal(projectPath, operation.id, {
-			expectedRevision: operation.expectedRevision,
-		});
-		return { result: { scope: "project", action: "set_active", goal, goals }, revision, changed };
+		const { goal, goals, revision, changed, changedGoalIds } = await activateProjectGoal(
+			projectPath,
+			operation.id,
+			{ expectedRevision: operation.expectedRevision },
+		);
+		return {
+			result: { scope: "project", action: "set_active", goal, goals },
+			revision,
+			changed,
+			changedGoalIds,
+		};
 	}
 
 	private async transitionProjectGoal(
@@ -1192,7 +1284,12 @@ export class WorklistApplicationService {
 			const { goals, revision, changed } = await deleteProjectGoal(projectPath, operation.id, {
 				expectedRevision: operation.expectedRevision,
 			});
-			return { result: { scope: "project", action: "delete", goals }, revision, changed };
+			return {
+				result: { scope: "project", action: "delete", goals },
+				revision,
+				changed,
+				changedGoalIds: [operation.id],
+			};
 		}
 		if (!isProjectLifecycleAction(operation.action)) {
 			throw createApplicationError(
@@ -1207,7 +1304,33 @@ export class WorklistApplicationService {
 			PROJECT_LIFECYCLE_TARGET_STATUS[action],
 			{ expectedRevision: operation.expectedRevision },
 		);
-		return { result: { scope: "project", action, goal, goals }, revision, changed };
+		return {
+			result: { scope: "project", action, goal, goals },
+			revision,
+			changed,
+			changedGoalIds: [operation.id],
+		};
+	}
+
+	private publishCommittedChange(
+		operation: WorklistOperation,
+		context: WorklistOperationContext,
+		meta: WorklistResultMeta,
+	): void {
+		if (!this.options.publishChange) return;
+		try {
+			this.options.publishChange({
+				mutation: mutationTypeFor(operation),
+				actor: actorForContext(context),
+				...(context.correlation !== undefined ? { correlation: context.correlation } : {}),
+				...(context.sourceRequestId !== undefined ? { sourceRequestId: context.sourceRequestId } : {}),
+				changedFields: meta.changedFields,
+				changedEntities: meta.changedEntities ?? { projectGoalIds: [], sessionTaskIds: [] },
+				revisions: meta.revisions ?? {},
+			});
+		} catch {
+			// A faulty change subscriber must never turn a committed mutation into a failure.
+		}
 	}
 
 	private requireSessionStore(): SessionStore {

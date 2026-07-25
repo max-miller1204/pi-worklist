@@ -69,9 +69,9 @@
       "id": "goal-mryb1h5h-bb98956e",
       "title": "Publish structured worklist change events",
       "description": "Emit compact versioned events after every successful tool, command, dashboard, or external mutation. Include scope, resulting revision, changed entity IDs, actor, mutation type, timestamp, and optional orchestration run or correlation ID so pi-orchestrator can detect user edits, moves, deletions, and status changes. Keep events live and queryable through current snapshots for initial integration rather than duplicating the orchestrator's durable event journal.",
-      "status": "open",
+      "status": "done",
       "createdAt": "2026-07-24T02:12:07.829Z",
-      "updatedAt": "2026-07-24T02:12:07.829Z"
+      "updatedAt": "2026-07-25T17:56:33.141Z"
     },
     {
       "id": "goal-mryb1h5i-8ea0e01c",
@@ -130,5 +130,5 @@
       "updatedAt": "2026-07-24T18:31:54.214Z"
     }
   ],
-  "revision": 5
+  "revision": 7
 }

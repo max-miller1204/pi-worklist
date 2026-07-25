@@ -146,13 +146,18 @@ export async function updateProjectGoal(
 	return mutationOutcome({ ...result, data: result.data });
 }
 
+export interface ProjectActivationOutcome extends ProjectMutationOutcome {
+	/** Every goal whose status or timestamp changed, including demoted previously active goals. */
+	changedGoalIds: string[];
+}
+
 export async function activateProjectGoal(
 	path: string,
 	id: string,
 	options?: ProjectMutationOptions,
-): Promise<ProjectMutationOutcome> {
+): Promise<ProjectActivationOutcome> {
 	type ActivationResult = {
-		outcome: Omit<ProjectMutationOutcome, "revision" | "changed"> | null;
+		outcome: (Omit<ProjectMutationOutcome, "revision" | "changed"> & { changedGoalIds: string[] }) | null;
 		blocked: boolean;
 	};
 	const result = await mutateProjectWorklist(
@@ -177,12 +182,17 @@ export async function activateProjectGoal(
 			if (alreadyExclusivelyActive) {
 				return {
 					worklist,
-					result: { outcome: { goal: target, goals: worklist.goals }, blocked: false },
+					result: {
+						outcome: { goal: target, goals: worklist.goals, changedGoalIds: [] },
+						blocked: false,
+					},
 					changed: false,
 				};
 			}
+			const changedGoalIds: string[] = [];
 			const goals = worklist.goals.map((goal) => {
 				if (goal.id === id) {
+					changedGoalIds.push(goal.id);
 					return {
 						...goal,
 						status: "active" as ProjectGoalStatus,
@@ -190,6 +200,7 @@ export async function activateProjectGoal(
 					};
 				}
 				if (goal.status === "active") {
+					changedGoalIds.push(goal.id);
 					return {
 						...goal,
 						status: "open" as ProjectGoalStatus,
@@ -201,7 +212,10 @@ export async function activateProjectGoal(
 			const activated = goals.find((goal) => goal.id === id);
 			return {
 				worklist: { ...worklist, goals },
-				result: { outcome: activated ? { goal: activated, goals } : null, blocked: false },
+				result: {
+					outcome: activated ? { goal: activated, goals, changedGoalIds } : null,
+					blocked: false,
+				},
 			};
 		},
 		options,
@@ -209,7 +223,8 @@ export async function activateProjectGoal(
 	if (result.error) throw new Error(result.error);
 	if (result.data.blocked) throw new ProjectGoalActivationBlockedError(id);
 	if (!result.data.outcome) throw new ProjectGoalNotFoundError(id);
-	return mutationOutcome({ ...result, data: result.data.outcome });
+	const { changedGoalIds, ...outcome } = result.data.outcome;
+	return { ...mutationOutcome({ ...result, data: outcome }), changedGoalIds };
 }
 
 export async function transitionProjectGoal(
