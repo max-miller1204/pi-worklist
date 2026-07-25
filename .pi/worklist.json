@@ -85,9 +85,9 @@
       "id": "goal-mrz7osuo-4849456d",
       "title": "Ship a compiled pi-worklist CLI bin",
       "description": "Publish an executable bin so npx pi-worklist works from the installed npm package. Compile the CLI to JavaScript at build or publish time because Node refuses to type-strip TypeScript under node_modules, while preserving the package's Node >=20 support. Provide compact bounded list output, explicit full-detail reads, deterministic mutation confirmations, stable --json result envelopes, typed errors and exit codes, and CLI, skill, and agent guidance generated from one command contract. Keep the CLI on the same application service as the Pi extension so behavior and validation cannot drift.",
-      "status": "active",
+      "status": "done",
       "createdAt": "2026-07-24T17:26:03.792Z",
-      "updatedAt": "2026-07-25T18:23:50.434Z"
+      "updatedAt": "2026-07-25T18:29:13.469Z"
     },
     {
       "id": "goal-mrz9kazy-ba655dee",
@@ -130,5 +130,5 @@
       "updatedAt": "2026-07-25T18:21:35.554Z"
     }
   ],
-  "revision": 16
+  "revision": 17
 }

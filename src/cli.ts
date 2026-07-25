@@ -5,6 +5,7 @@ import {
 	WorklistApplicationService,
 	type WorklistOperation,
 } from "./application-service.ts";
+import { renderCliUsage } from "./cli-contract.ts";
 import { getWorklistPath, resolveGitRoot } from "./git.ts";
 import { WORKLIST_ERROR_CODES, type WorklistErrorCode } from "./integration-contract.ts";
 import type { ProjectGoal } from "./types.ts";
@@ -23,26 +24,7 @@ type LifecycleAction = (typeof LIFECYCLE_ACTIONS)[number];
 
 const COMPACT_TITLE_LIMIT = 96;
 
-const USAGE = `Usage: pi-worklist project <action> [arguments] [flags]
-
-Actions:
-  list                                     Show a compact bounded list of project goals
-  show <id>                                Show one goal with its full description
-  add <title...> [-- <description...>]     Add an open goal
-  update <id> [title...] [-- <description...>]
-                                           Edit a goal; "-- " alone clears the description
-  set_active <id>                          Make a goal the single active goal
-  complete <id> --confirm                  Mark a goal done
-  reopen <id> --confirm                    Reopen a done or archived goal
-  archive <id> --confirm                   Archive a goal
-  delete <id> --confirm                    Delete a goal permanently
-
-Flags:
-  --json         Print the deterministic result envelope as JSON (stdout on success, stderr on failure)
-  --confirm      Acknowledge a lifecycle action; pass it only for an explicit user request
-  --cwd <dir>    Resolve the git root from this directory instead of the working directory
-
-Exit codes: 0 success, 1 error, 2 usage error, 3 confirmation required, 4 conflict.`;
+const USAGE = renderCliUsage();
 
 interface CliInvocation {
 	scope: string;
@@ -196,6 +178,10 @@ async function run(invocation: CliInvocation): Promise<void> {
 	const service = new WorklistApplicationService({ projectPath: resolveProjectPath(invocation.cwd) });
 
 	switch (invocation.action) {
+		case "help": {
+			process.stdout.write(`${USAGE}\n`);
+			return;
+		}
 		case "list": {
 			const envelope = await executeCliOperation(service, { scope: "project", action: "list" });
 			const goals = (envelope.ok ? envelope.result.goals : undefined) ?? [];
