@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, realpath, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { describe, expect, it } from "vitest";
 import { resolveGitRoot } from "../src/git.ts";
 
 describe("git root", () => {

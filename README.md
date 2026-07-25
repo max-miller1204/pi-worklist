@@ -1,3 +1,5 @@
+<!-- markdownlint-disable MD013 -->
+
 # pi-worklist
 
 [![npm version](https://img.shields.io/npm/v/pi-worklist.svg)](https://www.npmjs.com/package/pi-worklist)
@@ -20,7 +22,9 @@ Project Goals track the larger outcomes shared by every Pi session in a Git repo
 - The `worklist` model tool manages both scopes through one consistent API.
 - A Pi-free external CLI lets scripts and other agents manage Project Goals without a running Pi session.
 - Project Goal completion, reopening, archival, and deletion require explicit user intent.
+- Managed Session Task operations accept only existing open or active Project Goal associations and detect edits to the selected goal before reconciliation.
 - Cross-process locking and atomic replacement prevent concurrent Pi processes from losing updates or corrupting the project file.
+- A versioned inter-extension contract defines bounded, capability-negotiated integration over Pi's shared event bus.
 
 ## Install
 
@@ -85,46 +89,76 @@ The model-facing tool instead requires `confirm=true`, and its prompt rules proh
 ## Storage semantics
 
 Session Tasks are stored as versioned Pi custom entries in the current session tree.
-Snapshots written by earlier releases are still loaded, and any legacy Session Task descriptions are dropped during migration.
-The snapshot version remains 2 because canonical queue order is already represented by the stored task array.
-Completed tasks remain in that canonical order.
-Session Tasks do not enter model context directly.
-Only the active goal and an intentionally bounded list of incomplete tasks are added to the current turn's system prompt, preserving their relative queue order.
+Each snapshot carries an opaque concurrency token that follows the active `/tree`, `/fork`, `/clone`, or resumed branch.
+Snapshot version 3 can retain a validated version 1 managed projection on a task with a non-empty Project Goal association.
+The projection contains the producer and external workflow-step identity, approved plan revision, orchestration run ID, timestamps, lightweight read-only execution state, and bounded result or session-contribution references.
+Managed metadata without a Project Goal ID is detached during snapshot migration rather than being persisted as an orchestrator-managed task.
+Attempts, retries, logs, dependencies, artifacts, evidence, and recovery remain canonical in pi-orchestrator and are omitted during projection normalization.
+Snapshots written by earlier releases are still loaded, derive their token from the Pi custom entry ID when necessary, retain existing task IDs, and drop legacy descriptions during in-memory migration.
+The next Session Task mutation writes the migrated state as snapshot version 3.
+A branch without a snapshot uses the opaque baseline token `0`.
+Completed tasks remain in canonical queue order.
+Ordinary Session Task reads and mutation results omit managed metadata.
+Only the active goal and an intentionally bounded list of incomplete task titles and statuses are added to the current turn's system prompt, preserving their relative queue order.
 
 Project Goals use a schema-versioned JSON file at `.pi/worklist.json` in the canonical Git root.
+The file carries a monotonic numeric revision, while application and protocol callers receive that revision as an opaque string.
+Legacy files without a revision remain readable at revision `0` and gain revision `1` on their next mutation.
+Optional expected-revision checks run under the same cross-process lock as persistence and return a typed conflict without rewriting stale state.
+Session Task expected-revision checks run inside the serialized mutation queue and return the active branch token in conflicts.
+A semantic no-op preserves the Project Worklist file bytes, Project Goal timestamps, Project Worklist revision, Session Task snapshot count, and Session Task branch token.
 The file is human-readable and suitable for version control.
 A malformed or unsupported file is reported and never overwritten automatically.
 Project Goal operations are unavailable outside a Git repository, while Session Tasks continue to work normally.
+Orchestration goal selection returns the stable goal ID, its monotonic `updatedAt` token, and the containing Project Worklist revision.
+Done or archived goals must be explicitly reopened before orchestration.
+Archival and confirmed deletion preserve existing Session Task projections for inspection without silently changing the Session Task branch, so closed or temporarily orphaned projections remain visible but cannot receive new managed mutations.
+Reopening the same goal restores eligibility under its stable ID, while deletion never silently recreates or reassigns the goal.
 
 ## Model tool
 
 The `worklist` tool accepts `scope=session|project` and actions including `list`, `add`, `move`, `update`, `set_status`, `set_active`, `complete`, `reopen`, `archive`, and `delete`.
 For Session Tasks, `add` optionally accepts exactly one of `beforeId` or `afterId`, while `move` requires exactly one.
 Moves preserve the task ID, title, status, and Project Goal association.
-Self-placement and already-satisfied placement succeed without writing another session snapshot.
+Self-placement, already-satisfied placement, identical Session Task updates, and repeated status changes succeed without writing another session snapshot.
 Session Tasks use concise, self-contained titles without descriptions.
 Agents are instructed to split non-trivial work into several concrete, independently completable Session Tasks instead of copying the broad end goal into one task.
 Session Task statuses are `todo`, `doing`, and `done`.
 Project Goal statuses are `open`, `active`, `done`, and `archived`.
 Only activation is a non-destructive direct Project Goal status change.
 
+## Inter-extension contract
+
+The version 1 machine-readable contract is exported from `pi-worklist/integration-contract`.
+It defines stable `pi.events` channel names, protocol and capability versions, request and result unions, actor and run correlation metadata, bounded projections, managed external identities, revisions, idempotency, deterministic mutation metadata, typed errors, timeouts, and change events.
+The contract deliberately excludes Project Goal completion, archival, deletion, and rewriting operations.
+Approved Project Goal batch creation requires explicit approval evidence in its payload.
+
+See [Pi Worklist Integration Protocol v1](docs/integration-protocol-v1.md) for the transport rules, fallback behavior, operation ownership, and approval boundary shared with pi-orchestrator.
+Importing the contract has no side effects and does not instantiate a SessionStore or register an event handler.
+
 ## External CLI
 
-External agents and scripts can manage Project Goals without a running Pi session:
+External agents and scripts can manage Project Goals without a running Pi session.
+The published package ships a compiled `pi-worklist` bin, so no development checkout is needed:
 
 ```sh
-node src/cli.ts project list
-node src/cli.ts project add Support goal templates -- Let teams share reusable goal outlines
-node src/cli.ts project update <id> Replace the title -- Replace the description
-node src/cli.ts project set_active <id>
-node src/cli.ts project complete <id> --confirm
+npx pi-worklist project list
+npx pi-worklist project show <id>
+npx pi-worklist project add Support goal templates -- Let teams share reusable goal outlines
+npx pi-worklist project update <id> Replace the title -- Replace the description
+npx pi-worklist project set_active <id>
+npx pi-worklist project complete <id> --confirm
 ```
 
 The CLI routes every mutation through the same service, cross-process lock, and atomic replacement as a live Pi session, so concurrent use is safe.
+`list` output is deliberately compact without descriptions; `show <id>` prints one goal in full detail.
 Lifecycle actions (`complete`, `reopen`, `archive`, `delete`) require `--confirm`, mirroring the model tool's explicit-intent rule; an omitted flag exits with code 3 and changes nothing.
-`--json` prints machine-readable results on stdout, `--cwd <dir>` resolves the Git root from another directory, and errors always go to stderr.
-Running the TypeScript CLI directly requires Node 22.18 or newer (for example Node 24), which strips types natively.
-On older Node versions, including the Node 20 floor of the package's `engines` range, the CLI fails with an `Unknown file extension ".ts"` error.
+Exit code 4 reports a concurrent-change conflict; re-read current state before retrying.
+`--json` prints the full deterministic application envelope, on stdout for success and stderr for failure, and `--cwd <dir>` resolves the Git root from another directory.
+The complete command reference in [docs/cli.md](docs/cli.md) is generated from `src/cli-contract.ts`, the same contract that renders the CLI help and agent guidance.
+In a development checkout, `node src/cli.ts project <action>` runs the same CLI; running the TypeScript entry point directly requires Node 22.18 or newer (for example Node 24), which strips types natively.
+On older Node versions, including the Node 20 floor of the package's `engines` range, the TypeScript entry point fails with an `Unknown file extension ".ts"` error, while the compiled bin has no such requirement.
 Session Tasks are intentionally unavailable here because they live inside a Pi session tree.
 A Claude Code skill in `.claude/skills/worklist/` teaches Claude sessions in this repository to use the CLI under the same guardrails.
 
@@ -138,7 +172,8 @@ npm run check
 npm run pack:check
 ```
 
-The test suite includes a real Pi RPC load test in a temporary Git repository.
+The test suite includes real Pi RPC load tests in temporary repositories.
+One RPC test loads separate provider and consumer fixtures and verifies a capability-negotiation round trip over the shared `pi.events` bus.
 The package uses TypeScript source directly because Pi loads extensions through jiti.
 
 ## Publishing and the Pi gallery

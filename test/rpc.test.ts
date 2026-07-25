@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { spawn, execFileSync, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { type ChildProcessWithoutNullStreams, execFileSync, spawn } from "node:child_process";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 
 const children: ChildProcessWithoutNullStreams[] = [];
 afterEach(() => {
@@ -159,7 +159,7 @@ describe("real Pi load", () => {
 		const movedSnapshots = movedEntries.entries.filter(
 			(entry) => entry.type === "custom" && entry.customType === "worklist-session-snapshot",
 		);
-		expect(movedSnapshots.at(-1)?.data).toMatchObject({ version: 2 });
+		expect(movedSnapshots.at(-1)?.data).toMatchObject({ version: 3 });
 		expect(movedSnapshots.at(-1)?.data?.tasks?.map((task) => task.title)).toEqual([
 			"RPC follow-up",
 			"RPC first step",

@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
 import type { Theme } from "@earendil-works/pi-coding-agent";
+import { describe, expect, it } from "vitest";
+import { parseTasksCommand, WORKLIST_PROMPT_GUIDELINES } from "../src/extension.ts";
+import type { ProjectGoal, SessionTask } from "../src/types.ts";
 import {
 	buildPromptSummary,
 	buildWidgetLines,
@@ -7,8 +9,6 @@ import {
 	type DashboardResult,
 	type DashboardState,
 } from "../src/ui.ts";
-import { parseTasksCommand, WORKLIST_PROMPT_GUIDELINES } from "../src/extension.ts";
-import type { ProjectGoal, SessionTask } from "../src/types.ts";
 
 const tasks: SessionTask[] = Array.from({ length: 6 }, (_, index) => ({
 	id: `t${index}`,
@@ -40,6 +40,47 @@ describe("widget and prompt summary", () => {
 		expect(summary).toContain("Task 1");
 		expect(summary).toContain("and 3 more");
 		expect(summary).not.toContain("Task 4");
+	});
+
+	it("does not expose managed projection metadata in normal model context", () => {
+		const managedTask = {
+			id: "managed-task",
+			title: "Projected work",
+			status: "doing" as const,
+			managed: {
+				version: 1,
+				owner: "pi-orchestrator",
+				producer: { id: "pi-orchestrator", version: "producer-secret" },
+				external: { system: "pi-orchestrator", kind: "workflow-step", id: "step-secret" },
+				planRevision: 4,
+				approvedPlanRevision: 3,
+				createdAt: "2026-07-24T20:00:00.000Z",
+				updatedAt: "2026-07-24T20:05:00.000Z",
+				execution: {
+					state: "running",
+					updatedAt: "2026-07-24T20:05:00.000Z",
+					runId: "run-secret",
+					summary: "summary-secret",
+					runReference: "run-reference-secret",
+				},
+				resultReference: "result-reference-secret",
+				sessionContributionReference: "session-contribution-secret",
+			},
+		} as SessionTask;
+
+		const summary = buildPromptSummary([managedTask], []);
+		expect(summary).toContain("Projected work");
+		for (const hiddenValue of [
+			"producer-secret",
+			"step-secret",
+			"run-secret",
+			"summary-secret",
+			"run-reference-secret",
+			"result-reference-secret",
+			"session-contribution-secret",
+		]) {
+			expect(summary).not.toContain(hiddenValue);
+		}
 	});
 
 	it("preserves canonical relative order when completed tasks are filtered", () => {

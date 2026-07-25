@@ -1,6 +1,6 @@
 {
 	"name": "pi-worklist",
-	"version": "0.4.0",
+	"version": "0.5.0",
 	"description": "A Pi extension for session tasks and project goals.",
 	"type": "module",
 	"keywords": [
@@ -23,11 +23,23 @@
 	},
 	"files": [
 		"src",
+		"dist",
+		"docs",
 		"AGENTS.md",
 		"README.md",
 		"package.json"
 	],
+	"bin": {
+		"pi-worklist": "./dist/cli.js"
+	},
 	"main": "./src/extension.ts",
+	"exports": {
+		".": "./src/extension.ts",
+		"./integration-contract": "./src/integration-contract.ts",
+		"./protocol-consumer": "./src/protocol-consumer.ts",
+		"./src/*": "./src/*",
+		"./package.json": "./package.json"
+	},
 	"pi": {
 		"extensions": [
 			"./src/extension.ts"
@@ -35,6 +47,9 @@
 	},
 	"scripts": {
 		"worklist": "node ./src/cli.ts",
+		"build": "tsc -p tsconfig.build.json",
+		"docs:cli": "node ./scripts/generate-cli-docs.ts",
+		"prepack": "npm run build",
 		"test": "vitest run",
 		"test:watch": "vitest",
 		"typecheck": "tsc --noEmit",
@@ -42,7 +57,7 @@
 		"format:check": "biome format .",
 		"lint": "biome lint --write .",
 		"lint:check": "biome lint .",
-		"check": "npm run typecheck && npm run format:check && npm run lint:check && npm run test",
+		"check": "npm run typecheck && biome check . && npm run test",
 		"pack:check": "npm pack --dry-run",
 		"verify": "npm run check && npm run pack:check"
 	},

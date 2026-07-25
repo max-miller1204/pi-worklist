@@ -1,12 +1,13 @@
-import { describe, expect, it } from "vitest";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { SessionStore, SESSION_SNAPSHOT_TYPE } from "../src/session-store.ts";
-import { formatSessionTasks } from "../src/format.ts";
-import { executeWorklist } from "../src/tool.ts";
-import worklistExtension from "../src/extension.ts";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { describe, expect, it } from "vitest";
+import worklistExtension from "../src/extension.ts";
+import { formatSessionTasks } from "../src/format.ts";
+import { WORKLIST_ERROR_CODES } from "../src/integration-contract.ts";
+import { SESSION_SNAPSHOT_TYPE, SessionStore } from "../src/session-store.ts";
+import { executeWorklist } from "../src/tool.ts";
 
 function fakePi(entries: unknown[] = []) {
 	return {
@@ -46,6 +47,61 @@ describe("session state and tool", () => {
 		expect(store.getTasks()).toEqual([{ id: "b", title: "new", status: "doing" }]);
 	});
 
+	it("restores branch-specific revisions and derives tokens for legacy snapshots", () => {
+		const { api } = fakePi();
+		const store = new SessionStore(api);
+		const legacySnapshot = {
+			type: "custom",
+			id: "legacy-common",
+			customType: SESSION_SNAPSHOT_TYPE,
+			data: { version: 1, tasks: [{ id: "common", title: "Common", status: "todo" }] },
+		};
+		const branches = {
+			first: [
+				legacySnapshot,
+				{
+					type: "custom",
+					id: "entry-first",
+					customType: SESSION_SNAPSHOT_TYPE,
+					data: {
+						version: 2,
+						revision: "branch-first",
+						tasks: [{ id: "first", title: "First branch", status: "doing" }],
+					},
+				},
+			],
+			second: [
+				legacySnapshot,
+				{
+					type: "custom",
+					id: "entry-second",
+					customType: SESSION_SNAPSHOT_TYPE,
+					data: {
+						version: 2,
+						revision: "branch-second",
+						tasks: [{ id: "second", title: "Second branch", status: "done" }],
+					},
+				},
+			],
+		};
+		const reconstruct = (branch: unknown[]) =>
+			store.reconstruct({
+				sessionManager: { getBranch: () => branch },
+			} as unknown as ExtensionContext);
+
+		reconstruct(branches.first);
+		expect(store.getRevision()).toBe("branch-first");
+		expect(store.getTasks()[0]?.id).toBe("first");
+
+		reconstruct(branches.second);
+		expect(store.getRevision()).toBe("branch-second");
+		expect(store.getTasks()[0]?.id).toBe("second");
+
+		reconstruct([legacySnapshot]);
+		expect(store.getRevision()).toBe("legacy-common");
+		expect(store.getTasks()[0]?.id).toBe("common");
+	});
+
 	it("skips malformed tasks while keeping valid ones during reconstruction", () => {
 		const { api } = fakePi();
 		const store = new SessionStore(api);
@@ -79,6 +135,101 @@ describe("session state and tool", () => {
 		]);
 	});
 
+	it("migrates legacy snapshots on the next write without changing task IDs", async () => {
+		const { api, entries } = fakePi();
+		const store = new SessionStore(api);
+		store.reconstruct({
+			sessionManager: {
+				getBranch: () => [
+					{
+						type: "custom",
+						id: "legacy-snapshot",
+						customType: SESSION_SNAPSHOT_TYPE,
+						data: {
+							version: 1,
+							tasks: [
+								{
+									id: "stable-task",
+									title: "Legacy task",
+									description: "Legacy hidden context",
+									status: "todo",
+								},
+							],
+						},
+					},
+				],
+			},
+		} as unknown as ExtensionContext);
+
+		await store.setTaskStatus("stable-task", "doing", { expectedRevision: "legacy-snapshot" });
+
+		const snapshot = (entries.at(-1) as { data: { version: number; tasks: unknown[] } }).data;
+		expect(snapshot.version).toBe(3);
+		expect(snapshot.tasks).toEqual([{ id: "stable-task", title: "Legacy task", status: "doing" }]);
+	});
+
+	it("preserves valid managed projections while keeping them out of normal task reads", async () => {
+		const { api, entries } = fakePi();
+		const store = new SessionStore(api);
+		const managed = {
+			version: 1,
+			owner: "pi-orchestrator",
+			producer: { id: "pi-orchestrator", version: "0.8.0" },
+			external: { system: "pi-orchestrator", kind: "workflow-step", id: "step-secret" },
+			planRevision: 4,
+			approvedPlanRevision: 3,
+			createdAt: "2026-07-24T20:00:00.000Z",
+			updatedAt: "2026-07-24T20:05:00.000Z",
+			execution: {
+				state: "running",
+				updatedAt: "2026-07-24T20:05:00.000Z",
+				runId: "run-secret",
+				summary: "private projected summary",
+				runReference: "pi-orchestrator://runs/run-secret",
+			},
+			resultReference: "pi-orchestrator://results/result-secret",
+			sessionContributionReference: "pi://sessions/session-secret#entry-secret",
+		};
+		store.reconstruct({
+			sessionManager: {
+				getBranch: () => [
+					{
+						type: "custom",
+						id: "managed-snapshot",
+						customType: SESSION_SNAPSHOT_TYPE,
+						data: {
+							version: 3,
+							revision: "managed-revision",
+							tasks: [
+								{
+									id: "managed-task",
+									title: "Projected work",
+									status: "todo",
+									goalId: "goal-1",
+									managed,
+								},
+							],
+						},
+					},
+				],
+			},
+		} as unknown as ExtensionContext);
+
+		expect(store.getTasks()).toEqual([
+			{ id: "managed-task", title: "Projected work", status: "todo", goalId: "goal-1" },
+		]);
+		const outcome = await store.setTaskStatus("managed-task", "doing", {
+			expectedRevision: "managed-revision",
+		});
+		expect(outcome.result).not.toHaveProperty("managed");
+		const snapshot = (entries.at(-1) as { data: { tasks: Array<Record<string, unknown>> } }).data;
+		expect(snapshot.tasks[0]).toMatchObject({
+			id: "managed-task",
+			status: "doing",
+			managed,
+		});
+	});
+
 	it("ignores snapshots with unsupported versions", () => {
 		const { api } = fakePi();
 		const store = new SessionStore(api);
@@ -93,7 +244,7 @@ describe("session state and tool", () => {
 					{
 						type: "custom",
 						customType: SESSION_SNAPSHOT_TYPE,
-						data: { version: 3, tasks: [{ id: "b", title: "Future", status: "todo" }] },
+						data: { version: 4, tasks: [{ id: "b", title: "Future", status: "todo" }] },
 					},
 				],
 			},
@@ -216,6 +367,55 @@ describe("session state and tool", () => {
 		expect(entries).toHaveLength(1);
 	});
 
+	it("does not append snapshots or advance revisions for semantic no-ops", async () => {
+		const { api, entries } = fakePi();
+		const store = new SessionStore(api);
+		store.setTasks([
+			{ id: "a", title: "Stable", status: "doing", goalId: "goal-1" },
+			{ id: "b", title: "Anchor", status: "todo" },
+		]);
+
+		await expect(
+			store.updateTask("a", { title: "Stable", goalId: "goal-1" }, { expectedRevision: "0" }),
+		).resolves.toMatchObject({ result: { id: "a" }, changed: false, revision: "0" });
+		await expect(store.setTaskStatus("a", "doing", { expectedRevision: "0" })).resolves.toMatchObject({
+			result: { id: "a" },
+			changed: false,
+			revision: "0",
+		});
+		await expect(store.moveTask("a", { beforeId: "a" }, { expectedRevision: "0" })).resolves.toMatchObject({
+			result: { id: "a" },
+			changed: false,
+			revision: "0",
+		});
+		expect(entries).toHaveLength(0);
+		expect(store.getRevision()).toBe("0");
+
+		await store.updateTask("a", { title: "Changed" }, { expectedRevision: "0" });
+		const changedRevision = store.getRevision();
+		expect(changedRevision).not.toBe("0");
+		expect(entries).toHaveLength(1);
+		expect(entries[0]).toMatchObject({
+			type: "custom",
+			customType: SESSION_SNAPSHOT_TYPE,
+			data: { version: 3, revision: changedRevision },
+		});
+
+		await expect(
+			store.updateTask("a", { title: "Changed" }, { expectedRevision: changedRevision }),
+		).resolves.toMatchObject({ result: { id: "a" }, changed: false, revision: changedRevision });
+		expect(entries).toHaveLength(1);
+		expect(store.getRevision()).toBe(changedRevision);
+		await expect(
+			store.updateTask("a", { title: "Changed" }, { expectedRevision: "0" }),
+		).rejects.toMatchObject({
+			name: "SessionRevisionConflictError",
+			expectedRevision: "0",
+			actualRevision: changedRevision,
+		});
+		expect(entries).toHaveLength(1);
+	});
+
 	it("rejects invalid placement without poisoning serialized mutations", async () => {
 		const { api, entries } = fakePi();
 		const store = new SessionStore(api);
@@ -256,25 +456,38 @@ describe("session state and tool", () => {
 				sessionStore: store,
 				projectPath: null,
 			}),
-		).rejects.toThrow("anchor missing not found");
+		).rejects.toMatchObject({
+			code: WORKLIST_ERROR_CODES.NOT_FOUND,
+			details: { entity: "session-task-anchor", id: "missing" },
+		});
 		await expect(
 			executeWorklist({ scope: "session", action: "move", id: "missing", beforeId: "a" }, ctx, {
 				sessionStore: store,
 				projectPath: null,
 			}),
-		).rejects.toThrow("Session task missing not found");
+		).rejects.toMatchObject({
+			code: WORKLIST_ERROR_CODES.NOT_FOUND,
+			details: { entity: "session-task", id: "missing" },
+		});
 		await expect(
 			executeWorklist({ scope: "session", action: "move", id: "a", afterId: "missing" }, ctx, {
 				sessionStore: store,
 				projectPath: null,
 			}),
-		).rejects.toThrow("anchor missing not found");
+		).rejects.toMatchObject({
+			code: WORKLIST_ERROR_CODES.NOT_FOUND,
+			details: { entity: "session-task-anchor", id: "missing" },
+		});
 
 		const deleting = store.deleteTask("b");
 		const staleAdd = store.addTask("Stale anchor", undefined, { afterId: "b" });
-		await expect(deleting).resolves.toBe(true);
-		await expect(staleAdd).rejects.toThrow("anchor b not found");
-		await expect(store.addTask("Queue recovered")).resolves.toMatchObject({ title: "Queue recovered" });
+		const staleAddExpectation = expect(staleAdd).rejects.toThrow("anchor b not found");
+		await expect(deleting).resolves.toMatchObject({ result: true, changed: true });
+		await staleAddExpectation;
+		await expect(store.addTask("Queue recovered")).resolves.toMatchObject({
+			result: { title: "Queue recovered" },
+			changed: true,
+		});
 		expect(store.getTasks().map((task) => task.title)).toEqual(["First", "Queue recovered"]);
 		expect(entries).toHaveLength(2);
 	});
@@ -290,16 +503,20 @@ describe("session state and tool", () => {
 
 		const deleteAnchor = store.deleteTask("b");
 		const staleMove = store.moveTask("c", { afterId: "b" });
-		await expect(deleteAnchor).resolves.toBe(true);
-		await expect(staleMove).rejects.toThrow("anchor b not found");
-		await expect(store.moveTask("c", { beforeId: "a" })).resolves.toMatchObject({ id: "c" });
+		const staleMoveExpectation = expect(staleMove).rejects.toThrow("anchor b not found");
+		await expect(deleteAnchor).resolves.toMatchObject({ result: true, changed: true });
+		await staleMoveExpectation;
+		await expect(store.moveTask("c", { beforeId: "a" })).resolves.toMatchObject({
+			result: { id: "c" },
+			changed: true,
+		});
 		expect(store.getTasks().map((task) => task.id)).toEqual(["c", "a"]);
 		expect(entries).toHaveLength(2);
 
 		const deleteSource = store.deleteTask("c");
 		const missingSourceMove = store.moveTask("c", { afterId: "a" });
-		await expect(deleteSource).resolves.toBe(true);
-		await expect(missingSourceMove).resolves.toBeNull();
+		await expect(deleteSource).resolves.toMatchObject({ result: true, changed: true });
+		await expect(missingSourceMove).resolves.toMatchObject({ result: null, changed: false });
 		expect(entries).toHaveLength(3);
 	});
 
@@ -313,11 +530,15 @@ describe("session state and tool", () => {
 		});
 		const id = added.details.goals?.[0]?.id;
 		for (const action of ["complete", "reopen", "archive", "delete"]) {
-			const result = await executeWorklist({ scope: "project", action, id }, ctx, {
-				sessionStore: store,
-				projectPath: path,
+			await expect(
+				executeWorklist({ scope: "project", action, id }, ctx, {
+					sessionStore: store,
+					projectPath: path,
+				}),
+			).rejects.toMatchObject({
+				code: WORKLIST_ERROR_CODES.APPROVAL_REQUIRED,
+				retryable: false,
 			});
-			expect(result.details.requiresConfirm).toBe(true);
 		}
 		await expect(
 			executeWorklist({ scope: "project", action: "set_status", id, status: "done" }, ctx, {
@@ -350,6 +571,7 @@ describe("registered model tool", () => {
 			},
 			registerCommand: () => {},
 			on: () => {},
+			events: { emit: () => {}, on: () => () => {} },
 		} as unknown as ExtensionAPI;
 		worklistExtension(api);
 		if (!tool) throw new Error("worklist tool was not registered");

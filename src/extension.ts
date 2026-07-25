@@ -1,9 +1,14 @@
+import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { WorklistParamsSchema } from "./schema.ts";
-import { readProjectWorklist } from "./project-store.ts";
-import { SessionStore } from "./session-store.ts";
+import { WorklistApplicationService, type WorklistOperationSource } from "./application-service.ts";
+import { createWorklistChangeEvent } from "./change-events.ts";
 import { formatProjectGoals, formatSessionTasks } from "./format.ts";
+import { WORKLIST_CHANGE_EVENT, type WorklistProviderIdentity } from "./integration-contract.ts";
+import { registerWorklistProtocolProvider } from "./protocol-provider.ts";
+import { WorklistParamsSchema } from "./schema.ts";
+import { SessionStore } from "./session-store.ts";
 import { executeWorklist, getProjectPath, WORKLIST_EXECUTION_MODE } from "./tool.ts";
 import type { ProjectGoal, ProjectGoalStatus, SessionTaskStatus } from "./types.ts";
 import {
@@ -111,8 +116,26 @@ export function parseTasksCommand(args: string): ParsedCommand | null {
 	return null;
 }
 
+const packageVersion = (createRequire(import.meta.url)("../package.json") as { version: string }).version;
+
+export function createWorklistProviderIdentity(): WorklistProviderIdentity {
+	return { id: "pi-worklist", version: packageVersion, instanceId: randomUUID() };
+}
+
 export default function worklistExtension(pi: ExtensionAPI): void {
+	const providerIdentity = createWorklistProviderIdentity();
 	const sessionStore = new SessionStore(pi);
+	const applicationService = new WorklistApplicationService({
+		sessionStore,
+		publishChange: (description) => {
+			pi.events.emit(WORKLIST_CHANGE_EVENT, createWorklistChangeEvent(providerIdentity, description));
+		},
+	});
+	const protocolProvider = registerWorklistProtocolProvider({
+		events: pi.events,
+		applicationService,
+		provider: providerIdentity,
+	});
 	let projectPath: string | null = null;
 	let projectGoals: ProjectGoal[] = [];
 	let latestContext: ExtensionContext | undefined;
@@ -122,15 +145,13 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 			projectGoals = [];
 			return;
 		}
-		const result = await readProjectWorklist(projectPath);
-		if (result.error) throw new Error(result.error);
-		projectGoals = result.data.goals;
+		projectGoals = await applicationService.getProjectGoals();
 	}
 
 	async function updateUi(ctx: ExtensionContext): Promise<void> {
 		latestContext = ctx;
 		await refreshProject();
-		const lines = buildWidgetLines(sessionStore.getTasks(), projectGoals);
+		const lines = buildWidgetLines(applicationService.getSessionTasks(), projectGoals);
 		if (!lines.length) ctx.ui.setWidget("pi-worklist", undefined);
 		else if (ctx.mode === "tui") {
 			ctx.ui.setWidget(
@@ -145,8 +166,8 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 		} else ctx.ui.setWidget("pi-worklist", lines);
 	}
 
-	async function execute(params: ParsedCommand, ctx: ExtensionContext) {
-		const result = await executeWorklist(params, ctx, { sessionStore, projectPath });
+	async function execute(params: ParsedCommand, ctx: ExtensionContext, source: WorklistOperationSource) {
+		const result = await executeWorklist(params, ctx, { applicationService }, source);
 		await updateUi(ctx);
 		return result;
 	}
@@ -161,8 +182,7 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 		parameters: WorklistParamsSchema,
 		executionMode: WORKLIST_EXECUTION_MODE,
 		async execute(_id, params, _signal, _onUpdate, ctx) {
-			const result = await executeWorklist(params, ctx, { sessionStore, projectPath });
-			await updateUi(ctx);
+			const result = await execute(params, ctx, "tool");
 			return { content: [{ type: "text", text: result.content }], details: result.details };
 		},
 		renderCall(args, theme) {
@@ -181,12 +201,9 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 	async function handleDashboardAction(action: DashboardAction, ctx: ExtensionContext): Promise<boolean> {
 		if (action.kind === "close") return false;
 		if (action.kind === "add" || action.kind === "insert") {
-			const title = await ctx.ui.input(
-				action.kind === "insert"
-					? "Insert session task"
-					: `Add ${action.scope === "session" ? "session task" : "project goal"}`,
-				"Title",
-			);
+			let inputLabel = action.scope === "session" ? "Add session task" : "Add project goal";
+			if (action.kind === "insert") inputLabel = "Insert session task";
+			const title = await ctx.ui.input(inputLabel, "Title");
 			if (!title?.trim()) return true;
 			if (action.scope === "session") {
 				await execute(
@@ -197,6 +214,7 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 						...(action.kind === "insert" ? { beforeId: action.beforeId } : {}),
 					},
 					ctx,
+					"dashboard",
 				);
 				return true;
 			}
@@ -209,6 +227,7 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 					description: description?.trim() || undefined,
 				},
 				ctx,
+				"dashboard",
 			);
 			return true;
 		}
@@ -222,18 +241,23 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 					...(action.afterId !== undefined ? { afterId: action.afterId } : {}),
 				},
 				ctx,
+				"dashboard",
 			);
 			return true;
 		}
 		if (action.kind === "edit") {
 			if (action.scope === "session") {
-				const task = sessionStore.getTasks().find((candidate) => candidate.id === action.id);
+				const task = applicationService.getSessionTasks().find((candidate) => candidate.id === action.id);
 				if (!task) return true;
 				const title = await ctx.ui.input("Edit title (leave blank to keep)", task.title);
 				if (title === undefined) return true;
 				const nextTitle = title.trim() || undefined;
 				if (nextTitle === undefined || nextTitle === task.title) return true;
-				await execute({ scope: "session", action: "update", id: action.id, title: nextTitle }, ctx);
+				await execute(
+					{ scope: "session", action: "update", id: action.id, title: nextTitle },
+					ctx,
+					"dashboard",
+				);
 				return true;
 			}
 			const goal = projectGoals.find((candidate) => candidate.id === action.id);
@@ -259,6 +283,7 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 					description: nextDescription,
 				},
 				ctx,
+				"dashboard",
 			);
 			return true;
 		}
@@ -268,25 +293,30 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 				await execute(
 					{ scope: action.scope, action: "delete", id: action.id, confirm: action.scope === "project" },
 					ctx,
+					"dashboard",
 				);
 			return true;
 		}
 		if (action.scope === "session") {
-			const task = sessionStore.getTasks().find((item) => item.id === action.id);
+			const task = applicationService.getSessionTasks().find((item) => item.id === action.id);
 			if (task) {
-				const status: SessionTaskStatus =
-					task.status === "todo" ? "doing" : task.status === "doing" ? "done" : "todo";
-				await execute({ scope: "session", action: "set_status", id: task.id, status }, ctx);
+				let status: SessionTaskStatus = "todo";
+				if (task.status === "todo") status = "doing";
+				else if (task.status === "doing") status = "done";
+				await execute({ scope: "session", action: "set_status", id: task.id, status }, ctx, "dashboard");
 			}
 			return true;
 		}
 		const goal = projectGoals.find((item) => item.id === action.id);
 		if (!goal) return true;
-		if (goal.status === "open") await execute({ scope: "project", action: "set_active", id: goal.id }, ctx);
-		else {
+		if (goal.status === "open") {
+			await execute({ scope: "project", action: "set_active", id: goal.id }, ctx, "dashboard");
+		} else {
 			const actionName = goal.status === "active" ? "complete" : "reopen";
 			const confirmed = await ctx.ui.confirm(`${actionName} project goal?`, goal.title);
-			if (confirmed) await execute({ scope: "project", action: actionName, id: goal.id, confirm: true }, ctx);
+			if (confirmed) {
+				await execute({ scope: "project", action: actionName, id: goal.id, confirm: true }, ctx, "dashboard");
+			}
 		}
 		return true;
 	}
@@ -306,7 +336,7 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 					return;
 				}
 				try {
-					const result = await execute(parsed, ctx);
+					const result = await execute(parsed, ctx, "command");
 					ctx.ui.notify(result.content, "info");
 				} catch (error) {
 					ctx.ui.notify(String(error), "error");
@@ -315,7 +345,7 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 			}
 			if (ctx.mode !== "tui") {
 				ctx.ui.notify(
-					`${formatSessionTasks(sessionStore.getTasks())}\n\n${formatProjectGoals(projectGoals)}`,
+					`${formatSessionTasks(applicationService.getSessionTasks())}\n\n${formatProjectGoals(projectGoals)}`,
 					"info",
 				);
 				return;
@@ -331,7 +361,13 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 					ctx.ui.notify(String(error), "error");
 				}
 				const result = await ctx.ui.custom<DashboardResult>((tui, theme, _keys, done) => {
-					const dashboard = new Dashboard(sessionStore.getTasks(), projectGoals, theme, done, dashboardState);
+					const dashboard = new Dashboard(
+						applicationService.getSessionTasks(),
+						projectGoals,
+						theme,
+						done,
+						dashboardState,
+					);
 					return {
 						render: (width) => dashboard.render(width),
 						invalidate: () => dashboard.invalidate(),
@@ -359,6 +395,7 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", async (_event, ctx) => {
 		sessionStore.reconstruct(ctx);
 		projectPath = getProjectPath(ctx.cwd);
+		applicationService.setProjectPath(projectPath);
 		try {
 			await updateUi(ctx);
 		} catch (error) {
@@ -374,11 +411,12 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 		}
 	});
 	pi.on("before_agent_start", async (event) => {
-		const summary = buildPromptSummary(sessionStore.getTasks(), projectGoals);
+		const summary = buildPromptSummary(applicationService.getSessionTasks(), projectGoals);
 		if (!summary) return;
 		return { systemPrompt: `${event.systemPrompt}\n\n${summary}` };
 	});
 	pi.on("session_shutdown", () => {
+		protocolProvider.shutdown();
 		latestContext?.ui.setWidget("pi-worklist", undefined);
 		latestContext = undefined;
 	});
