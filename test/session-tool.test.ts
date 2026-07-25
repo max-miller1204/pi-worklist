@@ -571,6 +571,7 @@ describe("registered model tool", () => {
 			},
 			registerCommand: () => {},
 			on: () => {},
+			events: { emit: () => {}, on: () => () => {} },
 		} as unknown as ExtensionAPI;
 		worklistExtension(api);
 		if (!tool) throw new Error("worklist tool was not registered");

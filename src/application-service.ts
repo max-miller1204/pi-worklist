@@ -640,6 +640,16 @@ function requireReconciliationPayload(
 			resolution: "provide-task-array",
 		});
 	}
+	if (payload.tasks.length > WORKLIST_PROVIDER_LIMITS.maxListLimit) {
+		throw validationError(
+			`Reconciliation batches are limited to ${WORKLIST_PROVIDER_LIMITS.maxListLimit} tasks.`,
+			{
+				field: "reconciliation.tasks",
+				maxBatchItems: WORKLIST_PROVIDER_LIMITS.maxListLimit,
+				resolution: "split-into-smaller-batches",
+			},
+		);
+	}
 	const externalIds = new Set<string>();
 	for (const [index, task] of payload.tasks.entries()) {
 		validateManagedTaskInput(task, index);
@@ -767,6 +777,16 @@ function requireExecutionUpdatePayload(
 			field: "executionUpdate.updates",
 			resolution: "provide-execution-updates",
 		});
+	}
+	if (payload.updates.length > WORKLIST_PROVIDER_LIMITS.maxListLimit) {
+		throw validationError(
+			`Execution update batches are limited to ${WORKLIST_PROVIDER_LIMITS.maxListLimit} items.`,
+			{
+				field: "executionUpdate.updates",
+				maxBatchItems: WORKLIST_PROVIDER_LIMITS.maxListLimit,
+				resolution: "split-into-smaller-batches",
+			},
+		);
 	}
 	const externalIds = new Set<string>();
 	for (const [index, update] of payload.updates.entries()) {

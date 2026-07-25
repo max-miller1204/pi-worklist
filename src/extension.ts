@@ -6,6 +6,7 @@ import { WorklistApplicationService, type WorklistOperationSource } from "./appl
 import { createWorklistChangeEvent } from "./change-events.ts";
 import { formatProjectGoals, formatSessionTasks } from "./format.ts";
 import { WORKLIST_CHANGE_EVENT, type WorklistProviderIdentity } from "./integration-contract.ts";
+import { registerWorklistProtocolProvider } from "./protocol-provider.ts";
 import { WorklistParamsSchema } from "./schema.ts";
 import { SessionStore } from "./session-store.ts";
 import { executeWorklist, getProjectPath, WORKLIST_EXECUTION_MODE } from "./tool.ts";
@@ -129,6 +130,11 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 		publishChange: (description) => {
 			pi.events.emit(WORKLIST_CHANGE_EVENT, createWorklistChangeEvent(providerIdentity, description));
 		},
+	});
+	const protocolProvider = registerWorklistProtocolProvider({
+		events: pi.events,
+		applicationService,
+		provider: providerIdentity,
 	});
 	let projectPath: string | null = null;
 	let projectGoals: ProjectGoal[] = [];
@@ -410,6 +416,7 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 		return { systemPrompt: `${event.systemPrompt}\n\n${summary}` };
 	});
 	pi.on("session_shutdown", () => {
+		protocolProvider.shutdown();
 		latestContext?.ui.setWidget("pi-worklist", undefined);
 		latestContext = undefined;
 	});
