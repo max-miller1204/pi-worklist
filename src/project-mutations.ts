@@ -21,9 +21,12 @@ export const PROJECT_LIFECYCLE_TARGET_STATUS: Record<"complete" | "reopen" | "ar
 };
 
 export class ProjectGoalNotFoundError extends Error {
+	readonly goalId: string;
+
 	constructor(id: string) {
 		super(`Project goal ${id} not found`);
 		this.name = "ProjectGoalNotFoundError";
+		this.goalId = id;
 	}
 }
 

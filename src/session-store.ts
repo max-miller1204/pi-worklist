@@ -1,10 +1,16 @@
 import { randomBytes } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { ManagedSessionTaskInput, ReconciledSessionTaskProjection } from "./integration-contract.ts";
+import type {
+	ManagedExecutionUpdate,
+	ManagedSessionTaskInput,
+	ReconciledSessionTaskProjection,
+} from "./integration-contract.ts";
 import { normalizeManagedSessionTaskProjection } from "./managed-projection.ts";
 import {
 	assertRecordedIdentitiesBelongToGoal,
+	executionUpdateFingerprint,
 	normalizeProjectionReconciliationRecord,
+	planManagedExecutionUpdate,
 	planManagedProjectionReconciliation,
 	projectionIdempotencyKeyConflictError,
 	projectionReconciliationFingerprint,
@@ -106,12 +112,16 @@ function upsertReconciliationRecord(
 }
 
 export class SessionStore {
+	private readonly pi: ExtensionAPI;
 	private tasks: StoredSessionTask[] = [];
 	private revision = "0";
 	private projectionReconciliations: SessionProjectionReconciliationRecord[] = [];
 	private mutationQueue: Promise<unknown> = Promise.resolve();
 
-	constructor(private readonly pi: ExtensionAPI) {}
+	// A plain assignment keeps this module loadable under Node's strip-only TypeScript mode.
+	constructor(pi: ExtensionAPI) {
+		this.pi = pi;
+	}
 
 	getTasks(): SessionTask[] {
 		return this.tasks.map(toPublicSessionTask);
@@ -324,6 +334,63 @@ export class SessionStore {
 				idempotencyKey,
 				fingerprint: projectionReconciliationFingerprint(goalId, desiredTasks),
 				goalId,
+				tasks,
+			};
+			const projectionReconciliations = upsertReconciliationRecord(this.projectionReconciliations, record);
+			if (!changed) {
+				this.pi.appendEntry(SESSION_RECONCILIATION_RECEIPT_TYPE, record);
+				this.projectionReconciliations = projectionReconciliations;
+				return { tasks, changed: false, revision: this.revision };
+			}
+			return {
+				tasks,
+				changed: true,
+				revision: this.persist(nextTasks, projectionReconciliations),
+			};
+		});
+	}
+
+	getManagedExecutionUpdateReplay(
+		updates: ManagedExecutionUpdate[],
+		idempotencyKey: string,
+	): ManagedTaskReconciliationOutcome | undefined {
+		const record = this.projectionReconciliations.find(
+			(candidate) => candidate.idempotencyKey === idempotencyKey,
+		);
+		if (!record) return undefined;
+		if (record.fingerprint !== executionUpdateFingerprint(updates)) {
+			throw projectionIdempotencyKeyConflictError(idempotencyKey);
+		}
+		return { tasks: record.tasks, changed: false, revision: this.revision };
+	}
+
+	/** Resolves the Project Goals behind the targeted managed projections without mutating state. */
+	resolveManagedExecutionGoalIds(updates: ManagedExecutionUpdate[]): string[] {
+		return planManagedExecutionUpdate({
+			currentTasks: this.tasks,
+			updates,
+			now: "1970-01-01T00:00:00.000Z",
+		}).goalIds;
+	}
+
+	updateManagedExecution(
+		updates: ManagedExecutionUpdate[],
+		idempotencyKey: string,
+		options: SessionMutationOptions = {},
+	): Promise<ManagedTaskReconciliationOutcome> {
+		return this.serialized(() => {
+			const replay = this.getManagedExecutionUpdateReplay(updates, idempotencyKey);
+			if (replay) return replay;
+			this.assertExpectedRevision(options);
+			const { tasks, nextTasks, changed } = planManagedExecutionUpdate({
+				currentTasks: this.tasks,
+				updates,
+				now: new Date().toISOString(),
+			});
+			const record = {
+				idempotencyKey,
+				fingerprint: executionUpdateFingerprint(updates),
+				operation: "session-tasks.update-execution" as const,
 				tasks,
 			};
 			const projectionReconciliations = upsertReconciliationRecord(this.projectionReconciliations, record);

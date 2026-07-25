@@ -1,6 +1,13 @@
 import { createHash } from "node:crypto";
-import type { ManagedSessionTaskInput, ReconciledSessionTaskProjection } from "./integration-contract.ts";
-import { MANAGED_SESSION_TASK_PROJECTION_VERSION } from "./managed-projection.ts";
+import type {
+	ManagedExecutionUpdate,
+	ManagedSessionTaskInput,
+	ReconciledSessionTaskProjection,
+} from "./integration-contract.ts";
+import {
+	MANAGED_SESSION_TASK_PROJECTION_VERSION,
+	type ManagedExecutionProjection,
+} from "./managed-projection.ts";
 import type { SessionProjectionReconciliationRecord, StoredSessionTask } from "./types.ts";
 
 const RECONCILIATION_ACTIONS = [
@@ -58,7 +65,6 @@ export function normalizeProjectionReconciliationRecord(
 	const record = value as Record<string, unknown>;
 	if (typeof record.idempotencyKey !== "string" || !record.idempotencyKey) return undefined;
 	if (typeof record.fingerprint !== "string" || !record.fingerprint) return undefined;
-	if (typeof record.goalId !== "string" || !record.goalId) return undefined;
 	if (!Array.isArray(record.tasks)) return undefined;
 	const tasks: ReconciledSessionTaskProjection[] = [];
 	for (const valueTask of record.tasks) {
@@ -66,9 +72,20 @@ export function normalizeProjectionReconciliationRecord(
 		if (!task) return undefined;
 		tasks.push(task);
 	}
+	if (record.operation === "session-tasks.update-execution") {
+		return {
+			idempotencyKey: record.idempotencyKey,
+			fingerprint: record.fingerprint,
+			operation: record.operation,
+			tasks,
+		};
+	}
+	if (record.operation !== undefined && record.operation !== "session-tasks.reconcile") return undefined;
+	if (typeof record.goalId !== "string" || !record.goalId) return undefined;
 	return {
 		idempotencyKey: record.idempotencyKey,
 		fingerprint: record.fingerprint,
+		...(record.operation === "session-tasks.reconcile" ? { operation: record.operation } : {}),
 		goalId: record.goalId,
 		tasks,
 	};
@@ -82,13 +99,13 @@ function canonicalExternal(input: ManagedSessionTaskInput) {
 	};
 }
 
-function canonicalExecution(input: ManagedSessionTaskInput) {
+function canonicalExecution(execution: ManagedExecutionProjection): ManagedExecutionProjection {
 	return {
-		state: input.execution.state,
-		updatedAt: input.execution.updatedAt,
-		runId: input.execution.runId,
-		...(input.execution.summary !== undefined ? { summary: input.execution.summary } : {}),
-		...(input.execution.runReference !== undefined ? { runReference: input.execution.runReference } : {}),
+		state: execution.state,
+		updatedAt: execution.updatedAt,
+		runId: execution.runId,
+		...(execution.summary !== undefined ? { summary: execution.summary } : {}),
+		...(execution.runReference !== undefined ? { runReference: execution.runReference } : {}),
 	};
 }
 
@@ -105,7 +122,7 @@ export function projectionReconciliationFingerprint(
 			producer: { id: "pi-orchestrator", version: task.producer.version },
 			planRevision: task.planRevision,
 			approvedPlanRevision: task.approvedPlanRevision,
-			execution: canonicalExecution(task),
+			execution: canonicalExecution(task.execution),
 			...(task.resultReference !== undefined ? { resultReference: task.resultReference } : {}),
 			...(task.sessionContributionReference !== undefined
 				? { sessionContributionReference: task.sessionContributionReference }
@@ -159,7 +176,7 @@ function managedProjectionForInput(input: ManagedSessionTaskInput, createdAt: st
 		approvedPlanRevision: input.approvedPlanRevision,
 		createdAt,
 		updatedAt,
-		execution: canonicalExecution(input),
+		execution: canonicalExecution(input.execution),
 		...(input.resultReference !== undefined ? { resultReference: input.resultReference } : {}),
 		...(input.sessionContributionReference !== undefined
 			? { sessionContributionReference: input.sessionContributionReference }
@@ -245,7 +262,8 @@ export function assertRecordedIdentitiesBelongToGoal(
 ): void {
 	const desiredIds = new Set(desiredTasks.map((task) => task.external.id));
 	for (const record of records) {
-		if (record.goalId === goalId) continue;
+		// Execution updates carry no goal ownership claim.
+		if (record.goalId === undefined || record.goalId === goalId) continue;
 		const conflict = record.tasks.find((task) => desiredIds.has(task.external.id));
 		if (conflict) {
 			throw projectionGoalConflictError(conflict.external.id, conflict.taskId, record.goalId, goalId);
@@ -330,4 +348,89 @@ export function planManagedProjectionReconciliation({
 		...removed,
 	];
 	return { tasks, nextTasks, changed };
+}
+
+export function executionUpdateFingerprint(updates: ManagedExecutionUpdate[]): string {
+	const semanticInput = {
+		operation: "session-tasks.update-execution",
+		updates: updates.map((update) => ({
+			external: {
+				system: "pi-orchestrator" as const,
+				kind: "workflow-step" as const,
+				id: update.external.id,
+			},
+			execution: canonicalExecution(update.execution),
+		})),
+	};
+	return createHash("sha256").update(JSON.stringify(semanticInput)).digest("hex");
+}
+
+export function executionTargetNotFoundError(externalId: string): Error & { externalId: string } {
+	return Object.assign(
+		new Error(`No managed Session Task projection exists for workflow step ${externalId}.`),
+		{ name: "SessionExecutionTargetNotFoundError", externalId },
+	);
+}
+
+export interface ManagedExecutionUpdatePlan {
+	tasks: ReconciledSessionTaskProjection[];
+	nextTasks: StoredSessionTask[];
+	/** Sorted distinct Project Goal IDs of the targeted managed projections. */
+	goalIds: string[];
+	changed: boolean;
+}
+
+export interface ManagedExecutionUpdateInput {
+	currentTasks: StoredSessionTask[];
+	updates: ManagedExecutionUpdate[];
+	now: string;
+}
+
+/**
+ * Applies lightweight execution-state updates to existing managed projections.
+ *
+ * Targets are resolved only by stable external workflow-step identity. The user-facing
+ * todo, doing, and done lifecycle is deliberately untouched; reconciliation owns it.
+ */
+export function planManagedExecutionUpdate({
+	currentTasks,
+	updates,
+	now,
+}: ManagedExecutionUpdateInput): ManagedExecutionUpdatePlan {
+	const updatesByExternalId = new Map(updates.map((update) => [update.external.id, update] as const));
+	const outcomesByExternalId = new Map<string, ReconciledSessionTaskProjection>();
+	const goalIds = new Set<string>();
+	const nextTasks: StoredSessionTask[] = [];
+	let changed = false;
+
+	for (const current of currentTasks) {
+		const externalId = current.managed?.external.id;
+		const update =
+			current.managed !== undefined && externalId !== undefined && !outcomesByExternalId.has(externalId)
+				? updatesByExternalId.get(externalId)
+				: undefined;
+		if (current.managed === undefined || externalId === undefined || update === undefined) {
+			nextTasks.push(current);
+			continue;
+		}
+		if (current.goalId !== undefined) goalIds.add(current.goalId);
+		const execution = canonicalExecution(update.execution);
+		const unchanged = JSON.stringify(current.managed.execution) === JSON.stringify(execution);
+		nextTasks.push(
+			unchanged ? current : { ...current, managed: { ...current.managed, execution, updatedAt: now } },
+		);
+		if (!unchanged) changed = true;
+		outcomesByExternalId.set(externalId, {
+			external: { system: "pi-orchestrator", kind: "workflow-step", id: externalId },
+			taskId: current.id,
+			action: unchanged ? "unchanged" : "updated",
+		});
+	}
+
+	const tasks = updates.map((update) => {
+		const outcome = outcomesByExternalId.get(update.external.id);
+		if (outcome === undefined) throw executionTargetNotFoundError(update.external.id);
+		return outcome;
+	});
+	return { tasks, nextTasks, goalIds: [...goalIds].sort(), changed };
 }

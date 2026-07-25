@@ -146,6 +146,10 @@ Snapshots version 1 and 2 remain readable, preserve their existing Session Task 
 
 This operation atomically updates lightweight projected execution state for pi-orchestrator-managed Session Tasks.
 The update identifies tasks by stable external identities rather than queue position or title.
+An external identity without a managed projection on the current session branch returns `NOT_FOUND`; the consumer must reconcile before updating execution state.
+The user-facing todo, doing, and done lifecycle is never changed by an execution update; only `session-tasks.reconcile` projects it.
+Execution updates reject closed or missing goal associations exactly like reconciliation.
+Session mutation idempotency keys share one namespace, so reusing a reconciliation key for an execution update returns an idempotency-key conflict.
 Execution summaries and run references must stay within advertised bounds.
 The provider must not copy worker logs, dependency graphs, retry histories, artifacts, or recovery state into pi-worklist.
 

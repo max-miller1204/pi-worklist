@@ -29,12 +29,26 @@ export interface StoredSessionTask extends SessionTask {
 	managed?: ManagedSessionTaskProjection;
 }
 
-export interface SessionProjectionReconciliationRecord {
+interface SessionExternalMutationRecordBase {
 	idempotencyKey: string;
 	fingerprint: string;
-	goalId: string;
 	tasks: ReconciledSessionTaskProjection[];
 }
+
+export interface SessionProjectionBatchRecord extends SessionExternalMutationRecordBase {
+	/** Absent in records persisted before execution updates existed. */
+	operation?: "session-tasks.reconcile";
+	goalId: string;
+}
+
+export interface SessionExecutionUpdateRecord extends SessionExternalMutationRecordBase {
+	operation: "session-tasks.update-execution";
+	goalId?: never;
+}
+
+export type SessionProjectionReconciliationRecord =
+	| SessionProjectionBatchRecord
+	| SessionExecutionUpdateRecord;
 
 export interface SessionSnapshot {
 	version: number;

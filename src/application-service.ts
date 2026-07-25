@@ -5,6 +5,7 @@ import {
 } from "./goal-associations.ts";
 import {
 	canonicalChangedFields,
+	type ManagedExecutionUpdate,
 	type ManagedSessionTaskInput,
 	WORKLIST_ERROR_CODES,
 	type WorklistOperationPayloads,
@@ -13,6 +14,8 @@ import {
 } from "./integration-contract.ts";
 import {
 	MANAGED_SESSION_TASK_PROJECTION_VERSION,
+	normalizeExternalWorkflowStepIdentity,
+	normalizeManagedExecutionProjection,
 	normalizeManagedSessionTaskProjection,
 } from "./managed-projection.ts";
 import {
@@ -28,7 +31,7 @@ import {
 	updateProjectGoal,
 } from "./project-mutations.ts";
 import { ProjectRevisionConflictError } from "./project-store.ts";
-import type { SessionStore } from "./session-store.ts";
+import { SessionRevisionConflictError, type SessionStore } from "./session-store.ts";
 import type {
 	ProjectGoal,
 	ProjectGoalStatus,
@@ -57,6 +60,7 @@ export interface WorklistOperation {
 	confirm?: boolean;
 	expectedRevision?: string;
 	reconciliation?: WorklistOperationPayloads["session-tasks.reconcile"];
+	executionUpdate?: WorklistOperationPayloads["session-tasks.update-execution"];
 }
 
 interface WorklistApplicationResultBase {
@@ -224,6 +228,14 @@ function isSessionTaskAnchorNotFoundError(error: unknown): error is Error & { an
 		error instanceof Error &&
 		error.name === "SessionTaskAnchorNotFoundError" &&
 		typeof (error as { anchorId?: unknown }).anchorId === "string"
+	);
+}
+
+function isSessionExecutionTargetNotFoundError(error: unknown): error is Error & { externalId: string } {
+	return (
+		error instanceof Error &&
+		error.name === "SessionExecutionTargetNotFoundError" &&
+		typeof (error as { externalId?: unknown }).externalId === "string"
 	);
 }
 
@@ -559,6 +571,116 @@ function requireReconciliationPayload(
 	return payload;
 }
 
+function validateExecutionUpdateItem(value: unknown, index: number): asserts value is ManagedExecutionUpdate {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		throw validationError(`Execution update ${index} must be an object.`, {
+			field: `updates[${index}]`,
+			resolution: "provide-valid-execution-update",
+		});
+	}
+	const update = value as ManagedExecutionUpdate;
+	if (!normalizeExternalWorkflowStepIdentity(update.external)) {
+		throw validationError(`Execution update ${index} requires a workflow-step external identity.`, {
+			field: `updates[${index}].external`,
+			resolution: "provide-workflow-step-identity",
+		});
+	}
+	if (!normalizeManagedExecutionProjection(update.execution)) {
+		throw validationError(`Execution update ${index} has an invalid or unbounded execution projection.`, {
+			field: `updates[${index}].execution`,
+			resolution: "provide-valid-execution-projection",
+		});
+	}
+}
+
+function requireExecutionUpdatePayload(
+	operation: WorklistOperation,
+): WorklistOperationPayloads["session-tasks.update-execution"] {
+	const payload = operation.executionUpdate;
+	if (!payload || typeof payload !== "object") {
+		throw validationError("executionUpdate is required for session update_execution.", {
+			fields: ["executionUpdate"],
+			resolution: "provide-execution-update-payload",
+		});
+	}
+	if (payload.owner !== "pi-orchestrator") {
+		throw validationError("Execution update owner must be pi-orchestrator.", {
+			field: "executionUpdate.owner",
+			resolution: "provide-supported-owner",
+		});
+	}
+	if (!payload.idempotencyKey?.trim()) {
+		throw validationError("Execution update idempotencyKey must not be blank.", {
+			field: "executionUpdate.idempotencyKey",
+			resolution: "provide-idempotency-key",
+		});
+	}
+	if (!Array.isArray(payload.updates) || payload.updates.length === 0) {
+		throw validationError("Execution updates must be a non-empty array.", {
+			field: "executionUpdate.updates",
+			resolution: "provide-execution-updates",
+		});
+	}
+	const externalIds = new Set<string>();
+	for (const [index, update] of payload.updates.entries()) {
+		validateExecutionUpdateItem(update, index);
+		if (externalIds.has(update.external.id)) {
+			throw validationError(`Execution updates contain duplicate external identity ${update.external.id}.`, {
+				field: `updates[${index}].external.id`,
+				id: update.external.id,
+				resolution: "deduplicate-external-identities",
+			});
+		}
+		externalIds.add(update.external.id);
+	}
+	return payload;
+}
+
+async function updateManagedExecutionProjections(
+	sessionStore: SessionStore,
+	projectPath: string,
+	operation: WorklistOperation,
+): Promise<SessionExecutionResult> {
+	const payload = requireExecutionUpdatePayload(operation);
+	const replay = sessionStore.getManagedExecutionUpdateReplay(payload.updates, payload.idempotencyKey);
+	if (replay) {
+		return {
+			result: {
+				scope: "session",
+				action: "update_execution",
+				reconciliation: { tasks: replay.tasks },
+			},
+			changed: false,
+			revision: replay.revision,
+		};
+	}
+	if (
+		payload.expectedSessionRevision !== undefined &&
+		payload.expectedSessionRevision !== sessionStore.getRevision()
+	) {
+		throw new SessionRevisionConflictError(payload.expectedSessionRevision, sessionStore.getRevision());
+	}
+	for (const goalId of sessionStore.resolveManagedExecutionGoalIds(payload.updates)) {
+		// Closed and missing goal associations must block new execution mutations one at a time.
+		// pi-lens-ignore: await-in-loop
+		await validateManagedGoalAssociation(projectPath, goalId);
+	}
+	const { tasks, changed, revision } = await sessionStore.updateManagedExecution(
+		payload.updates,
+		payload.idempotencyKey,
+		{ expectedRevision: payload.expectedSessionRevision },
+	);
+	return {
+		result: {
+			scope: "session",
+			action: "update_execution",
+			reconciliation: { tasks },
+		},
+		changed,
+		revision,
+	};
+}
+
 async function reconcileSessionTaskProjections(
 	sessionStore: SessionStore,
 	projectPath: string,
@@ -677,10 +799,13 @@ export class WorklistApplicationService {
 			let failureMeta = cloneEmptyResultMeta();
 			if (error instanceof WorklistApplicationError) typedError = error.toResultError();
 			else if (error instanceof ProjectGoalNotFoundError) {
-				typedError = notFoundError(
-					"project-goal",
-					operation.reconciliation?.goalId ?? operation.id ?? "unknown",
-				).toResultError();
+				typedError = notFoundError("project-goal", error.goalId).toResultError();
+			} else if (isSessionExecutionTargetNotFoundError(error)) {
+				typedError = createApplicationError(WORKLIST_ERROR_CODES.NOT_FOUND, error.message, {
+					entity: "managed-session-task",
+					externalId: error.externalId,
+					resolution: "reconcile-managed-projections-first",
+				}).toResultError();
 			} else if (error instanceof ProjectGoalAssociationChangedError) {
 				typedError = {
 					code: WORKLIST_ERROR_CODES.CONFLICT,
@@ -811,12 +936,23 @@ export class WorklistApplicationService {
 				return deleteSessionTask(sessionStore, operation);
 			case "reconcile":
 				return reconcileSessionTaskProjections(sessionStore, this.requireProjectPath(), operation);
+			case "update_execution":
+				return updateManagedExecutionProjections(sessionStore, this.requireProjectPath(), operation);
 			default:
 				throw createApplicationError(
 					WORKLIST_ERROR_CODES.INVALID_REQUEST,
 					`Unknown session action: ${operation.action}.`,
 					{
-						supportedActions: ["add", "delete", "list", "move", "reconcile", "set_status", "update"],
+						supportedActions: [
+							"add",
+							"delete",
+							"list",
+							"move",
+							"reconcile",
+							"set_status",
+							"update",
+							"update_execution",
+						],
 					},
 				);
 		}

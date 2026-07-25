@@ -93,14 +93,16 @@ function normalizeProducer(value: unknown): WorklistProjectionProducer | undefin
 	return { id: "pi-orchestrator", version: value.version };
 }
 
-function normalizeExternalIdentity(value: unknown): ExternalWorkflowStepIdentity | undefined {
+export function normalizeExternalWorkflowStepIdentity(
+	value: unknown,
+): ExternalWorkflowStepIdentity | undefined {
 	if (!isRecord(value)) return undefined;
 	if (value.system !== "pi-orchestrator" || value.kind !== "workflow-step") return undefined;
 	if (!isBoundedString(value.id, MAX_MANAGED_IDENTITY_BYTES)) return undefined;
 	return { system: "pi-orchestrator", kind: "workflow-step", id: value.id };
 }
 
-function normalizeExecution(value: unknown): ManagedExecutionProjection | undefined {
+export function normalizeManagedExecutionProjection(value: unknown): ManagedExecutionProjection | undefined {
 	if (!isRecord(value)) return undefined;
 	if (!MANAGED_EXECUTION_STATES.includes(value.state as ManagedExecutionState)) return undefined;
 	if (!isTimestamp(value.updatedAt)) return undefined;
@@ -127,8 +129,8 @@ export function normalizeManagedSessionTaskProjection(
 	if (value.version !== MANAGED_SESSION_TASK_PROJECTION_VERSION) return undefined;
 	if (value.owner !== "pi-orchestrator") return undefined;
 	const producer = normalizeProducer(value.producer);
-	const external = normalizeExternalIdentity(value.external);
-	const execution = normalizeExecution(value.execution);
+	const external = normalizeExternalWorkflowStepIdentity(value.external);
+	const execution = normalizeManagedExecutionProjection(value.execution);
 	if (!producer || !external || !execution) return undefined;
 	if (!isRevision(value.planRevision) || !isRevision(value.approvedPlanRevision)) return undefined;
 	if (value.approvedPlanRevision > value.planRevision) return undefined;
