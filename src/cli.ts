@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 import {
-	unwrapWorklistApplicationResult,
 	WorklistApplicationError,
+	type WorklistApplicationResult,
 	WorklistApplicationService,
 	type WorklistOperation,
 } from "./application-service.ts";
-import { formatProjectGoals } from "./format.ts";
 import { getWorklistPath, resolveGitRoot } from "./git.ts";
-import { WORKLIST_ERROR_CODES } from "./integration-contract.ts";
+import { WORKLIST_ERROR_CODES, type WorklistErrorCode } from "./integration-contract.ts";
 import type { ProjectGoal } from "./types.ts";
 
 /**
@@ -22,10 +21,13 @@ import type { ProjectGoal } from "./types.ts";
 const LIFECYCLE_ACTIONS = ["complete", "reopen", "archive", "delete"] as const;
 type LifecycleAction = (typeof LIFECYCLE_ACTIONS)[number];
 
-const USAGE = `Usage: node src/cli.ts project <action> [arguments] [flags]
+const COMPACT_TITLE_LIMIT = 96;
+
+const USAGE = `Usage: pi-worklist project <action> [arguments] [flags]
 
 Actions:
-  list                                     Show all project goals
+  list                                     Show a compact bounded list of project goals
+  show <id>                                Show one goal with its full description
   add <title...> [-- <description...>]     Add an open goal
   update <id> [title...] [-- <description...>]
                                            Edit a goal; "-- " alone clears the description
@@ -36,12 +38,11 @@ Actions:
   delete <id> --confirm                    Delete a goal permanently
 
 Flags:
-  --json         Print the result as JSON on stdout
+  --json         Print the deterministic result envelope as JSON (stdout on success, stderr on failure)
   --confirm      Acknowledge a lifecycle action; pass it only for an explicit user request
   --cwd <dir>    Resolve the git root from this directory instead of the working directory
 
-Exit codes: 0 success, 1 error, 2 usage error, 3 confirmation required.
-Errors are always written to stderr; --json output is emitted only on success.`;
+Exit codes: 0 success, 1 error, 2 usage error, 3 confirmation required, 4 conflict.`;
 
 interface CliInvocation {
 	scope: string;
@@ -56,6 +57,12 @@ interface CliInvocation {
 function fail(message: string, code: number): never {
 	process.stderr.write(`${message}\n`);
 	process.exit(code);
+}
+
+function exitCodeForError(code: WorklistErrorCode): number {
+	if (code === WORKLIST_ERROR_CODES.APPROVAL_REQUIRED) return 3;
+	if (code === WORKLIST_ERROR_CODES.CONFLICT) return 4;
+	return 1;
 }
 
 function parseArgs(argv: string[]): CliInvocation {
@@ -99,15 +106,45 @@ function requireId(invocation: CliInvocation): string {
 	return id;
 }
 
-async function executeCliOperation(service: WorklistApplicationService, operation: WorklistOperation) {
-	return unwrapWorklistApplicationResult(await service.execute(operation, { source: "cli" }));
+function compactTitle(title: string): string {
+	const flattened = title.replace(/\s+/g, " ").trim();
+	if (flattened.length <= COMPACT_TITLE_LIMIT) return flattened;
+	return `${flattened.slice(0, COMPACT_TITLE_LIMIT - 1)}…`;
 }
 
-function report(invocation: CliInvocation, message: string, goals: ProjectGoal[], goal?: ProjectGoal): void {
+/** Compact bounded list line: one goal per line, no descriptions. */
+function formatGoalLine(goal: ProjectGoal): string {
+	return `[${goal.status}] ${goal.id}: ${compactTitle(goal.title)}`;
+}
+
+function formatGoalList(goals: ProjectGoal[]): string {
+	if (goals.length === 0) return "No project goals.";
+	return goals.map(formatGoalLine).join("\n");
+}
+
+/** Explicit full-detail read: every stored field, including the complete description. */
+function formatGoalDetail(goal: ProjectGoal): string {
+	return [
+		`${goal.id}: ${goal.title}`,
+		`status: ${goal.status}`,
+		`created: ${goal.createdAt}`,
+		`updated: ${goal.updatedAt}`,
+		...(goal.description !== undefined ? ["description:", goal.description] : []),
+	].join("\n");
+}
+
+async function executeCliOperation(
+	service: WorklistApplicationService,
+	operation: WorklistOperation,
+): Promise<WorklistApplicationResult> {
+	const envelope = await service.execute(operation, { source: "cli" });
+	if (!envelope.ok) throw new WorklistApplicationError(envelope.error);
+	return envelope;
+}
+
+function report(invocation: CliInvocation, envelope: WorklistApplicationResult, message: string): void {
 	if (invocation.json) {
-		const payload: Record<string, unknown> = { ok: true, action: invocation.action, goals };
-		if (goal) payload.goal = goal;
-		process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+		process.stdout.write(`${JSON.stringify(envelope, null, 2)}\n`);
 		return;
 	}
 	process.stdout.write(`${message}\n`);
@@ -119,30 +156,31 @@ async function runLifecycle(
 	action: LifecycleAction,
 ): Promise<void> {
 	const id = requireId(invocation);
-	const result = await executeCliOperation(service, {
+	const envelope = await executeCliOperation(service, {
 		scope: "project",
 		action,
 		id,
 		confirm: invocation.confirm,
 	});
-	const goals = result.goals ?? [];
 	if (action === "delete") {
-		report(invocation, `Deleted project goal ${id}`, goals);
+		report(invocation, envelope, `Deleted project goal ${id}`);
 		return;
 	}
-	if (!result.goal) throw new Error(`Project goal ${id} was not returned after ${action}`);
-	report(invocation, `Project goal ${result.goal.id} is now ${result.goal.status}`, goals, result.goal);
+	const goal = envelope.ok ? envelope.result.goal : undefined;
+	if (!goal) throw new Error(`Project goal ${id} was not returned after ${action}`);
+	report(invocation, envelope, `Project goal ${goal.id} is now ${goal.status}`);
 }
 
 async function runSetActive(invocation: CliInvocation, service: WorklistApplicationService): Promise<void> {
 	const id = requireId(invocation);
 	try {
-		const result = await executeCliOperation(service, { scope: "project", action: "set_active", id });
-		if (!result.goal) throw new Error(`Activated Project Goal ${id} was not returned`);
-		report(invocation, `Activated project goal ${result.goal.id}`, result.goals ?? [], result.goal);
+		const envelope = await executeCliOperation(service, { scope: "project", action: "set_active", id });
+		const goal = envelope.ok ? envelope.result.goal : undefined;
+		if (!goal) throw new Error(`Activated Project Goal ${id} was not returned`);
+		report(invocation, envelope, `Activated project goal ${goal.id}`);
 	} catch (error) {
 		if (error instanceof Error && error.message.includes("must be reopened")) {
-			fail(`${error.message} Reopen it first: node src/cli.ts project reopen ${id} --confirm`, 1);
+			fail(`${error.message} Reopen it first: pi-worklist project reopen ${id} --confirm`, 1);
 		}
 		throw error;
 	}
@@ -159,28 +197,46 @@ async function run(invocation: CliInvocation): Promise<void> {
 
 	switch (invocation.action) {
 		case "list": {
-			const result = await executeCliOperation(service, { scope: "project", action: "list" });
-			const goals = result.goals ?? [];
-			report(invocation, formatProjectGoals(goals), goals);
+			const envelope = await executeCliOperation(service, { scope: "project", action: "list" });
+			const goals = (envelope.ok ? envelope.result.goals : undefined) ?? [];
+			report(invocation, envelope, formatGoalList(goals));
+			return;
+		}
+		case "show": {
+			const id = requireId(invocation);
+			const envelope = await executeCliOperation(service, { scope: "project", action: "list" });
+			const goal = envelope.ok ? envelope.result.goals?.find((candidate) => candidate.id === id) : undefined;
+			if (!goal) {
+				throw new WorklistApplicationError({
+					code: WORKLIST_ERROR_CODES.NOT_FOUND,
+					message: `Project goal ${id} was not found.`,
+					retryable: false,
+					details: { entity: "project-goal", id, resolution: "refresh-and-select-existing" },
+				});
+			}
+			const detailEnvelope: WorklistApplicationResult = {
+				ok: true,
+				scope: "project",
+				action: "show",
+				result: { scope: "project", action: "show", goal },
+				meta: envelope.meta,
+			};
+			report(invocation, detailEnvelope, formatGoalDetail(goal));
 			return;
 		}
 		case "add": {
 			const title = invocation.rest.join(" ").trim();
 			if (!title) fail(`project add requires a title\n\n${USAGE}`, 2);
 			const description = invocation.description?.trim() || undefined;
-			const result = await executeCliOperation(service, {
+			const envelope = await executeCliOperation(service, {
 				scope: "project",
 				action: "add",
 				title,
 				description,
 			});
-			if (!result.goal) throw new Error("Added Project Goal was not returned");
-			report(
-				invocation,
-				`Added project goal ${result.goal.id}: ${result.goal.title}`,
-				result.goals ?? [],
-				result.goal,
-			);
+			const goal = envelope.ok ? envelope.result.goal : undefined;
+			if (!goal) throw new Error("Added Project Goal was not returned");
+			report(invocation, envelope, `Added project goal ${goal.id}: ${goal.title}`);
 			return;
 		}
 		case "update": {
@@ -189,15 +245,16 @@ async function run(invocation: CliInvocation): Promise<void> {
 			if (title === undefined && invocation.description === undefined) {
 				fail(`project update requires a new title, a -- description, or both\n\n${USAGE}`, 2);
 			}
-			const result = await executeCliOperation(service, {
+			const envelope = await executeCliOperation(service, {
 				scope: "project",
 				action: "update",
 				id,
 				title,
 				description: invocation.description,
 			});
-			if (!result.goal) throw new Error(`Updated Project Goal ${id} was not returned`);
-			report(invocation, `Updated project goal ${result.goal.id}`, result.goals ?? [], result.goal);
+			const goal = envelope.ok ? envelope.result.goal : undefined;
+			if (!goal) throw new Error(`Updated Project Goal ${id} was not returned`);
+			report(invocation, envelope, `Updated project goal ${goal.id}`);
 			return;
 		}
 		case "set_active":
@@ -214,11 +271,20 @@ async function run(invocation: CliInvocation): Promise<void> {
 	}
 }
 
+const invocation = parseArgs(process.argv.slice(2));
 try {
-	await run(parseArgs(process.argv.slice(2)));
+	await run(invocation);
 } catch (error) {
-	if (error instanceof WorklistApplicationError && error.code === WORKLIST_ERROR_CODES.APPROVAL_REQUIRED) {
-		fail(`${error.message} Pass --confirm only when the user explicitly requested this action.`, 3);
+	if (error instanceof WorklistApplicationError) {
+		const code = exitCodeForError(error.code);
+		if (invocation.json) {
+			process.stderr.write(`${JSON.stringify({ ok: false, error: error.toResultError() }, null, 2)}\n`);
+			process.exit(code);
+		}
+		if (error.code === WORKLIST_ERROR_CODES.APPROVAL_REQUIRED) {
+			fail(`${error.message} Pass --confirm only when the user explicitly requested this action.`, code);
+		}
+		fail(error.message, code);
 	}
 	fail(error instanceof Error ? error.message : String(error), 1);
 }

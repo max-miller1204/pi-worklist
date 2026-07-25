@@ -23,11 +23,15 @@
 	},
 	"files": [
 		"src",
+		"dist",
 		"docs",
 		"AGENTS.md",
 		"README.md",
 		"package.json"
 	],
+	"bin": {
+		"pi-worklist": "./dist/cli.js"
+	},
 	"main": "./src/extension.ts",
 	"exports": {
 		".": "./src/extension.ts",
@@ -43,6 +47,8 @@
 	},
 	"scripts": {
 		"worklist": "node ./src/cli.ts",
+		"build": "tsc -p tsconfig.build.json",
+		"prepack": "npm run build",
 		"test": "vitest run",
 		"test:watch": "vitest",
 		"typecheck": "tsc --noEmit",
