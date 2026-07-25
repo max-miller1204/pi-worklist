@@ -191,6 +191,10 @@ describe("project goal CLI", () => {
 
 	it("fails cleanly outside a git repository and honors --cwd", async () => {
 		const bare = await mkdtemp(join(tmpdir(), "pi-worklist-nogit-"));
+		const helpOutside = await runCli(bare, ["project", "help"]);
+		expect(helpOutside.code).toBe(0);
+		expect(helpOutside.stdout).toContain("Usage: pi-worklist project");
+
 		const outside = await runCli(bare, ["project", "list"]);
 		expect(outside.code).toBe(1);
 		expect(outside.stderr).toContain("git repository");

@@ -204,13 +204,13 @@ async function run(invocation: CliInvocation): Promise<void> {
 		}
 		fail(`Unknown scope ${invocation.scope}\n\n${USAGE}`, 2);
 	}
+	if (invocation.action === "help") {
+		process.stdout.write(`${USAGE}\n`);
+		return;
+	}
 	const service = new WorklistApplicationService({ projectPath: resolveProjectPath(invocation) });
 
 	switch (invocation.action) {
-		case "help": {
-			process.stdout.write(`${USAGE}\n`);
-			return;
-		}
 		case "list": {
 			const envelope = await executeCliOperation(service, { scope: "project", action: "list" });
 			const goals = (envelope.ok ? envelope.result.goals : undefined) ?? [];
