@@ -45,9 +45,9 @@
       "id": "goal-mryb1h5d-8654f513",
       "title": "Add atomic Session Task projection reconciliation",
       "description": "Provide one serialized batch operation that upserts all Session Task projections for an orchestration run by stable external identity, updates existing projections, creates missing projections, preserves unrelated user-created tasks and canonical queue order, and appends exactly one session snapshot. Make reconciliation idempotent across retries, recovery, /tree, /fork, /clone, and /resume so pi-orchestrator can safely rebuild the current session view without duplicating tasks.",
-      "status": "open",
+      "status": "done",
       "createdAt": "2026-07-24T02:12:07.825Z",
-      "updatedAt": "2026-07-25T17:33:07.666Z"
+      "updatedAt": "2026-07-25T17:47:10.491Z"
     },
     {
       "id": "goal-mryb1h5e-e452f08c",
@@ -61,9 +61,9 @@
       "id": "goal-mryb1h5f-49db693f",
       "title": "Add revisions and idempotent external mutations",
       "description": "Add monotonic revisions to Project Worklists and branch-aware concurrency tokens or snapshot entry IDs to Session Task snapshots, support optional expectedRevision checks, and accept idempotency keys for external batch creation and status updates. A semantic no-op must not rewrite .pi/worklist.json, append a Session Task snapshot, increment a revision, or emit a change event. Preserve the existing cross-process lock, atomic rename, branch-aware snapshot semantics, and backward readers while returning explicit typed conflicts instead of allowing a resumed orchestrator to overwrite newer user changes.",
-      "status": "active",
+      "status": "open",
       "createdAt": "2026-07-24T02:12:07.827Z",
-      "updatedAt": "2026-07-25T17:33:07.666Z"
+      "updatedAt": "2026-07-25T17:44:53.280Z"
     },
     {
       "id": "goal-mryb1h5h-bb98956e",
@@ -130,5 +130,5 @@
       "updatedAt": "2026-07-24T18:31:54.214Z"
     }
   ],
-  "revision": 1
+  "revision": 3
 }

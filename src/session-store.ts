@@ -8,6 +8,7 @@ import type {
 import { normalizeManagedSessionTaskProjection } from "./managed-projection.ts";
 import {
 	assertRecordedIdentitiesBelongToGoal,
+	boundProjectionReconciliationRecords,
 	executionUpdateFingerprint,
 	normalizeProjectionReconciliationRecord,
 	planManagedExecutionUpdate,
@@ -108,7 +109,10 @@ function upsertReconciliationRecord(
 	records: SessionProjectionReconciliationRecord[],
 	record: SessionProjectionReconciliationRecord,
 ): SessionProjectionReconciliationRecord[] {
-	return [...records.filter((candidate) => candidate.idempotencyKey !== record.idempotencyKey), record];
+	return boundProjectionReconciliationRecords([
+		...records.filter((candidate) => candidate.idempotencyKey !== record.idempotencyKey),
+		record,
+	]);
 }
 
 export class SessionStore {
@@ -174,6 +178,7 @@ export class SessionStore {
 				}
 			}
 		}
+		this.projectionReconciliations = boundProjectionReconciliationRecords(this.projectionReconciliations);
 	}
 
 	private serialized<T>(fn: () => T | Promise<T>): Promise<T> {

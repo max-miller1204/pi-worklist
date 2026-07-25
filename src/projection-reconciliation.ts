@@ -18,6 +18,19 @@ const RECONCILIATION_ACTIONS = [
 	"preserved-user-override",
 ] as const;
 
+/**
+ * Replay records are a bounded retry window, not a durable mutation journal.
+ * Consumers must not rely on replaying keys older than the most recent records.
+ */
+export const MAX_PROJECTION_RECONCILIATION_RECORDS = 32;
+
+export function boundProjectionReconciliationRecords(
+	records: SessionProjectionReconciliationRecord[],
+): SessionProjectionReconciliationRecord[] {
+	if (records.length <= MAX_PROJECTION_RECONCILIATION_RECORDS) return records;
+	return records.slice(records.length - MAX_PROJECTION_RECONCILIATION_RECORDS);
+}
+
 export interface ManagedProjectionReconciliationPlan {
 	tasks: ReconciledSessionTaskProjection[];
 	nextTasks: StoredSessionTask[];

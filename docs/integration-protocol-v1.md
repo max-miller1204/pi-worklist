@@ -182,6 +182,7 @@ A semantic no-op does not rewrite `.pi/worklist.json`, change Project Goal times
 
 A repeated mutation with the same idempotency key and identical semantic input returns the original mapping or an equivalent semantic no-op result.
 Reusing an idempotency key for different semantic input returns `CONFLICT` with `type: "idempotency-key"`.
+Session replay records are branch-aware and bounded to the most recent 32 external mutations, so a key committed on one branch re-executes on a branch that never contained it, and consumers must not rely on replaying keys older than that window.
 A user override that cannot be overwritten safely returns `USER_OVERRIDE` or a conflict with `resolution: "request-user-decision"`.
 
 ## Errors and fallback

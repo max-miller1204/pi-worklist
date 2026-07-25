@@ -55,7 +55,10 @@ export interface SessionSnapshot {
 	/** Opaque branch-aware concurrency token. Legacy snapshots derive this from their entry ID. */
 	revision?: string;
 	tasks: StoredSessionTask[];
-	/** Bounded replay records for committed managed projection batches. */
+	/**
+	 * Replay records for committed managed projection mutations, bounded to the most
+	 * recent MAX_PROJECTION_RECONCILIATION_RECORDS entries in mutation order.
+	 */
 	projectionReconciliations?: SessionProjectionReconciliationRecord[];
 }
 
