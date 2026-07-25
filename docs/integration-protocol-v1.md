@@ -6,7 +6,9 @@
 
 This document defines the version 1 contract between pi-worklist and automation consumers such as pi-orchestrator.
 The exported TypeScript contract in `src/integration-contract.ts` is the normative machine-readable definition.
-The wire contract and shared application result boundary are implemented, but the pi-worklist protocol provider and pi-orchestrator client are not yet implemented.
+The pi-worklist provider in `src/protocol-provider.ts` serves negotiation, reads, reconciliation, and execution updates over `pi.events`, routing every mutation through the shared application service.
+The consumer request helper in `src/protocol-consumer.ts` (exported as `pi-worklist/protocol-consumer`) performs correlated requests with bounded timeouts and deterministic local fallbacks; the full pi-orchestrator client is not yet implemented.
+`project-goals.create-approved-batch` is not yet served or advertised and currently returns `UNSUPPORTED_CAPABILITY`.
 
 `WorklistApplicationService.execute` returns a deterministic discriminated envelope for every tool, command, dashboard, CLI, or future protocol operation.
 Success envelopes contain `ok: true`, the requested scope and action, the operation result, and canonical change metadata.

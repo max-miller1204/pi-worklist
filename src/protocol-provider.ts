@@ -44,7 +44,11 @@ export interface WorklistProtocolProviderOptions {
 }
 
 export interface WorklistProtocolProviderHandle {
-	/** Stops accepting new requests and detaches the request listener. */
+	/**
+	 * Enters shutdown: requests still arriving in the current tick receive a
+	 * SHUTTING_DOWN error and no new operations start; the request listener then
+	 * detaches so a replacement provider instance can own the channel.
+	 */
 	shutdown(): void;
 }
 
@@ -227,14 +231,6 @@ export function registerWorklistProtocolProvider(
 	}
 
 	async function handleRequest(request: WorklistRequestEnvelope): Promise<void> {
-		if (shutdownRequested) {
-			emitError(request, {
-				code: WORKLIST_ERROR_CODES.SHUTTING_DOWN,
-				message: "The pi-worklist provider is shutting down and no longer starts new operations.",
-				retryable: true,
-			});
-			return;
-		}
 		if (request.operation === WORKLIST_OPERATIONS.CAPABILITIES_NEGOTIATE) {
 			negotiate(request);
 			return;
@@ -308,6 +304,14 @@ export function registerWorklistProtocolProvider(
 		) {
 			return;
 		}
+		if (shutdownRequested) {
+			emitError(request, {
+				code: WORKLIST_ERROR_CODES.SHUTTING_DOWN,
+				message: "The pi-worklist provider is shutting down and no longer starts new operations.",
+				retryable: true,
+			});
+			return;
+		}
 		handleRequest(request).catch((error) => {
 			emitError(request, {
 				code: WORKLIST_ERROR_CODES.INTERNAL,
@@ -321,7 +325,7 @@ export function registerWorklistProtocolProvider(
 		shutdown(): void {
 			if (shutdownRequested) return;
 			shutdownRequested = true;
-			unsubscribe();
+			queueMicrotask(unsubscribe);
 		},
 	};
 }

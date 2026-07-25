@@ -277,11 +277,21 @@ describe("worklist protocol provider", () => {
 		expect(events.results.map((result) => result.requestId)).toEqual(["targeted-here"]);
 	});
 
-	it("stops accepting requests after shutdown", async () => {
+	it("answers SHUTTING_DOWN during teardown, then releases the request channel", async () => {
 		const { events, handle } = await createProvider();
 		handle.shutdown();
+
+		// Requests still arriving in the shutdown tick get a typed retryable error.
+		events.emit(WORKLIST_REQUEST_EVENT, baseRequest("session-tasks.list", {}, "during-shutdown"));
+		expect(await waitForResult(events, "during-shutdown")).toMatchObject({
+			ok: false,
+			error: { code: "SHUTTING_DOWN", retryable: true },
+		});
+
+		// After the teardown tick the listener is detached; consumers fall back to timeouts.
+		await new Promise((resolve) => setTimeout(resolve, 20));
 		events.emit(WORKLIST_REQUEST_EVENT, baseRequest("session-tasks.list", {}, "after-shutdown"));
-		await new Promise((resolve) => setTimeout(resolve, 50));
-		expect(events.results).toHaveLength(0);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(events.results.some((result) => result.requestId === "after-shutdown")).toBe(false);
 	});
 });

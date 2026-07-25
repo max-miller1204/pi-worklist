@@ -32,6 +32,7 @@
 	"exports": {
 		".": "./src/extension.ts",
 		"./integration-contract": "./src/integration-contract.ts",
+		"./protocol-consumer": "./src/protocol-consumer.ts",
 		"./src/*": "./src/*",
 		"./package.json": "./package.json"
 	},
