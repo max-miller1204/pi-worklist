@@ -61,9 +61,9 @@
       "id": "goal-mryb1h5f-49db693f",
       "title": "Add revisions and idempotent external mutations",
       "description": "Add monotonic revisions to Project Worklists and branch-aware concurrency tokens or snapshot entry IDs to Session Task snapshots, support optional expectedRevision checks, and accept idempotency keys for external batch creation and status updates. A semantic no-op must not rewrite .pi/worklist.json, append a Session Task snapshot, increment a revision, or emit a change event. Preserve the existing cross-process lock, atomic rename, branch-aware snapshot semantics, and backward readers while returning explicit typed conflicts instead of allowing a resumed orchestrator to overwrite newer user changes.",
-      "status": "open",
+      "status": "done",
       "createdAt": "2026-07-24T02:12:07.827Z",
-      "updatedAt": "2026-07-25T17:44:53.280Z"
+      "updatedAt": "2026-07-25T18:23:04.696Z"
     },
     {
       "id": "goal-mryb1h5h-bb98956e",
@@ -130,5 +130,5 @@
       "updatedAt": "2026-07-25T18:21:35.554Z"
     }
   ],
-  "revision": 13
+  "revision": 15
 }
