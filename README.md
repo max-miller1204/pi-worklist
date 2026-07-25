@@ -139,21 +139,26 @@ Importing the contract has no side effects and does not instantiate a SessionSto
 
 ## External CLI
 
-External agents and scripts can manage Project Goals without a running Pi session:
+External agents and scripts can manage Project Goals without a running Pi session.
+The published package ships a compiled `pi-worklist` bin, so no development checkout is needed:
 
 ```sh
-node src/cli.ts project list
-node src/cli.ts project add Support goal templates -- Let teams share reusable goal outlines
-node src/cli.ts project update <id> Replace the title -- Replace the description
-node src/cli.ts project set_active <id>
-node src/cli.ts project complete <id> --confirm
+npx pi-worklist project list
+npx pi-worklist project show <id>
+npx pi-worklist project add Support goal templates -- Let teams share reusable goal outlines
+npx pi-worklist project update <id> Replace the title -- Replace the description
+npx pi-worklist project set_active <id>
+npx pi-worklist project complete <id> --confirm
 ```
 
 The CLI routes every mutation through the same service, cross-process lock, and atomic replacement as a live Pi session, so concurrent use is safe.
+`list` output is deliberately compact without descriptions; `show <id>` prints one goal in full detail.
 Lifecycle actions (`complete`, `reopen`, `archive`, `delete`) require `--confirm`, mirroring the model tool's explicit-intent rule; an omitted flag exits with code 3 and changes nothing.
-`--json` prints machine-readable results on stdout, `--cwd <dir>` resolves the Git root from another directory, and errors always go to stderr.
-Running the TypeScript CLI directly requires Node 22.18 or newer (for example Node 24), which strips types natively.
-On older Node versions, including the Node 20 floor of the package's `engines` range, the CLI fails with an `Unknown file extension ".ts"` error.
+Exit code 4 reports a concurrent-change conflict; re-read current state before retrying.
+`--json` prints the full deterministic application envelope, on stdout for success and stderr for failure, and `--cwd <dir>` resolves the Git root from another directory.
+The complete command reference in [docs/cli.md](docs/cli.md) is generated from `src/cli-contract.ts`, the same contract that renders the CLI help and agent guidance.
+In a development checkout, `node src/cli.ts project <action>` runs the same CLI; running the TypeScript entry point directly requires Node 22.18 or newer (for example Node 24), which strips types natively.
+On older Node versions, including the Node 20 floor of the package's `engines` range, the TypeScript entry point fails with an `Unknown file extension ".ts"` error, while the compiled bin has no such requirement.
 Session Tasks are intentionally unavailable here because they live inside a Pi session tree.
 A Claude Code skill in `.claude/skills/worklist/` teaches Claude sessions in this repository to use the CLI under the same guardrails.
 

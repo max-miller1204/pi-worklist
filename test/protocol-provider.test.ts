@@ -284,6 +284,25 @@ describe("worklist protocol provider", () => {
 		expect(events.results.map((result) => result.requestId)).toEqual(["targeted-here"]);
 	});
 
+	it("keeps answering when a result subscriber throws", async () => {
+		const { events } = await createProvider();
+		events.on(WORKLIST_RESULT_EVENT, () => {
+			throw new Error("result subscriber exploded");
+		});
+
+		events.emit(WORKLIST_REQUEST_EVENT, baseRequest("session-tasks.list", {}, "throwing-subscriber-1"));
+		expect(await waitForResult(events, "throwing-subscriber-1")).toMatchObject({ ok: true });
+
+		events.emit(
+			WORKLIST_REQUEST_EVENT,
+			baseRequest("capabilities.negotiate", { supportedProtocolVersions: [1] }, "throwing-subscriber-2"),
+		);
+		expect(await waitForResult(events, "throwing-subscriber-2")).toMatchObject({
+			ok: true,
+			result: { selectedProtocolVersion: 1 },
+		});
+	});
+
 	it("answers SHUTTING_DOWN during teardown, then releases the request channel", async () => {
 		const { events, handle } = await createProvider();
 		handle.shutdown();

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import {
-	WorklistApplicationError,
+	type WorklistApplicationFailure,
 	type WorklistApplicationResult,
 	WorklistApplicationService,
 	type WorklistOperation,
@@ -115,12 +115,23 @@ function formatGoalDetail(goal: ProjectGoal): string {
 	].join("\n");
 }
 
+/** A failed operation, carrying the full deterministic failure envelope for --json output. */
+class WorklistCliFailure extends Error {
+	readonly envelope: WorklistApplicationFailure;
+
+	constructor(envelope: WorklistApplicationFailure) {
+		super(envelope.error.message);
+		this.name = envelope.error.code;
+		this.envelope = envelope;
+	}
+}
+
 async function executeCliOperation(
 	service: WorklistApplicationService,
 	operation: WorklistOperation,
 ): Promise<WorklistApplicationResult> {
 	const envelope = await service.execute(operation, { source: "cli" });
-	if (!envelope.ok) throw new WorklistApplicationError(envelope.error);
+	if (!envelope.ok) throw new WorklistCliFailure(envelope);
 	return envelope;
 }
 
@@ -161,8 +172,15 @@ async function runSetActive(invocation: CliInvocation, service: WorklistApplicat
 		if (!goal) throw new Error(`Activated Project Goal ${id} was not returned`);
 		report(invocation, envelope, `Activated project goal ${goal.id}`);
 	} catch (error) {
-		if (error instanceof Error && error.message.includes("must be reopened")) {
-			fail(`${error.message} Reopen it first: pi-worklist project reopen ${id} --confirm`, 1);
+		if (
+			error instanceof WorklistCliFailure &&
+			error.envelope.error.details?.resolution === "reopen-project-goal" &&
+			!invocation.json
+		) {
+			fail(
+				`${error.message} Reopen it first: pi-worklist project reopen ${id} --confirm`,
+				exitCodeForError(error.envelope.error.code),
+			);
 		}
 		throw error;
 	}
@@ -193,11 +211,17 @@ async function run(invocation: CliInvocation): Promise<void> {
 			const envelope = await executeCliOperation(service, { scope: "project", action: "list" });
 			const goal = envelope.ok ? envelope.result.goals?.find((candidate) => candidate.id === id) : undefined;
 			if (!goal) {
-				throw new WorklistApplicationError({
-					code: WORKLIST_ERROR_CODES.NOT_FOUND,
-					message: `Project goal ${id} was not found.`,
-					retryable: false,
-					details: { entity: "project-goal", id, resolution: "refresh-and-select-existing" },
+				throw new WorklistCliFailure({
+					ok: false,
+					scope: "project",
+					action: "show",
+					error: {
+						code: WORKLIST_ERROR_CODES.NOT_FOUND,
+						message: `Project goal ${id} was not found.`,
+						retryable: false,
+						details: { entity: "project-goal", id, resolution: "refresh-and-select-existing" },
+					},
+					meta: { changed: false, semanticNoOp: false, changedFields: [] },
 				});
 			}
 			const detailEnvelope: WorklistApplicationResult = {
@@ -261,13 +285,13 @@ const invocation = parseArgs(process.argv.slice(2));
 try {
 	await run(invocation);
 } catch (error) {
-	if (error instanceof WorklistApplicationError) {
-		const code = exitCodeForError(error.code);
+	if (error instanceof WorklistCliFailure) {
+		const code = exitCodeForError(error.envelope.error.code);
 		if (invocation.json) {
-			process.stderr.write(`${JSON.stringify({ ok: false, error: error.toResultError() }, null, 2)}\n`);
+			process.stderr.write(`${JSON.stringify(error.envelope, null, 2)}\n`);
 			process.exit(code);
 		}
-		if (error.code === WORKLIST_ERROR_CODES.APPROVAL_REQUIRED) {
+		if (error.envelope.error.code === WORKLIST_ERROR_CODES.APPROVAL_REQUIRED) {
 			fail(`${error.message} Pass --confirm only when the user explicitly requested this action.`, code);
 		}
 		fail(error.message, code);

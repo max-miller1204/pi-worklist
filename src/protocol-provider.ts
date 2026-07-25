@@ -193,7 +193,11 @@ export function registerWorklistProtocolProvider(
 	let shutdownRequested = false;
 
 	function emitResult(result: WorklistResultEnvelope): void {
-		events.emit(WORKLIST_RESULT_EVENT, result);
+		try {
+			events.emit(WORKLIST_RESULT_EVENT, result);
+		} catch {
+			// A faulty result subscriber must never turn a handled request into a provider failure.
+		}
 	}
 
 	function emitError(request: WorklistRequestEnvelope, error: WorklistProtocolError): void {

@@ -11,9 +11,10 @@ Always go through the CLI, which routes every mutation through the same service,
 
 ## Invoking the CLI
 
-Run from the repository root:
+Installed copies of the package ship a compiled `pi-worklist` bin; in this repository, run the TypeScript entry point directly from the root:
 
 ```sh
+npx pi-worklist project <action> [arguments] [flags]
 node src/cli.ts project <action> [arguments] [flags]
 ```
 
@@ -21,24 +22,29 @@ Actions:
 
 ```text
 list
+show <id>
 add <title...> [-- <description...>]
-update <id> [new title...] [-- <description...>]
+update <id> [title...] [-- <description...>]
 set_active <id>
 complete <id> --confirm
 reopen <id> --confirm
 archive <id> --confirm
 delete <id> --confirm
+help
 ```
 
-Add `--json` to get machine-readable output on stdout; prefer it whenever you need to read IDs or statuses back.
+Add `--json` to get the deterministic result envelope as JSON, on stdout for success and stderr for failure; prefer it whenever you need to read IDs, statuses, or errors back.
+`list` output is compact and omits descriptions; use `show <id>` when you need a goal's complete description.
 Text after `--` becomes the goal description.
 `update <id> --` with nothing after the separator clears the description.
+The full generated command reference lives in `docs/cli.md`, rendered from `src/cli-contract.ts`.
 
 Examples:
 
 ```sh
 node src/cli.ts project add Support goal templates -- Let teams share reusable goal outlines
 node src/cli.ts project list --json
+node src/cli.ts project show goal-abc123-deadbeef
 node src/cli.ts project set_active goal-abc123-deadbeef
 ```
 
@@ -48,7 +54,8 @@ node src/cli.ts project set_active goal-abc123-deadbeef
   Pass `--confirm` only when the user explicitly requested that exact action on that goal in this conversation.
   Never pass it because a goal merely looks finished or stale.
 - Exit code 3 means the command needs `--confirm`; stop and ask the user instead of retrying with the flag.
-- `add`, `list`, `update`, and `set_active` are safe to run whenever they serve the user's request.
+- Exit code 4 means a concurrent change conflicted with yours; re-read current state with `list` or `show` before retrying.
+- `add`, `list`, `show`, `update`, and `set_active` are safe to run whenever they serve the user's request.
 - Session Tasks cannot be managed from outside a Pi session; the CLI intentionally rejects `session` scope.
   For your own in-session tracking, use your normal task tools instead.
 

@@ -38,6 +38,20 @@ describe("single CLI command contract", () => {
 		);
 	});
 
+	it("keeps the repository worklist skill aligned with the contract surface", async () => {
+		const skill = await readFile(resolve(".claude/skills/worklist/SKILL.md"), "utf8");
+		expect(skill).toContain(`npx ${CLI_COMMAND_CONTRACT.binary}`);
+		expect(skill).toContain("docs/cli.md");
+		for (const action of CLI_COMMAND_CONTRACT.actions) {
+			expect(skill, `SKILL.md is missing action usage \`${action.usage}\``).toContain(action.usage);
+		}
+		for (const exitCode of CLI_COMMAND_CONTRACT.exitCodes.filter((entry) => entry.code >= 3)) {
+			expect(skill, `SKILL.md is missing exit code ${exitCode.code}`).toContain(
+				`Exit code ${exitCode.code}`,
+			);
+		}
+	});
+
 	it("prints the contract-rendered help from the CLI itself", async () => {
 		const root = await mkdtemp(join(tmpdir(), "pi-worklist-cli-help-"));
 		await execFileAsync("git", ["init", "-q"], { cwd: root });

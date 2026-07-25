@@ -64,6 +64,17 @@ describe("project goal CLI", () => {
 		expect(missing.code).toBe(1);
 		expect(missing.stderr).toContain("goal-missing was not found");
 
+		const missingJson = await runCli(root, ["project", "show", "goal-missing", "--json"]);
+		expect(missingJson.code).toBe(1);
+		expect(missingJson.stdout).toBe("");
+		expect(JSON.parse(missingJson.stderr)).toMatchObject({
+			ok: false,
+			scope: "project",
+			action: "show",
+			error: { code: "NOT_FOUND", retryable: false, details: { id: "goal-missing" } },
+			meta: { changed: false, semanticNoOp: false, changedFields: [] },
+		});
+
 		const updated = await runCli(root, ["project", "update", goals[0].id, "Ship", "it"]);
 		expect(updated.code).toBe(0);
 		expect((await readGoals(root))[0].title).toBe("Ship it");
@@ -103,17 +114,23 @@ describe("project goal CLI", () => {
 		expect(payload.result.goals).toHaveLength(1);
 		expect(payload.meta).toMatchObject({ changed: true, semanticNoOp: false, revisions: { project: "1" } });
 
-		// Failures with --json print a typed error envelope on stderr.
+		// Failures with --json print the full deterministic failure envelope on stderr.
 		const refused = await runCli(root, ["project", "complete", payload.result.goal.id, "--json"]);
 		expect(refused.code).toBe(3);
 		expect(refused.stdout).toBe("");
 		const errorPayload = JSON.parse(refused.stderr) as {
 			ok: boolean;
+			scope: string;
+			action: string;
 			error: { code: string; retryable: boolean };
+			meta: { changed: boolean; semanticNoOp: boolean; changedFields: string[] };
 		};
 		expect(errorPayload).toMatchObject({
 			ok: false,
+			scope: "project",
+			action: "complete",
 			error: { code: "APPROVAL_REQUIRED", retryable: false },
+			meta: { changed: false, semanticNoOp: false, changedFields: [] },
 		});
 	});
 
@@ -137,6 +154,18 @@ describe("project goal CLI", () => {
 		const blocked = await runCli(root, ["project", "set_active", goal.id]);
 		expect(blocked.code).toBe(1);
 		expect(blocked.stderr).toContain("must be reopened");
+		expect(blocked.stderr).toContain(`pi-worklist project reopen ${goal.id} --confirm`);
+
+		const blockedJson = await runCli(root, ["project", "set_active", goal.id, "--json"]);
+		expect(blockedJson.code).toBe(1);
+		expect(blockedJson.stdout).toBe("");
+		expect(JSON.parse(blockedJson.stderr)).toMatchObject({
+			ok: false,
+			scope: "project",
+			action: "set_active",
+			error: { code: "VALIDATION_FAILED", details: { resolution: "reopen-project-goal" } },
+			meta: { changed: false, semanticNoOp: false },
+		});
 
 		const deleted = await runCli(root, ["project", "delete", goal.id, "--confirm"]);
 		expect(deleted.code).toBe(0);
