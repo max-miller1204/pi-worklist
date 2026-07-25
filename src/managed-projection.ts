@@ -44,6 +44,21 @@ export interface ManagedExecutionProjection {
 	runReference?: string;
 }
 
+export const MANAGED_OVERRIDABLE_FIELDS = ["goalId", "status", "title"] as const;
+
+export type ManagedOverridableField = (typeof MANAGED_OVERRIDABLE_FIELDS)[number];
+
+/**
+ * Marks a projection the user diverged from.
+ * Reconciliation and execution updates must preserve the user's version instead of
+ * silently restoring projected data; pi-orchestrator resolves the divergence explicitly.
+ */
+export interface ManagedUserOverride {
+	overriddenAt: string;
+	/** Sorted unique user-changed fields. */
+	overriddenFields: ManagedOverridableField[];
+}
+
 export interface ManagedSessionTaskProjection {
 	version: typeof MANAGED_SESSION_TASK_PROJECTION_VERSION;
 	owner: "pi-orchestrator";
@@ -57,6 +72,7 @@ export interface ManagedSessionTaskProjection {
 	execution: ManagedExecutionProjection;
 	resultReference?: string;
 	sessionContributionReference?: string;
+	userOverride?: ManagedUserOverride;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -118,6 +134,32 @@ export function normalizeManagedExecutionProjection(value: unknown): ManagedExec
 	};
 }
 
+export function withManagedUserOverride(
+	managed: ManagedSessionTaskProjection,
+	fields: ManagedOverridableField[],
+	overriddenAt: string,
+): ManagedSessionTaskProjection {
+	const overriddenFields = [
+		...new Set([...(managed.userOverride?.overriddenFields ?? []), ...fields]),
+	].sort() as ManagedOverridableField[];
+	return { ...managed, userOverride: { overriddenAt, overriddenFields } };
+}
+
+export function normalizeManagedUserOverride(value: unknown): ManagedUserOverride | undefined {
+	if (!isRecord(value)) return undefined;
+	if (!isTimestamp(value.overriddenAt)) return undefined;
+	if (!Array.isArray(value.overriddenFields)) return undefined;
+	const fields = [
+		...new Set(
+			value.overriddenFields.filter((field): field is ManagedOverridableField =>
+				MANAGED_OVERRIDABLE_FIELDS.includes(field as ManagedOverridableField),
+			),
+		),
+	].sort();
+	if (fields.length === 0) return undefined;
+	return { overriddenAt: value.overriddenAt, overriddenFields: fields };
+}
+
 /**
  * Validates and canonicalizes persisted managed metadata.
  * Unknown fields are intentionally omitted so orchestrator-owned attempt, artifact, evidence, and recovery data cannot leak into worklist snapshots.
@@ -142,6 +184,7 @@ export function normalizeManagedSessionTaskProjection(
 		return undefined;
 	}
 
+	const userOverride = normalizeManagedUserOverride(value.userOverride);
 	return {
 		version: MANAGED_SESSION_TASK_PROJECTION_VERSION,
 		owner: "pi-orchestrator",
@@ -156,5 +199,6 @@ export function normalizeManagedSessionTaskProjection(
 		...(value.sessionContributionReference !== undefined
 			? { sessionContributionReference: value.sessionContributionReference }
 			: {}),
+		...(userOverride !== undefined ? { userOverride } : {}),
 	};
 }

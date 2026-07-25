@@ -5,11 +5,17 @@ import type {
 	ManagedSessionTaskInput,
 	ReconciledSessionTaskProjection,
 } from "./integration-contract.ts";
-import { normalizeManagedSessionTaskProjection } from "./managed-projection.ts";
+import {
+	type ManagedOverridableField,
+	normalizeManagedSessionTaskProjection,
+	withManagedUserOverride,
+} from "./managed-projection.ts";
 import {
 	assertRecordedIdentitiesBelongToGoal,
+	boundManagedOverrideTombstones,
 	boundProjectionReconciliationRecords,
 	executionUpdateFingerprint,
+	normalizeManagedOverrideTombstone,
 	normalizeProjectionReconciliationRecord,
 	planManagedExecutionUpdate,
 	planManagedProjectionReconciliation,
@@ -17,6 +23,7 @@ import {
 	projectionReconciliationFingerprint,
 } from "./projection-reconciliation.ts";
 import type {
+	ManagedOverrideTombstone,
 	SessionProjectionReconciliationRecord,
 	SessionSnapshot,
 	SessionTask,
@@ -53,6 +60,8 @@ export interface SessionMutationOutcome<T> {
 	result: T;
 	changed: boolean;
 	revision: string;
+	/** True when the mutation diverged from an orchestrator-managed projection. */
+	overrode?: boolean;
 }
 
 export interface ManagedTaskReconciliationOutcome {
@@ -120,6 +129,7 @@ export class SessionStore {
 	private tasks: StoredSessionTask[] = [];
 	private revision = "0";
 	private projectionReconciliations: SessionProjectionReconciliationRecord[] = [];
+	private managedOverrideTombstones: ManagedOverrideTombstone[] = [];
 	private mutationQueue: Promise<unknown> = Promise.resolve();
 
 	// A plain assignment keeps this module loadable under Node's strip-only TypeScript mode.
@@ -154,6 +164,7 @@ export class SessionStore {
 		this.tasks = [];
 		this.revision = "0";
 		this.projectionReconciliations = [];
+		this.managedOverrideTombstones = [];
 		const branch = ctx.sessionManager.getBranch();
 		for (const entry of branch) {
 			if (entry.type !== "custom") continue;
@@ -181,6 +192,13 @@ export class SessionStore {
 						if (normalized !== undefined) this.projectionReconciliations.push(normalized);
 					}
 				}
+				this.managedOverrideTombstones = [];
+				if (Array.isArray(data.managedOverrideTombstones)) {
+					for (const tombstone of data.managedOverrideTombstones) {
+						const normalized = normalizeManagedOverrideTombstone(tombstone);
+						if (normalized !== undefined) this.managedOverrideTombstones.push(normalized);
+					}
+				}
 				this.revision = "0";
 				if (typeof data.revision === "string" && data.revision.length > 0) {
 					this.revision = data.revision;
@@ -190,6 +208,7 @@ export class SessionStore {
 			}
 		}
 		this.projectionReconciliations = boundProjectionReconciliationRecords(this.projectionReconciliations);
+		this.managedOverrideTombstones = boundManagedOverrideTombstones(this.managedOverrideTombstones);
 	}
 
 	private serialized<T>(fn: () => T | Promise<T>): Promise<T> {
@@ -277,8 +296,18 @@ export class SessionStore {
 			if (updated.title === current.title && updated.goalId === current.goalId) {
 				return { result: toPublicSessionTask(current), changed: false, revision: this.revision };
 			}
-			const revision = this.persist([...this.tasks.slice(0, index), updated, ...this.tasks.slice(index + 1)]);
-			return { result: toPublicSessionTask(updated), changed: true, revision };
+			const overriddenFields: ManagedOverridableField[] = [
+				...(updated.title !== current.title ? (["title"] as const) : []),
+				...(updated.goalId !== current.goalId ? (["goalId"] as const) : []),
+			];
+			const next = this.markUserOverride(updated, current, overriddenFields);
+			const revision = this.persist([...this.tasks.slice(0, index), next, ...this.tasks.slice(index + 1)]);
+			return {
+				result: toPublicSessionTask(next),
+				changed: true,
+				revision,
+				...(current.managed !== undefined ? { overrode: true } : {}),
+			};
 		});
 	}
 
@@ -295,22 +324,58 @@ export class SessionStore {
 			if (current.status === status) {
 				return { result: toPublicSessionTask(current), changed: false, revision: this.revision };
 			}
-			const updated = { ...current, status };
-			const revision = this.persist([...this.tasks.slice(0, index), updated, ...this.tasks.slice(index + 1)]);
-			return { result: toPublicSessionTask(updated), changed: true, revision };
+			const next = this.markUserOverride({ ...current, status }, current, ["status"]);
+			const revision = this.persist([...this.tasks.slice(0, index), next, ...this.tasks.slice(index + 1)]);
+			return {
+				result: toPublicSessionTask(next),
+				changed: true,
+				revision,
+				...(current.managed !== undefined ? { overrode: true } : {}),
+			};
 		});
 	}
 
 	deleteTask(id: string, options: SessionMutationOptions = {}): Promise<SessionMutationOutcome<boolean>> {
 		return this.serialized(() => {
 			this.assertExpectedRevision(options);
+			const removedTask = this.tasks.find((task) => task.id === id);
 			const tasks = this.tasks.filter((task) => task.id !== id);
-			if (tasks.length === this.tasks.length) {
+			if (removedTask === undefined || tasks.length === this.tasks.length) {
 				return { result: false, changed: false, revision: this.revision };
 			}
-			const revision = this.persist(tasks);
-			return { result: true, changed: true, revision };
+			const managed = removedTask.managed;
+			let tombstones = this.managedOverrideTombstones;
+			if (managed !== undefined && removedTask.goalId !== undefined) {
+				tombstones = boundManagedOverrideTombstones([
+					...tombstones.filter((tombstone) => tombstone.external.id !== managed.external.id),
+					{
+						external: managed.external,
+						taskId: removedTask.id,
+						goalId: removedTask.goalId,
+						overriddenAt: new Date().toISOString(),
+					},
+				]);
+			}
+			const revision = this.persist(tasks, this.projectionReconciliations, tombstones);
+			return {
+				result: true,
+				changed: true,
+				revision,
+				...(managed !== undefined ? { overrode: true } : {}),
+			};
 		});
+	}
+
+	private markUserOverride(
+		updated: StoredSessionTask,
+		current: StoredSessionTask,
+		fields: ManagedOverridableField[],
+	): StoredSessionTask {
+		if (current.managed === undefined || fields.length === 0) return updated;
+		return {
+			...updated,
+			managed: withManagedUserOverride(current.managed, fields, new Date().toISOString()),
+		};
 	}
 
 	getManagedTaskReconciliationReplay(
@@ -339,12 +404,13 @@ export class SessionStore {
 			if (replay) return replay;
 			this.assertExpectedRevision(options);
 			assertRecordedIdentitiesBelongToGoal(this.projectionReconciliations, goalId, desiredTasks);
-			const { tasks, nextTasks, changed } = planManagedProjectionReconciliation({
+			const { tasks, nextTasks, nextTombstones, changed } = planManagedProjectionReconciliation({
 				currentTasks: this.tasks,
 				goalId,
 				desiredTasks,
 				now: new Date().toISOString(),
 				createTaskId: createSessionTaskId,
+				tombstones: this.managedOverrideTombstones,
 			});
 			const record = {
 				idempotencyKey,
@@ -361,7 +427,7 @@ export class SessionStore {
 			return {
 				tasks,
 				changed: true,
-				revision: this.persist(nextTasks, projectionReconciliations),
+				revision: this.persist(nextTasks, projectionReconciliations, nextTombstones),
 			};
 		});
 	}
@@ -386,6 +452,7 @@ export class SessionStore {
 			currentTasks: this.tasks,
 			updates,
 			now: "1970-01-01T00:00:00.000Z",
+			tombstones: this.managedOverrideTombstones,
 		}).goalIds;
 	}
 
@@ -402,6 +469,7 @@ export class SessionStore {
 				currentTasks: this.tasks,
 				updates,
 				now: new Date().toISOString(),
+				tombstones: this.managedOverrideTombstones,
 			});
 			const record = {
 				idempotencyKey,
@@ -426,6 +494,7 @@ export class SessionStore {
 	private persist(
 		tasks: StoredSessionTask[],
 		projectionReconciliations = this.projectionReconciliations,
+		managedOverrideTombstones = this.managedOverrideTombstones,
 	): string {
 		const revision = randomBytes(16).toString("hex");
 		this.pi.appendEntry(SESSION_SNAPSHOT_TYPE, {
@@ -435,9 +504,13 @@ export class SessionStore {
 			...(projectionReconciliations.length > 0
 				? { projectionReconciliations: [...projectionReconciliations] }
 				: {}),
+			...(managedOverrideTombstones.length > 0
+				? { managedOverrideTombstones: [...managedOverrideTombstones] }
+				: {}),
 		});
 		this.tasks = tasks;
 		this.projectionReconciliations = projectionReconciliations;
+		this.managedOverrideTombstones = managedOverrideTombstones;
 		this.revision = revision;
 		return revision;
 	}

@@ -4,7 +4,7 @@ import type {
 	SessionTaskSummaryProjection,
 	WorklistProjectionPage,
 } from "./integration-contract.ts";
-import type { ManagedSessionTaskProjection } from "./managed-projection.ts";
+import type { ExternalWorkflowStepIdentity, ManagedSessionTaskProjection } from "./managed-projection.ts";
 
 export type SessionTaskStatus = "todo" | "doing" | "done";
 export type ProjectGoalStatus = "open" | "active" | "done" | "archived";
@@ -55,6 +55,18 @@ export type SessionProjectionReconciliationRecord =
 	| SessionProjectionBatchRecord
 	| SessionExecutionUpdateRecord;
 
+/**
+ * Records a managed projection the user deleted manually.
+ * Reconciliation must not silently recreate the projection while its tombstone
+ * exists; the tombstone clears once the producer stops projecting the step.
+ */
+export interface ManagedOverrideTombstone {
+	external: ExternalWorkflowStepIdentity;
+	taskId: string;
+	goalId: string;
+	overriddenAt: string;
+}
+
 export interface SessionSnapshot {
 	version: number;
 	/** Opaque branch-aware concurrency token. Legacy snapshots derive this from their entry ID. */
@@ -65,6 +77,8 @@ export interface SessionSnapshot {
 	 * recent MAX_PROJECTION_RECONCILIATION_RECORDS entries in mutation order.
 	 */
 	projectionReconciliations?: SessionProjectionReconciliationRecord[];
+	/** Bounded markers for manually deleted managed projections. */
+	managedOverrideTombstones?: ManagedOverrideTombstone[];
 }
 
 export interface ProjectWorklist {

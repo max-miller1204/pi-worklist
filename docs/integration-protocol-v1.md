@@ -186,6 +186,16 @@ A semantic no-op does not rewrite `.pi/worklist.json`, change Project Goal times
 A repeated mutation with the same idempotency key and identical semantic input returns the original mapping or an equivalent semantic no-op result.
 Reusing an idempotency key for different semantic input returns `CONFLICT` with `type: "idempotency-key"`.
 Session replay records are branch-aware and bounded to the most recent 32 external mutations, so a key committed on one branch re-executes on a branch that never contained it, and consumers must not rely on replaying keys older than that window.
+
+## User overrides on managed projections
+
+The user always keeps full control over editing, moving, deleting, and changing the status of a managed Session Task.
+A manual edit, status change, or deletion of a managed task stamps the projection with `userOverride` metadata, or a bounded deletion tombstone, and emits a `session-tasks.user-overridden` change event.
+Reconciliation and execution updates never silently restore projected data over a user override; they report `preserved-user-override` for the affected external identity and leave the user's version untouched.
+A deleted managed projection is not recreated while its tombstone exists; the tombstone clears once the producer stops projecting that step, after which the step may be projected again as a new task.
+When the producer stops projecting an overridden step, the task detaches into an ordinary user task and its managed metadata is removed.
+Consumers that receive `preserved-user-override` must pause or replan from current worklist state instead of retrying the same projection.
+Successful managed tasks never automatically complete their associated Project Goal.
 A user override that cannot be overwritten safely returns `USER_OVERRIDE` or a conflict with `resolution: "request-user-decision"`.
 
 ## Errors and fallback

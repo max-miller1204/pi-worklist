@@ -95,6 +95,8 @@ interface SessionExecutionResult {
 	projectRevision?: string;
 	changed: boolean;
 	changedTaskIds?: string[];
+	/** True when a manual mutation diverged from an orchestrator-managed projection. */
+	userOverride?: boolean;
 }
 
 interface ProjectExecutionResult {
@@ -275,11 +277,11 @@ function actorForContext(context: WorklistOperationContext): WorklistActor {
 	return context.actor ?? { type: SOURCE_ACTOR_TYPES[context.source], id: "pi-worklist" };
 }
 
-function mutationTypeFor(operation: WorklistOperation): WorklistMutationType {
+function mutationTypeFor(operation: WorklistOperation, userOverride: boolean): WorklistMutationType {
 	if (operation.scope === "session") {
 		if (operation.action === "reconcile") return "session-tasks.reconciled";
 		if (operation.action === "update_execution") return "session-tasks.execution-updated";
-		return "session-tasks.changed-manually";
+		return userOverride ? "session-tasks.user-overridden" : "session-tasks.changed-manually";
 	}
 	return "project-goals.changed-manually";
 }
@@ -478,6 +480,7 @@ async function updateSessionTask(
 		result: task,
 		changed,
 		revision,
+		overrode,
 	} = await sessionStore.updateTask(id, updates, {
 		expectedRevision: operation.expectedRevision,
 	});
@@ -487,6 +490,7 @@ async function updateSessionTask(
 		changed,
 		revision,
 		changedTaskIds: [id],
+		userOverride: overrode === true,
 	};
 }
 
@@ -506,6 +510,7 @@ async function setSessionTaskStatus(
 		result: task,
 		changed,
 		revision,
+		overrode,
 	} = await sessionStore.setTaskStatus(id, operation.status as SessionTaskStatus, {
 		expectedRevision: operation.expectedRevision,
 	});
@@ -515,6 +520,7 @@ async function setSessionTaskStatus(
 		changed,
 		revision,
 		changedTaskIds: [id],
+		userOverride: overrode === true,
 	};
 }
 
@@ -527,6 +533,7 @@ async function deleteSessionTask(
 		result: removed,
 		changed,
 		revision,
+		overrode,
 	} = await sessionStore.deleteTask(id, {
 		expectedRevision: operation.expectedRevision,
 	});
@@ -536,6 +543,7 @@ async function deleteSessionTask(
 		changed,
 		revision,
 		changedTaskIds: [id],
+		userOverride: overrode === true,
 	};
 }
 
@@ -918,6 +926,7 @@ export class WorklistApplicationService {
 			let projectRevision: string | undefined;
 			let changedTaskIds: string[] | undefined;
 			let changedGoalIds: string[] | undefined;
+			let userOverride = false;
 			if (operation.scope === "session") {
 				const sessionExecution = await this.executeSession(operation, placement);
 				result = sessionExecution.result;
@@ -925,6 +934,7 @@ export class WorklistApplicationService {
 				sessionRevision = sessionExecution.revision;
 				projectRevision = sessionExecution.projectRevision;
 				changedTaskIds = sessionExecution.changedTaskIds;
+				userOverride = sessionExecution.userOverride === true;
 			} else if (operation.scope === "project") {
 				const projectExecution = await this.executeProject(operation);
 				result = projectExecution.result;
@@ -946,7 +956,7 @@ export class WorklistApplicationService {
 				changedTaskIds,
 				changedGoalIds,
 			});
-			if (meta.changed) this.publishCommittedChange(operation, context, meta);
+			if (meta.changed) this.publishCommittedChange(operation, context, meta, userOverride);
 			return {
 				ok: true,
 				scope: operation.scope,
@@ -1316,11 +1326,12 @@ export class WorklistApplicationService {
 		operation: WorklistOperation,
 		context: WorklistOperationContext,
 		meta: WorklistResultMeta,
+		userOverride: boolean,
 	): void {
 		if (!this.options.publishChange) return;
 		try {
 			this.options.publishChange({
-				mutation: mutationTypeFor(operation),
+				mutation: mutationTypeFor(operation, userOverride),
 				actor: actorForContext(context),
 				...(context.correlation !== undefined ? { correlation: context.correlation } : {}),
 				...(context.sourceRequestId !== undefined ? { sourceRequestId: context.sourceRequestId } : {}),

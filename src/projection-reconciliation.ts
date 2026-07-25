@@ -8,7 +8,11 @@ import {
 	MANAGED_SESSION_TASK_PROJECTION_VERSION,
 	type ManagedExecutionProjection,
 } from "./managed-projection.ts";
-import type { SessionProjectionReconciliationRecord, StoredSessionTask } from "./types.ts";
+import type {
+	ManagedOverrideTombstone,
+	SessionProjectionReconciliationRecord,
+	StoredSessionTask,
+} from "./types.ts";
 
 const RECONCILIATION_ACTIONS = [
 	"created",
@@ -23,6 +27,7 @@ const RECONCILIATION_ACTIONS = [
  * Consumers must not rely on replaying keys older than the most recent records.
  */
 export const MAX_PROJECTION_RECONCILIATION_RECORDS = 32;
+export const MAX_MANAGED_OVERRIDE_TOMBSTONES = 64;
 
 export function boundProjectionReconciliationRecords(
 	records: SessionProjectionReconciliationRecord[],
@@ -31,9 +36,43 @@ export function boundProjectionReconciliationRecords(
 	return records.slice(records.length - MAX_PROJECTION_RECONCILIATION_RECORDS);
 }
 
+export function boundManagedOverrideTombstones(
+	tombstones: ManagedOverrideTombstone[],
+): ManagedOverrideTombstone[] {
+	if (tombstones.length <= MAX_MANAGED_OVERRIDE_TOMBSTONES) return tombstones;
+	return tombstones.slice(tombstones.length - MAX_MANAGED_OVERRIDE_TOMBSTONES);
+}
+
+export function normalizeManagedOverrideTombstone(value: unknown): ManagedOverrideTombstone | undefined {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+	const tombstone = value as Record<string, unknown>;
+	const external = tombstone.external as Record<string, unknown> | undefined;
+	if (
+		external?.system !== "pi-orchestrator" ||
+		external.kind !== "workflow-step" ||
+		typeof external.id !== "string" ||
+		!external.id ||
+		typeof tombstone.taskId !== "string" ||
+		!tombstone.taskId ||
+		typeof tombstone.goalId !== "string" ||
+		!tombstone.goalId ||
+		typeof tombstone.overriddenAt !== "string" ||
+		!tombstone.overriddenAt
+	) {
+		return undefined;
+	}
+	return {
+		external: { system: "pi-orchestrator", kind: "workflow-step", id: external.id },
+		taskId: tombstone.taskId,
+		goalId: tombstone.goalId,
+		overriddenAt: tombstone.overriddenAt,
+	};
+}
+
 export interface ManagedProjectionReconciliationPlan {
 	tasks: ReconciledSessionTaskProjection[];
 	nextTasks: StoredSessionTask[];
+	nextTombstones: ManagedOverrideTombstone[];
 	changed: boolean;
 }
 
@@ -43,6 +82,7 @@ export interface ManagedProjectionReconciliationInput {
 	desiredTasks: ManagedSessionTaskInput[];
 	now: string;
 	createTaskId: () => string;
+	tombstones?: ManagedOverrideTombstone[];
 }
 
 function normalizeReconciledTask(value: unknown): ReconciledSessionTaskProjection | undefined {
@@ -226,6 +266,35 @@ function reconcileExistingTask({
 }: ExistingTaskReconciliationInput): ExistingTaskReconciliation {
 	const externalId = current.managed?.external.id;
 	const desired = externalId === undefined ? undefined : desiredByExternalId.get(externalId);
+	if (current.managed?.userOverride !== undefined && externalId !== undefined) {
+		if (desired && !matched.has(externalId)) {
+			// The user diverged from this projection; their version wins untouched.
+			return {
+				nextTask: current,
+				outcome: {
+					external: canonicalExternal(desired),
+					taskId: current.id,
+					action: "preserved-user-override",
+				},
+				matchedExternalId: externalId,
+				changed: false,
+			};
+		}
+		if (current.goalId === goalId) {
+			// The producer stopped projecting this step: detach it into a plain user task.
+			const { managed: _managed, ...detached } = current;
+			return {
+				nextTask: detached,
+				removed: {
+					external: current.managed.external,
+					taskId: current.id,
+					action: "preserved-user-override",
+				},
+				changed: true,
+			};
+		}
+		return { nextTask: current, changed: false };
+	}
 	if (externalId !== undefined && desired && !matched.has(externalId)) {
 		const unchangedCandidate: StoredSessionTask = {
 			id: current.id,
@@ -308,6 +377,7 @@ export function planManagedProjectionReconciliation({
 	desiredTasks,
 	now,
 	createTaskId,
+	tombstones = [],
 }: ManagedProjectionReconciliationInput): ManagedProjectionReconciliationPlan {
 	const desiredByExternalId = new Map(desiredTasks.map((task) => [task.external.id, task] as const));
 	assertDesiredIdentitiesBelongToGoal(currentTasks, goalId, desiredByExternalId);
@@ -334,8 +404,24 @@ export function planManagedProjectionReconciliation({
 		if (reconciliation.changed) changed = true;
 	}
 
+	const tombstonesByExternalId = new Map(
+		tombstones
+			.filter((tombstone) => tombstone.goalId === goalId)
+			.map((tombstone) => [tombstone.external.id, tombstone] as const),
+	);
 	for (const desired of desiredTasks) {
 		if (matched.has(desired.external.id)) continue;
+		const tombstone = tombstonesByExternalId.get(desired.external.id);
+		if (tombstone !== undefined) {
+			// The user deleted this projection; do not silently recreate it.
+			matched.add(desired.external.id);
+			outcomesByExternalId.set(desired.external.id, {
+				external: canonicalExternal(desired),
+				taskId: tombstone.taskId,
+				action: "preserved-user-override",
+			});
+			continue;
+		}
 		const id = createTaskId();
 		nextTasks.push({
 			id,
@@ -353,6 +439,12 @@ export function planManagedProjectionReconciliation({
 		});
 	}
 
+	// A tombstone clears once the producer stops projecting that step for the goal.
+	const nextTombstones = tombstones.filter(
+		(tombstone) => tombstone.goalId !== goalId || desiredByExternalId.has(tombstone.external.id),
+	);
+	if (nextTombstones.length !== tombstones.length) changed = true;
+
 	const tasks = [
 		...desiredTasks.flatMap((task) => {
 			const outcome = outcomesByExternalId.get(task.external.id);
@@ -360,7 +452,7 @@ export function planManagedProjectionReconciliation({
 		}),
 		...removed,
 	];
-	return { tasks, nextTasks, changed };
+	return { tasks, nextTasks, nextTombstones, changed };
 }
 
 export function executionUpdateFingerprint(updates: ManagedExecutionUpdate[]): string {
@@ -397,6 +489,7 @@ export interface ManagedExecutionUpdateInput {
 	currentTasks: StoredSessionTask[];
 	updates: ManagedExecutionUpdate[];
 	now: string;
+	tombstones?: ManagedOverrideTombstone[];
 }
 
 /**
@@ -404,11 +497,13 @@ export interface ManagedExecutionUpdateInput {
  *
  * Targets are resolved only by stable external workflow-step identity. The user-facing
  * todo, doing, and done lifecycle is deliberately untouched; reconciliation owns it.
+ * User-overridden and user-deleted projections are preserved instead of updated.
  */
 export function planManagedExecutionUpdate({
 	currentTasks,
 	updates,
 	now,
+	tombstones = [],
 }: ManagedExecutionUpdateInput): ManagedExecutionUpdatePlan {
 	const updatesByExternalId = new Map(updates.map((update) => [update.external.id, update] as const));
 	const outcomesByExternalId = new Map<string, ReconciledSessionTaskProjection>();
@@ -426,6 +521,15 @@ export function planManagedExecutionUpdate({
 			nextTasks.push(current);
 			continue;
 		}
+		if (current.managed.userOverride !== undefined) {
+			nextTasks.push(current);
+			outcomesByExternalId.set(externalId, {
+				external: { system: "pi-orchestrator", kind: "workflow-step", id: externalId },
+				taskId: current.id,
+				action: "preserved-user-override",
+			});
+			continue;
+		}
 		if (current.goalId !== undefined) goalIds.add(current.goalId);
 		const execution = canonicalExecution(update.execution);
 		const unchanged = JSON.stringify(current.managed.execution) === JSON.stringify(execution);
@@ -440,10 +544,21 @@ export function planManagedExecutionUpdate({
 		});
 	}
 
+	const tombstonesByExternalId = new Map(
+		tombstones.map((tombstone) => [tombstone.external.id, tombstone] as const),
+	);
 	const tasks = updates.map((update) => {
 		const outcome = outcomesByExternalId.get(update.external.id);
-		if (outcome === undefined) throw executionTargetNotFoundError(update.external.id);
-		return outcome;
+		if (outcome !== undefined) return outcome;
+		const tombstone = tombstonesByExternalId.get(update.external.id);
+		if (tombstone !== undefined) {
+			return {
+				external: tombstone.external,
+				taskId: tombstone.taskId,
+				action: "preserved-user-override" as const,
+			};
+		}
+		throw executionTargetNotFoundError(update.external.id);
 	});
 	return { tasks, nextTasks, goalIds: [...goalIds].sort(), changed };
 }

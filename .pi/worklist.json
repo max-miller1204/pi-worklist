@@ -77,9 +77,9 @@
       "id": "goal-mryb1h5i-8ea0e01c",
       "title": "Define managed Session Task override behavior",
       "description": "Mark orchestrator-managed Session Tasks clearly while preserving user control over editing, moving, deleting, and changing their status. Emit a divergence event for user overrides, require pi-orchestrator to pause or reconcile instead of silently restoring stale data, define how managed projections detach when a run ends, and retain the rule that successful tasks never automatically complete their associated Project Goal.",
-      "status": "open",
+      "status": "done",
       "createdAt": "2026-07-24T02:12:07.830Z",
-      "updatedAt": "2026-07-24T02:12:07.830Z"
+      "updatedAt": "2026-07-25T18:03:50.163Z"
     },
     {
       "id": "goal-mrz7osuo-4849456d",
@@ -130,5 +130,5 @@
       "updatedAt": "2026-07-24T18:31:54.214Z"
     }
   ],
-  "revision": 7
+  "revision": 9
 }
