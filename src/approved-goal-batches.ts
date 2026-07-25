@@ -7,6 +7,7 @@ import type {
 import { WORKLIST_PROVIDER_LIMITS } from "./integration-contract.ts";
 import type { ExternalWorkItemIdentity } from "./managed-projection.ts";
 import { MAX_MANAGED_IDENTITY_BYTES } from "./managed-projection.ts";
+import type { ProjectExternalMutationRecord } from "./types.ts";
 
 /**
  * Validation for explicitly approved Project Goal batches.
@@ -51,6 +52,55 @@ export function approvedGoalBatchFingerprint(
 		goals: goals.map(canonicalApprovedGoal),
 	};
 	return createHash("sha256").update(JSON.stringify(semanticInput)).digest("hex");
+}
+
+export const MAX_PROJECT_EXTERNAL_MUTATION_RECORDS = 32;
+
+export function boundProjectExternalMutationRecords(
+	records: ProjectExternalMutationRecord[],
+): ProjectExternalMutationRecord[] {
+	if (records.length <= MAX_PROJECT_EXTERNAL_MUTATION_RECORDS) return records;
+	return records.slice(records.length - MAX_PROJECT_EXTERNAL_MUTATION_RECORDS);
+}
+
+export function normalizeProjectExternalMutationRecord(
+	value: unknown,
+): ProjectExternalMutationRecord | undefined {
+	if (!isRecord(value)) return undefined;
+	if (value.operation !== "project-goals.create-approved-batch") return undefined;
+	if (typeof value.idempotencyKey !== "string" || !value.idempotencyKey) return undefined;
+	if (typeof value.fingerprint !== "string" || !value.fingerprint) return undefined;
+	if (typeof value.approvalId !== "string" || !value.approvalId) return undefined;
+	if (!Array.isArray(value.createdGoals)) return undefined;
+	const createdGoals: ProjectExternalMutationRecord["createdGoals"] = [];
+	for (const created of value.createdGoals) {
+		if (!isRecord(created) || typeof created.goalId !== "string" || !created.goalId) return undefined;
+		const external = created.external;
+		if (
+			!isRecord(external) ||
+			external.system !== "pi-orchestrator" ||
+			!APPROVED_GOAL_EXTERNAL_KINDS.has(external.kind as ExternalWorkItemIdentity["kind"]) ||
+			typeof external.id !== "string" ||
+			!external.id
+		) {
+			return undefined;
+		}
+		createdGoals.push({
+			external: {
+				system: "pi-orchestrator",
+				kind: external.kind as ExternalWorkItemIdentity["kind"],
+				id: external.id,
+			},
+			goalId: created.goalId,
+		});
+	}
+	return {
+		idempotencyKey: value.idempotencyKey,
+		fingerprint: value.fingerprint,
+		operation: "project-goals.create-approved-batch",
+		approvalId: value.approvalId,
+		createdGoals,
+	};
 }
 
 export interface ApprovedBatchIssue {

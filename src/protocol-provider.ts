@@ -58,6 +58,16 @@ export function advertisedWorklistCapabilities(): WorklistCapability[] {
 	return [
 		{ id: WORKLIST_CAPABILITIES.CHANGES_SUBSCRIBE, version: 1 },
 		{
+			id: WORKLIST_CAPABILITIES.PROJECT_GOALS_CREATE_APPROVED_BATCH,
+			version: 1,
+			limits: {
+				maxBatchItems: limits.maxBatchItems,
+				maxTitleBytes: limits.maxTitleBytes,
+				maxDescriptionBytes: limits.maxDescriptionBytes,
+				maxReferenceBytes: limits.maxReferenceBytes,
+			},
+		},
+		{
 			id: WORKLIST_CAPABILITIES.PROJECT_GOALS_READ,
 			version: 1,
 			limits: { maxTitleBytes: limits.maxTitleBytes, maxDescriptionBytes: limits.maxDescriptionBytes },
@@ -113,6 +123,13 @@ function serviceOperationFor(request: WorklistRequestEnvelope): WorklistServiceO
 				action: "get_projection",
 				goalSelector: request.payload.selector as WorklistOperationPayloads["project-goals.get"]["selector"],
 			};
+		case WORKLIST_OPERATIONS.PROJECT_GOALS_CREATE_APPROVED_BATCH:
+			return {
+				scope: "project",
+				action: "create_approved_batch",
+				approvedBatch:
+					request.payload as unknown as WorklistOperationPayloads["project-goals.create-approved-batch"],
+			};
 		case WORKLIST_OPERATIONS.SESSION_TASKS_LIST:
 			return {
 				scope: "session",
@@ -156,6 +173,8 @@ function protocolResultFor(
 	let result: Record<string, unknown>;
 	if (request.operation === WORKLIST_OPERATIONS.PROJECT_GOALS_GET) {
 		result = { goal: envelope.result.goalProjection ?? null };
+	} else if (request.operation === WORKLIST_OPERATIONS.PROJECT_GOALS_CREATE_APPROVED_BATCH) {
+		result = { goals: envelope.result.approvedBatch ?? [] };
 	} else if (request.operation === WORKLIST_OPERATIONS.SESSION_TASKS_LIST) {
 		result = {
 			tasks: envelope.result.taskProjections?.tasks ?? [],

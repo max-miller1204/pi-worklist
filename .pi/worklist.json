@@ -125,10 +125,10 @@
       "id": "goal-mrza1h0o-24e2abdf",
       "title": "Add approved Project Goal batch creation",
       "description": "Expose a versioned inter-extension capability that atomically and idempotently creates a validated batch of Project Goals from an explicitly approved orchestrator roadmap. Require expected-revision checks, stable external roadmap and repository references, bounded provenance, typed conflict results, and explicit user approval for the exact batch. Preserve standalone pi-worklist behavior, reject silent goal rewrites or completion, and keep roadmap dependencies, execution state, artifacts, and evidence canonical in pi-orchestrator.",
-      "status": "active",
+      "status": "done",
       "createdAt": "2026-07-24T18:31:54.214Z",
-      "updatedAt": "2026-07-25T18:15:39.809Z"
+      "updatedAt": "2026-07-25T18:21:35.554Z"
     }
   ],
-  "revision": 12
+  "revision": 13
 }

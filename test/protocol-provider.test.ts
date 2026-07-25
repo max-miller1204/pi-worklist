@@ -123,7 +123,14 @@ describe("worklist protocol provider", () => {
 		});
 		const capabilityIds = advertisedWorklistCapabilities().map((capability) => capability.id);
 		expect(capabilityIds).toEqual([...capabilityIds].sort());
-		expect(capabilityIds).not.toContain("project-goals.create-approved-batch");
+		expect(capabilityIds).toEqual([
+			"changes.subscribe",
+			"project-goals.create-approved-batch",
+			"project-goals.read",
+			"session-tasks.list",
+			"session-tasks.reconcile",
+			"session-tasks.update-execution",
+		]);
 	});
 
 	it("serves reads and mutations through the shared application service", async () => {
@@ -230,11 +237,11 @@ describe("worklist protocol provider", () => {
 
 		events.emit(
 			WORKLIST_REQUEST_EVENT,
-			baseRequest("project-goals.create-approved-batch", {}, "unsupported-1"),
+			baseRequest("project-goals.create-approved-batch", {}, "invalid-batch-1"),
 		);
-		expect(await waitForResult(events, "unsupported-1")).toMatchObject({
+		expect(await waitForResult(events, "invalid-batch-1")).toMatchObject({
 			ok: false,
-			error: { code: "UNSUPPORTED_CAPABILITY", retryable: false },
+			error: { code: "VALIDATION_FAILED", retryable: false, details: { field: "idempotencyKey" } },
 		});
 
 		events.emit(WORKLIST_REQUEST_EVENT, {

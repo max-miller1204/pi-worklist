@@ -4,7 +4,11 @@ import type {
 	SessionTaskSummaryProjection,
 	WorklistProjectionPage,
 } from "./integration-contract.ts";
-import type { ExternalWorkflowStepIdentity, ManagedSessionTaskProjection } from "./managed-projection.ts";
+import type {
+	ExternalWorkflowStepIdentity,
+	ExternalWorkItemIdentity,
+	ManagedSessionTaskProjection,
+} from "./managed-projection.ts";
 
 export type SessionTaskStatus = "todo" | "doing" | "done";
 export type ProjectGoalStatus = "open" | "active" | "done" | "archived";
@@ -81,11 +85,26 @@ export interface SessionSnapshot {
 	managedOverrideTombstones?: ManagedOverrideTombstone[];
 }
 
+/**
+ * Replay record for a committed external Project Goal mutation.
+ * Persisted in `.pi/worklist.json` so approved batch creation stays idempotent
+ * across process restarts, bounded to the most recent records.
+ */
+export interface ProjectExternalMutationRecord {
+	idempotencyKey: string;
+	fingerprint: string;
+	operation: "project-goals.create-approved-batch";
+	approvalId: string;
+	createdGoals: Array<{ external: ExternalWorkItemIdentity; goalId: string }>;
+}
+
 export interface ProjectWorklist {
 	version: number;
 	/** Absent only in legacy version 1 files, which readers normalize to revision 0. */
 	revision?: number;
 	goals: ProjectGoal[];
+	/** Bounded replay records for committed external mutations. */
+	externalMutations?: ProjectExternalMutationRecord[];
 }
 
 export interface RevisionedProjectWorklist extends ProjectWorklist {
@@ -102,6 +121,7 @@ export interface WorklistOperationResult {
 	reconciliation?: { tasks: ReconciledSessionTaskProjection[] };
 	taskProjections?: { tasks: SessionTaskSummaryProjection[]; page: WorklistProjectionPage };
 	goalProjection?: ProjectGoalDetailProjection | null;
+	approvedBatch?: Array<{ external: ExternalWorkItemIdentity; goal: ProjectGoalDetailProjection }>;
 }
 
 export type WorklistToolDetails = WorklistOperationResult;

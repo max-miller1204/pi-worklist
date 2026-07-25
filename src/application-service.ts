@@ -1,3 +1,4 @@
+import { findApprovedGoalBatchIssue } from "./approved-goal-batches.ts";
 import type { WorklistChangePublisher } from "./change-events.ts";
 import {
 	ProjectGoalAssociationChangedError,
@@ -29,6 +30,7 @@ import {
 import {
 	activateProjectGoal,
 	addProjectGoal,
+	createApprovedProjectGoalBatch,
 	deleteProjectGoal,
 	listProjectGoals,
 	PROJECT_LIFECYCLE_TARGET_STATUS,
@@ -81,6 +83,7 @@ export interface WorklistOperation {
 	executionUpdate?: WorklistOperationPayloads["session-tasks.update-execution"];
 	listProjection?: WorklistOperationPayloads["session-tasks.list"];
 	goalSelector?: ProjectGoalSelector;
+	approvedBatch?: WorklistOperationPayloads["project-goals.create-approved-batch"];
 }
 
 interface WorklistApplicationResultBase {
@@ -283,6 +286,7 @@ function mutationTypeFor(operation: WorklistOperation, userOverride: boolean): W
 		if (operation.action === "update_execution") return "session-tasks.execution-updated";
 		return userOverride ? "session-tasks.user-overridden" : "session-tasks.changed-manually";
 	}
+	if (operation.action === "create_approved_batch") return "project-goals.created-approved-batch";
 	return "project-goals.changed-manually";
 }
 
@@ -1245,6 +1249,8 @@ export class WorklistApplicationService {
 			case "archive":
 			case "delete":
 				return this.transitionProjectGoal(projectPath, operation);
+			case "create_approved_batch":
+				return this.createApprovedBatch(projectPath, operation);
 			default:
 				throw createApplicationError(
 					WORKLIST_ERROR_CODES.INVALID_REQUEST,
@@ -1254,6 +1260,7 @@ export class WorklistApplicationService {
 							"add",
 							"archive",
 							"complete",
+							"create_approved_batch",
 							"delete",
 							"get_projection",
 							"list",
@@ -1265,6 +1272,67 @@ export class WorklistApplicationService {
 					},
 				);
 		}
+	}
+
+	private async createApprovedBatch(
+		projectPath: string,
+		operation: WorklistOperation,
+	): Promise<ProjectExecutionResult> {
+		const payload = operation.approvedBatch;
+		if (!payload || typeof payload !== "object") {
+			throw validationError("approvedBatch is required for project create_approved_batch.", {
+				fields: ["approvedBatch"],
+				resolution: "provide-approved-batch-payload",
+			});
+		}
+		const issue = findApprovedGoalBatchIssue(payload);
+		if (issue) {
+			throw createApplicationError(
+				issue.code === "APPROVAL_REQUIRED"
+					? WORKLIST_ERROR_CODES.APPROVAL_REQUIRED
+					: WORKLIST_ERROR_CODES.VALIDATION_FAILED,
+				issue.message,
+				issue.details,
+			);
+		}
+		const outcome = await createApprovedProjectGoalBatch(projectPath, payload);
+		if (outcome.kind === "idempotency-key-conflict") {
+			throw new WorklistApplicationError({
+				code: WORKLIST_ERROR_CODES.CONFLICT,
+				message: `Approved batch idempotency key ${payload.idempotencyKey} was reused for different input.`,
+				retryable: false,
+				conflict: { type: "idempotency-key", resolution: "use-new-idempotency-key" },
+				details: { idempotencyKey: payload.idempotencyKey },
+			});
+		}
+		if (outcome.kind === "replayed-goal-missing") {
+			throw new WorklistApplicationError({
+				code: WORKLIST_ERROR_CODES.CONFLICT,
+				message: `Previously created goal ${outcome.goalId} no longer exists, so the original batch result cannot be replayed.`,
+				retryable: false,
+				conflict: {
+					type: "user-override",
+					conflictingIds: [outcome.goalId],
+					resolution: "request-user-decision",
+				},
+				details: { externalId: outcome.external.id, goalId: outcome.goalId },
+			});
+		}
+		const approvedBatch = outcome.createdGoals.map(({ external, goal }) => ({
+			external,
+			goal: toProjectGoalDetailProjection(goal),
+		}));
+		return {
+			result: {
+				scope: "project",
+				action: "create_approved_batch",
+				approvedBatch,
+				...(outcome.kind === "created" ? { goals: outcome.goals } : {}),
+			},
+			revision: outcome.revision,
+			changed: outcome.changed,
+			changedGoalIds: outcome.kind === "created" ? outcome.createdGoals.map(({ goal }) => goal.id) : [],
+		};
 	}
 
 	private async activateProjectGoal(

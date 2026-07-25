@@ -8,7 +8,6 @@ This document defines the version 1 contract between pi-worklist and automation 
 The exported TypeScript contract in `src/integration-contract.ts` is the normative machine-readable definition.
 The pi-worklist provider in `src/protocol-provider.ts` serves negotiation, reads, reconciliation, and execution updates over `pi.events`, routing every mutation through the shared application service.
 The consumer request helper in `src/protocol-consumer.ts` (exported as `pi-worklist/protocol-consumer`) performs correlated requests with bounded timeouts and deterministic local fallbacks; the full pi-orchestrator client is not yet implemented.
-`project-goals.create-approved-batch` is not yet served or advertised and currently returns `UNSUPPORTED_CAPABILITY`.
 
 `WorklistApplicationService.execute` returns a deterministic discriminated envelope for every tool, command, dashboard, CLI, or future protocol operation.
 Success envelopes contain `ok: true`, the requested scope and action, the operation result, and canonical change metadata.
@@ -163,6 +162,10 @@ The provider must not copy worker logs, dependency graphs, retry histories, arti
 This is the only protocol operation that creates Project Goals.
 The request must include explicit approval evidence, a digest of the exact approved content, stable external phase identities, an idempotency key, and an optional expected project revision.
 The provider validates approval and creates the complete batch atomically or creates nothing.
+Approval evidence must be granted by a user actor, and its `contentDigest` must equal the canonical digest the provider recomputes from the exact goal batch; mismatched evidence returns `APPROVAL_REQUIRED`.
+External identities must be bounded `phase` or `project-goal` identities, and batches are limited to the advertised `maxBatchItems`.
+Replay records persist in `.pi/worklist.json`, bounded to the most recent 32 external mutations, so an identical replay returns the original identities with their current goal state even across process restarts.
+If the user deleted a previously created goal, the replay returns a `CONFLICT` with `resolution: "request-user-decision"` instead of recreating it.
 
 Protocol v1 deliberately has no operation to rewrite, complete, archive, delete, reopen, or activate a Project Goal.
 Those lifecycle actions stay under pi-worklist control and retain their existing explicit confirmation rules.
