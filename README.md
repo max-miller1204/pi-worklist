@@ -21,6 +21,7 @@ Project Goals track the larger outcomes shared by every Pi session in a Git repo
 - A compact widget shows the active Project Goal and up to three unfinished Session Tasks.
 - The `worklist` model tool manages both scopes through one consistent API.
 - A Pi-free external CLI lets scripts and other agents manage Project Goals without a running Pi session.
+- An installable agent skill, generated from the same command contract as the CLI, teaches coding agents to drive that CLI in any repository.
 - Project Goal completion, reopening, archival, and deletion require explicit user intent.
 - Managed Session Task operations accept only existing open or active Project Goal associations and detect edits to the selected goal before reconciliation.
 - Cross-process locking and atomic replacement prevent concurrent Pi processes from losing updates or corrupting the project file.
@@ -143,12 +144,12 @@ External agents and scripts can manage Project Goals without a running Pi sessio
 The published package ships a compiled `pi-worklist` bin, so no development checkout is needed:
 
 ```sh
-npx pi-worklist project list
-npx pi-worklist project show <id>
-npx pi-worklist project add Support goal templates -- Let teams share reusable goal outlines
-npx pi-worklist project update <id> Replace the title -- Replace the description
-npx pi-worklist project set_active <id>
-npx pi-worklist project complete <id> --confirm
+npx -y pi-worklist project list
+npx -y pi-worklist project show <id>
+npx -y pi-worklist project add Support goal templates -- Let teams share reusable goal outlines
+npx -y pi-worklist project update <id> Replace the title -- Replace the description
+npx -y pi-worklist project set_active <id>
+npx -y pi-worklist project complete <id> --confirm
 ```
 
 The CLI routes every mutation through the same service, cross-process lock, and atomic replacement as a live Pi session, so concurrent use is safe.
@@ -160,7 +161,24 @@ The complete command reference in [docs/cli.md](docs/cli.md) is generated from `
 In a development checkout, `node src/cli.ts project <action>` runs the same CLI; running the TypeScript entry point directly requires Node 22.18 or newer (for example Node 24), which strips types natively.
 On older Node versions, including the Node 20 floor of the package's `engines` range, the TypeScript entry point fails with an `Unknown file extension ".ts"` error, while the compiled bin has no such requirement.
 Session Tasks are intentionally unavailable here because they live inside a Pi session tree.
-A Claude Code skill in `.claude/skills/worklist/` teaches Claude sessions in this repository to use the CLI under the same guardrails.
+
+## Agent skill
+
+A skill in `.claude/skills/worklist/` teaches coding agents to drive the CLI under the same guardrails, so a session manages goals correctly without being walked through it each time.
+Install it for every project:
+
+```sh
+npx skills add max-miller1204/pi-worklist --skill worklist -g
+```
+
+Drop `-g` to install it for the current project only, or add `-a claude-code` to target one agent instead of choosing interactively.
+The [`skills` CLI](https://github.com/vercel-labs/skills) reads `.claude/skills/` directly from this repository, symlinks it into each agent's skill directory, and refreshes it later with `npx skills update`.
+Installing the npm package does not install the skill: the tarball carries `.claude/skills/worklist/SKILL.md` so the published package stays self-describing, but `node_modules` is not a directory agents scan for skills.
+
+`SKILL.md` is generated from `src/cli-contract.ts` by `scripts/generate-docs.ts`, the same contract that renders the CLI help and [docs/cli.md](docs/cli.md).
+Never hand-edit it; run `npm run docs` and commit the result, which `npm run docs:check` and the test suite both enforce.
+The generated skill is deliberately repository-neutral and invokes the CLI as `npx -y pi-worklist`, so a single file serves every checkout instead of drifting into separate global and in-repo variants.
+Working on the skill itself is the one case for symlinking `.claude/skills/worklist` into `~/.claude/skills/`, which makes the installed skill track your working tree.
 
 ## Development
 

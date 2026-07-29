@@ -1,17 +1,24 @@
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { CLI_COMMAND_CONTRACT, renderCliGuide, renderCliUsage } from "../src/cli-contract.ts";
+import {
+	CLI_COMMAND_CONTRACT,
+	DOCS_PATH,
+	renderCliGuide,
+	renderCliUsage,
+	renderSkillMarkdown,
+	SKILL_PATH,
+} from "../src/cli-contract.ts";
 
 const execFileAsync = promisify(execFile);
 
 describe("single CLI command contract", () => {
 	it("keeps the generated docs/cli.md guide in sync with the contract", async () => {
-		const generated = await readFile(resolve("docs/cli.md"), "utf8");
-		expect(generated, "docs/cli.md is stale; run `npm run docs:cli` to regenerate it").toBe(renderCliGuide());
+		const generated = await readFile(resolve(DOCS_PATH), "utf8");
+		expect(generated, `${DOCS_PATH} is stale; run \`npm run docs\` to regenerate it`).toBe(renderCliGuide());
 	});
 
 	it("derives help output, the skill guide, and agent guidance from one contract", async () => {
@@ -38,16 +45,74 @@ describe("single CLI command contract", () => {
 		);
 	});
 
-	it("keeps the repository worklist skill aligned with the contract surface", async () => {
-		const skill = await readFile(resolve(".claude/skills/worklist/SKILL.md"), "utf8");
-		expect(skill).toContain(`npx ${CLI_COMMAND_CONTRACT.binary}`);
-		expect(skill).toContain("docs/cli.md");
+	it("keeps the committed worklist skill byte-identical to the contract render", async () => {
+		const skill = await readFile(resolve(SKILL_PATH), "utf8");
+		expect(skill, `${SKILL_PATH} is stale; run \`npm run docs\` to regenerate it`).toBe(
+			renderSkillMarkdown(),
+		);
+	});
+
+	it("renders a repository-neutral skill covering the whole contract surface", () => {
+		const skill = renderSkillMarkdown();
+		expect(skill).toContain(`description: ${JSON.stringify(CLI_COMMAND_CONTRACT.skillDescription)}`);
+		// The skill installs globally, so every invocation must be the portable `npx -y` form
+		// and must never name a checkout path that only exists on the author's machine.
+		expect(skill).toContain(`npx -y ${CLI_COMMAND_CONTRACT.binary}`);
+		expect(skill).not.toMatch(new RegExp(String.raw`\bnpx ${CLI_COMMAND_CONTRACT.binary}\b`));
+		expect(skill).not.toContain("/home/");
+		expect(skill).toContain(DOCS_PATH);
+		const exampleBlock = skill.match(/Examples:\n\n```sh\n([\s\S]*?)\n```/)?.[1];
+		expect(exampleBlock, "SKILL.md is missing its Examples block").toBeDefined();
+		for (const action of CLI_COMMAND_CONTRACT.actions.filter((entry) => entry.confirmRequired)) {
+			expect(
+				exampleBlock,
+				`Examples must not hand an agent a copy-paste \`${action.name}\`; lifecycle actions need explicit user intent`,
+			).not.toContain(`${CLI_COMMAND_CONTRACT.scope} ${action.name} `);
+		}
+		expect(exampleBlock, "Examples must not demonstrate `--confirm`").not.toContain("--confirm");
 		for (const action of CLI_COMMAND_CONTRACT.actions) {
 			expect(skill, `SKILL.md is missing action usage \`${action.usage}\``).toContain(action.usage);
 		}
-		for (const exitCode of CLI_COMMAND_CONTRACT.exitCodes.filter((entry) => entry.code >= 3)) {
+		for (const flag of CLI_COMMAND_CONTRACT.flags) {
+			expect(skill, `SKILL.md is missing flag \`${flag.usage}\``).toContain(flag.usage);
+		}
+		for (const exitCode of CLI_COMMAND_CONTRACT.exitCodes.filter((entry) => entry.code >= 1)) {
 			expect(skill, `SKILL.md is missing exit code ${exitCode.code}`).toContain(`Exit code ${exitCode.code}`);
 		}
+	});
+
+	it("declares the same Node floor the package does", async () => {
+		const manifest = JSON.parse(await readFile(resolve("package.json"), "utf8")) as {
+			engines: { node: string };
+		};
+		expect(
+			manifest.engines.node,
+			"package.json engines.node and CLI_COMMAND_CONTRACT.runtime.binaryNodeFloor disagree",
+		).toBe(`>=${CLI_COMMAND_CONTRACT.runtime.binaryNodeFloor}`);
+	});
+
+	it("states the same Node floors in the README the contract declares", async () => {
+		const readme = await readFile(resolve("README.md"), "utf8");
+		const { binaryNodeFloor, sourceNodeFloor } = CLI_COMMAND_CONTRACT.runtime;
+		expect(readme, "README.md and CLI_COMMAND_CONTRACT.runtime.sourceNodeFloor disagree").toContain(
+			`Node ${sourceNodeFloor} or newer`,
+		);
+		expect(readme, "README.md and CLI_COMMAND_CONTRACT.runtime.binaryNodeFloor disagree").toContain(
+			`Node ${binaryNodeFloor} floor`,
+		);
+		// A stale floor left behind by a contract bump would still satisfy the assertions above,
+		// so every version the README states as a requirement has to be one the contract declares.
+		const stated = [...readme.matchAll(/Node (\d+(?:\.\d+)*) (?:or newer|floor)/g)].map((match) => match[1]);
+		expect(new Set(stated), "README.md states a Node requirement the contract does not declare").toEqual(
+			new Set([sourceNodeFloor, binaryNodeFloor]),
+		);
+	});
+
+	it("ships the generated skill in the published package", async () => {
+		const manifest = JSON.parse(await readFile(resolve("package.json"), "utf8")) as { files: string[] };
+		expect(manifest.files, `${SKILL_PATH} must be packaged so installs carry the skill`).toContain(
+			dirname(SKILL_PATH),
+		);
 	});
 
 	it("prints the contract-rendered help from the CLI itself", async () => {
