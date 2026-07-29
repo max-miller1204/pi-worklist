@@ -57,7 +57,6 @@ npx -y pi-worklist project show goal-ms6gwxrg-56c1bde6 --json
 npx -y pi-worklist project update goal-ms6gwxrg-56c1bde6 -- Replace only the description
 npx -y pi-worklist project update goal-ms6gwxrg-56c1bde6 Support shared goal templates
 npx -y pi-worklist project set_active goal-ms6gwxrg-56c1bde6
-npx -y pi-worklist project complete goal-ms6gwxrg-56c1bde6 --confirm
 ```
 
 Goal IDs are opaque: read them back from `list` or `add` output instead of constructing them.

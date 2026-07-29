@@ -203,7 +203,6 @@ export function renderSkillMarkdown(): string {
 		`update ${exampleId} -- Replace only the description`,
 		`update ${exampleId} Support shared goal templates`,
 		`set_active ${exampleId}`,
-		`complete ${exampleId} --confirm`,
 	];
 	return [
 		"---",

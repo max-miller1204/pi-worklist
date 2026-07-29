@@ -61,6 +61,15 @@ describe("single CLI command contract", () => {
 		expect(skill).not.toMatch(new RegExp(String.raw`\bnpx ${CLI_COMMAND_CONTRACT.binary}\b`));
 		expect(skill).not.toContain("/home/");
 		expect(skill).toContain(DOCS_PATH);
+		const exampleBlock = skill.match(/Examples:\n\n```sh\n([\s\S]*?)\n```/)?.[1];
+		expect(exampleBlock, "SKILL.md is missing its Examples block").toBeDefined();
+		for (const action of CLI_COMMAND_CONTRACT.actions.filter((entry) => entry.confirmRequired)) {
+			expect(
+				exampleBlock,
+				`Examples must not hand an agent a copy-paste \`${action.name}\`; lifecycle actions need explicit user intent`,
+			).not.toContain(`${CLI_COMMAND_CONTRACT.scope} ${action.name} `);
+		}
+		expect(exampleBlock, "Examples must not demonstrate `--confirm`").not.toContain("--confirm");
 		for (const action of CLI_COMMAND_CONTRACT.actions) {
 			expect(skill, `SKILL.md is missing action usage \`${action.usage}\``).toContain(action.usage);
 		}
