@@ -193,6 +193,18 @@ export function renderSkillMarkdown(): string {
 	const contract = CLI_COMMAND_CONTRACT;
 	const lifecycleActions = contract.actions.filter((action) => action.confirmRequired);
 	const safeActions = contract.actions.filter((action) => !action.confirmRequired && action.name !== "help");
+	// A generated ID in the real `goal-<base36 time>-<8 hex>` shape, so the examples
+	// show what `list` and `add` actually hand back rather than a placeholder.
+	const exampleId = "goal-ms6gwxrg-56c1bde6";
+	const examples = [
+		"list --json",
+		"add Support goal templates -- Let teams share reusable goal outlines",
+		`show ${exampleId} --json`,
+		`update ${exampleId} -- Replace only the description`,
+		`update ${exampleId} Support shared goal templates`,
+		`set_active ${exampleId}`,
+		`complete ${exampleId} --confirm`,
+	];
 	return [
 		"---",
 		"name: worklist",
@@ -232,6 +244,14 @@ export function renderSkillMarkdown(): string {
 		"`list` output is compact and omits descriptions; use `show <id>` when you need a goal's complete description.",
 		"Text after `--` becomes the goal description.",
 		"`update <id> --` with nothing after the separator clears the description.",
+		"",
+		"Examples:",
+		"",
+		"```sh",
+		...examples.map((example) => `npx -y ${contract.binary} ${contract.scope} ${example}`),
+		"```",
+		"",
+		"Goal IDs are opaque: read them back from `list` or `add` output instead of constructing them.",
 		`The full generated command reference lives in the package's \`${DOCS_PATH}\`, rendered from the same contract as this skill.`,
 		"",
 		"## Guardrails",

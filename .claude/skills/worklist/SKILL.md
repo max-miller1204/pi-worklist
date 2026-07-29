@@ -47,6 +47,20 @@ Prefer `--json` whenever you need to read IDs, statuses, or errors back rather t
 `list` output is compact and omits descriptions; use `show <id>` when you need a goal's complete description.
 Text after `--` becomes the goal description.
 `update <id> --` with nothing after the separator clears the description.
+
+Examples:
+
+```sh
+npx -y pi-worklist project list --json
+npx -y pi-worklist project add Support goal templates -- Let teams share reusable goal outlines
+npx -y pi-worklist project show goal-ms6gwxrg-56c1bde6 --json
+npx -y pi-worklist project update goal-ms6gwxrg-56c1bde6 -- Replace only the description
+npx -y pi-worklist project update goal-ms6gwxrg-56c1bde6 Support shared goal templates
+npx -y pi-worklist project set_active goal-ms6gwxrg-56c1bde6
+npx -y pi-worklist project complete goal-ms6gwxrg-56c1bde6 --confirm
+```
+
+Goal IDs are opaque: read them back from `list` or `add` output instead of constructing them.
 The full generated command reference lives in the package's `docs/cli.md`, rendered from the same contract as this skill.
 
 ## Guardrails

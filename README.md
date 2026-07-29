@@ -143,12 +143,12 @@ External agents and scripts can manage Project Goals without a running Pi sessio
 The published package ships a compiled `pi-worklist` bin, so no development checkout is needed:
 
 ```sh
-npx pi-worklist project list
-npx pi-worklist project show <id>
-npx pi-worklist project add Support goal templates -- Let teams share reusable goal outlines
-npx pi-worklist project update <id> Replace the title -- Replace the description
-npx pi-worklist project set_active <id>
-npx pi-worklist project complete <id> --confirm
+npx -y pi-worklist project list
+npx -y pi-worklist project show <id>
+npx -y pi-worklist project add Support goal templates -- Let teams share reusable goal outlines
+npx -y pi-worklist project update <id> Replace the title -- Replace the description
+npx -y pi-worklist project set_active <id>
+npx -y pi-worklist project complete <id> --confirm
 ```
 
 The CLI routes every mutation through the same service, cross-process lock, and atomic replacement as a live Pi session, so concurrent use is safe.

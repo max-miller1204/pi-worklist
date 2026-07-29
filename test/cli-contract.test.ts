@@ -58,7 +58,7 @@ describe("single CLI command contract", () => {
 		// The skill installs globally, so every invocation must be the portable `npx -y` form
 		// and must never name a checkout path that only exists on the author's machine.
 		expect(skill).toContain(`npx -y ${CLI_COMMAND_CONTRACT.binary}`);
-		expect(skill).not.toMatch(/(?<!-y )\bnpx pi-worklist\b/);
+		expect(skill).not.toMatch(new RegExp(String.raw`\bnpx ${CLI_COMMAND_CONTRACT.binary}\b`));
 		expect(skill).not.toContain("/home/");
 		expect(skill).toContain(DOCS_PATH);
 		for (const action of CLI_COMMAND_CONTRACT.actions) {
@@ -80,6 +80,23 @@ describe("single CLI command contract", () => {
 			manifest.engines.node,
 			"package.json engines.node and CLI_COMMAND_CONTRACT.runtime.binaryNodeFloor disagree",
 		).toBe(`>=${CLI_COMMAND_CONTRACT.runtime.binaryNodeFloor}`);
+	});
+
+	it("states the same Node floors in the README the contract declares", async () => {
+		const readme = await readFile(resolve("README.md"), "utf8");
+		const { binaryNodeFloor, sourceNodeFloor } = CLI_COMMAND_CONTRACT.runtime;
+		expect(readme, "README.md and CLI_COMMAND_CONTRACT.runtime.sourceNodeFloor disagree").toContain(
+			`Node ${sourceNodeFloor} or newer`,
+		);
+		expect(readme, "README.md and CLI_COMMAND_CONTRACT.runtime.binaryNodeFloor disagree").toContain(
+			`Node ${binaryNodeFloor} floor`,
+		);
+		// A stale floor left behind by a contract bump would still satisfy the assertions above,
+		// so every version the README states as a requirement has to be one the contract declares.
+		const stated = [...readme.matchAll(/Node (\d+(?:\.\d+)*) (?:or newer|floor)/g)].map((match) => match[1]);
+		expect(new Set(stated), "README.md states a Node requirement the contract does not declare").toEqual(
+			new Set([sourceNodeFloor, binaryNodeFloor]),
+		);
 	});
 
 	it("ships the generated skill in the published package", async () => {
