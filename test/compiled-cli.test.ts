@@ -81,7 +81,7 @@ describe("compiled pi-worklist CLI bin", () => {
 			bin?: Record<string, string>;
 			files: string[];
 		};
-		expect(packageJson.bin).toEqual({ "pi-worklist": "./dist/cli.js" });
+		expect(packageJson.bin).toEqual({ "pi-worklist": "dist/cli.js" });
 		expect(packageJson.files).toContain("dist");
 	}, 60_000);
 });
