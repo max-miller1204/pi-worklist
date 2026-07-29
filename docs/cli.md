@@ -1,4 +1,4 @@
-<!-- Generated from src/cli-contract.ts by scripts/generate-cli-docs.ts. Do not edit manually. -->
+<!-- Generated from src/cli-contract.ts by scripts/generate-docs.ts. Do not edit manually. -->
 
 # pi-worklist CLI
 
