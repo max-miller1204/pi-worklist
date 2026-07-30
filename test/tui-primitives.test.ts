@@ -161,12 +161,31 @@ describe("key decoding", () => {
 		expect(decodeKeys(`a${ESC}[Ab\r`).map((key) => key.name)).toEqual(["char", "up", "char", "enter"]);
 	});
 
-	it("marks bracketed paste as text across input chunks", () => {
-		const decoder = new KeyDecoder();
-		expect(decoder.push(`${ESC}[200~pas`)).toEqual([]);
-		const keys = decoder.push(`ted${ESC}[201~`);
-		expect(keys.map((key) => key.char)).toEqual(["p", "a", "s", "t", "e", "d"]);
-		expect(keys.every((key) => key.paste)).toBe(true);
+	it("decodes bracketed paste across every marker boundary", () => {
+		const input = `${ESC}[200~pasted${ESC}[201~q`;
+		const boundaries = [
+			1,
+			3,
+			`${ESC}[200~`.length - 1,
+			`${ESC}[200~pasted${ESC}`.length,
+			`${ESC}[200~pasted${ESC}[20`.length,
+			input.length - 2,
+		];
+
+		for (const boundary of boundaries) {
+			const decoder = new KeyDecoder();
+			const keys = [
+				...decoder.push(input.slice(0, boundary)),
+				...decoder.push(input.slice(boundary)),
+				...decoder.flush(),
+			];
+			expect(
+				keys.filter((key) => key.paste).map((key) => key.char),
+				`boundary ${boundary}`,
+			).toEqual(["p", "a", "s", "t", "e", "d"]);
+			expect(keys.at(-1), `boundary ${boundary}`).toMatchObject({ char: "q" });
+			expect(keys.at(-1)?.paste, `boundary ${boundary}`).toBeUndefined();
+		}
 	});
 });
 

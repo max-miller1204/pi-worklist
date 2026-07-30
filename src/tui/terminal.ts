@@ -82,17 +82,31 @@ export class Terminal {
 	private active = false;
 	private rawModeApplied = false;
 	private inputBatch = 0;
+	private pendingInputFlush: NodeJS.Immediate | undefined;
 
 	private readonly onData = (chunk: string | Buffer): void => {
 		const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+		if (this.pendingInputFlush) clearImmediate(this.pendingInputFlush);
+		this.pendingInputFlush = undefined;
 		this.inputBatch += 1;
-		for (const decoded of this.keyDecoder.push(text)) {
-			const key = { ...decoded, inputBatch: this.inputBatch };
+		const batch = this.inputBatch;
+		this.deliverKeys(this.keyDecoder.push(text), batch);
+		if (this.active) {
+			this.pendingInputFlush = setImmediate(() => {
+				this.pendingInputFlush = undefined;
+				this.deliverKeys(this.keyDecoder.flush(), batch);
+			});
+		}
+	};
+
+	private deliverKeys(keys: KeyEvent[], inputBatch: number): void {
+		for (const decoded of keys) {
+			const key = { ...decoded, inputBatch };
 			// Handlers may close the terminal, so re-check between deliveries.
 			if (!this.active) return;
 			for (const handler of [...this.keyHandlers]) handler(key);
 		}
-	};
+	}
 
 	private readonly onResize = (): void => {
 		// A resize invalidates every cached row: the terminal reflows content itself.
@@ -145,6 +159,8 @@ export class Terminal {
 		this.input.off("data", this.onData);
 		this.output.off("resize", this.onResize);
 		process.off("exit", this.onProcessExit);
+		if (this.pendingInputFlush) clearImmediate(this.pendingInputFlush);
+		this.pendingInputFlush = undefined;
 		this.restore();
 	}
 
@@ -214,6 +230,8 @@ export class Terminal {
 		const wasActive = this.active;
 		if (wasActive) {
 			this.input.off("data", this.onData);
+			if (this.pendingInputFlush) clearImmediate(this.pendingInputFlush);
+			this.pendingInputFlush = undefined;
 			if (this.rawModeApplied && this.input.setRawMode) {
 				this.input.setRawMode(false);
 				this.rawModeApplied = false;

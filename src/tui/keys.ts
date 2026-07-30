@@ -12,6 +12,7 @@ const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "graphem
 const ESCAPE_CHARACTER = "\u001b";
 const BRACKETED_PASTE_START = `${ESCAPE_CHARACTER}[200~`;
 const BRACKETED_PASTE_END = `${ESCAPE_CHARACTER}[201~`;
+const MAX_PASTED_TEXT_LENGTH = 1024 * 1024;
 
 export type KeyName =
 	| "up"
@@ -202,13 +203,9 @@ function decodePastedText(input: string): KeyEvent[] {
 	}));
 }
 
-function partialPasteStartLength(input: string): number {
-	for (
-		let length = Math.min(input.length, BRACKETED_PASTE_START.length - 1);
-		length >= 2;
-		length -= 1
-	) {
-		if (BRACKETED_PASTE_START.startsWith(input.slice(-length))) return length;
+function partialMarkerLength(input: string, marker: string): number {
+	for (let length = Math.min(input.length, marker.length - 1); length >= 1; length -= 1) {
+		if (marker.startsWith(input.slice(-length))) return length;
 	}
 	return 0;
 }
@@ -216,6 +213,7 @@ function partialPasteStartLength(input: string): number {
 export class KeyDecoder {
 	private pending = "";
 	private pasted = "";
+	private pasteEndPending = "";
 	private inPaste = false;
 
 	push(input: string): KeyEvent[] {
@@ -225,12 +223,18 @@ export class KeyDecoder {
 
 		while (remaining !== "") {
 			if (this.inPaste) {
+				remaining = this.pasteEndPending + remaining;
+				this.pasteEndPending = "";
 				const end = remaining.indexOf(BRACKETED_PASTE_END);
 				if (end < 0) {
-					this.pasted += remaining;
+					const partialLength = partialMarkerLength(remaining, BRACKETED_PASTE_END);
+					this.appendPasted(
+						partialLength === 0 ? remaining : remaining.slice(0, -partialLength),
+					);
+					if (partialLength > 0) this.pasteEndPending = remaining.slice(-partialLength);
 					return events;
 				}
-				this.pasted += remaining.slice(0, end);
+				this.appendPasted(remaining.slice(0, end));
 				events.push(...decodePastedText(this.pasted));
 				this.pasted = "";
 				this.inPaste = false;
@@ -246,7 +250,7 @@ export class KeyDecoder {
 				continue;
 			}
 
-			const partialLength = partialPasteStartLength(remaining);
+			const partialLength = partialMarkerLength(remaining, BRACKETED_PASTE_START);
 			if (partialLength > 0) {
 				this.pending = remaining.slice(-partialLength);
 				remaining = remaining.slice(0, -partialLength);
@@ -257,11 +261,24 @@ export class KeyDecoder {
 
 		return events;
 	}
+
+	flush(): KeyEvent[] {
+		if (this.pending === "") return [];
+		const pending = this.pending;
+		this.pending = "";
+		return decodeRegularKeys(pending);
+	}
+
+	private appendPasted(input: string): void {
+		const available = MAX_PASTED_TEXT_LENGTH - this.pasted.length;
+		if (available > 0) this.pasted += input.slice(0, available);
+	}
 }
 
 /** Decode one complete chunk of raw terminal input into its key events. */
 export function decodeKeys(input: string): KeyEvent[] {
-	return new KeyDecoder().push(input);
+	const decoder = new KeyDecoder();
+	return [...decoder.push(input), ...decoder.flush()];
 }
 
 /** True when the event is Ctrl+C, which must always abandon the board. */

@@ -255,9 +255,14 @@ export async function runGoalBoard(options: GoalBoardRuntimeOptions): Promise<vo
 		projectWatcher?.close();
 		projectWatcher = undefined;
 		try {
-			projectWatcher = watch(projectDirectory, (_event, filename) => {
+			const nextWatcher = watch(projectDirectory, (_event, filename) => {
 				if (filename !== null && basename(filename) !== basename(projectPath)) return;
 				scheduleReload();
+			});
+			projectWatcher = nextWatcher;
+			nextWatcher.on("error", () => {
+				nextWatcher.close();
+				if (projectWatcher === nextWatcher) projectWatcher = undefined;
 			});
 		} catch {
 			projectWatcher = undefined;
@@ -265,10 +270,15 @@ export async function runGoalBoard(options: GoalBoardRuntimeOptions): Promise<vo
 	};
 
 	try {
-		parentWatcher = watch(dirname(projectDirectory), (_event, filename) => {
+		const nextWatcher = watch(dirname(projectDirectory), (_event, filename) => {
 			if (filename !== null && basename(filename) !== basename(projectDirectory)) return;
 			attachProjectWatcher();
 			scheduleReload();
+		});
+		parentWatcher = nextWatcher;
+		nextWatcher.on("error", () => {
+			nextWatcher.close();
+			if (parentWatcher === nextWatcher) parentWatcher = undefined;
 		});
 	} catch {
 		parentWatcher = undefined;
