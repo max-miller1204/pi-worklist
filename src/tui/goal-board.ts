@@ -87,6 +87,7 @@ interface SearchState {
 interface ConfirmState {
 	question: string;
 	intent: BoardIntent;
+	openedByInputBatch?: number;
 }
 
 type BoardMode =
@@ -244,6 +245,7 @@ export class GoalBoard {
 
 	handleKey(key: KeyEvent): BoardIntent | undefined {
 		if (isInterrupt(key)) return { kind: "quit" };
+		if (key.paste && this.mode.kind !== "prompt" && this.mode.kind !== "search") return undefined;
 		if (this.mode.kind === "prompt") return this.handlePromptKey(key, this.mode.prompt);
 		if (this.mode.kind === "search") return this.handleSearchKey(key, this.mode.search);
 		if (this.mode.kind === "confirm") return this.handleConfirmKey(key, this.mode.confirm);
@@ -259,6 +261,13 @@ export class GoalBoard {
 	}
 
 	private handleConfirmKey(key: KeyEvent, confirm: ConfirmState): BoardIntent | undefined {
+		if (
+			key.inputBatch !== undefined &&
+			confirm.openedByInputBatch !== undefined &&
+			key.inputBatch === confirm.openedByInputBatch
+		) {
+			return undefined;
+		}
 		if (key.char === "y" || key.char === "Y") {
 			this.mode = { kind: "browse" };
 			return confirm.intent;
@@ -379,9 +388,10 @@ export class GoalBoard {
 			return undefined;
 		}
 		if (key.char === "/") {
+			const cells = toCellArray(this.query);
 			this.mode = {
 				kind: "search",
-				search: { cells: toCellArray(this.query), cursor: this.query.length, previousQuery: this.query },
+				search: { cells, cursor: cells.length, previousQuery: this.query },
 			};
 			return undefined;
 		}
@@ -456,21 +466,22 @@ export class GoalBoard {
 	private handleGoalKey(key: KeyEvent): BoardIntent | undefined {
 		const goal = this.selectedGoal;
 		if (!goal) return undefined;
-		if (key.name === "space") return this.advance(goal);
+		if (key.name === "space") return this.advance(goal, key.inputBatch);
 		if (key.char === "s") return this.activate(goal);
 		if (key.char === "e") {
 			this.openRenamePrompt(goal);
 			return undefined;
 		}
 		if (key.char === "E") return { kind: "edit-description", goal };
-		if (key.char === "c") return this.confirmLifecycle(goal, "complete");
-		if (key.char === "r") return this.confirmLifecycle(goal, "reopen");
-		if (key.char === "x") return this.confirmLifecycle(goal, "archive");
+		if (key.char === "c") return this.confirmLifecycle(goal, "complete", key.inputBatch);
+		if (key.char === "r") return this.confirmLifecycle(goal, "reopen", key.inputBatch);
+		if (key.char === "x") return this.confirmLifecycle(goal, "archive", key.inputBatch);
 		if (key.char === "d") {
 			this.mode = {
 				kind: "confirm",
 				confirm: {
 					question: `Permanently delete ${quoteTitle(goal.title)}? This cannot be undone.`,
+					openedByInputBatch: key.inputBatch,
 					intent: {
 						kind: "operation",
 						operation: { scope: "project", action: "delete", id: goal.id, confirm: true },
@@ -527,10 +538,10 @@ export class GoalBoard {
 	}
 
 	/** Mirror Pi's dashboard: open activates, active completes, anything settled reopens. */
-	private advance(goal: ProjectGoal): BoardIntent | undefined {
+	private advance(goal: ProjectGoal, inputBatch?: number): BoardIntent | undefined {
 		if (goal.status === "open") return this.activate(goal);
-		if (goal.status === "active") return this.confirmLifecycle(goal, "complete");
-		return this.confirmLifecycle(goal, "reopen");
+		if (goal.status === "active") return this.confirmLifecycle(goal, "complete", inputBatch);
+		return this.confirmLifecycle(goal, "reopen", inputBatch);
 	}
 
 	private activate(goal: ProjectGoal): BoardIntent | undefined {
@@ -554,12 +565,14 @@ export class GoalBoard {
 	private confirmLifecycle(
 		goal: ProjectGoal,
 		action: "complete" | "reopen" | "archive",
+		openedByInputBatch?: number,
 	): BoardIntent | undefined {
 		const outcome = action === "complete" ? "done" : action === "reopen" ? "open" : "archived";
 		this.mode = {
 			kind: "confirm",
 			confirm: {
 				question: `${action[0].toUpperCase()}${action.slice(1)} ${quoteTitle(goal.title)}?`,
+				openedByInputBatch,
 				intent: {
 					kind: "operation",
 					operation: { scope: "project", action, id: goal.id, confirm: true },

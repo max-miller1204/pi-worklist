@@ -1,6 +1,9 @@
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
-import { decodeKeys, isInterrupt } from "../src/tui/keys.ts";
+import { decodeKeys, isInterrupt, KeyDecoder } from "../src/tui/keys.ts";
 import { createPalette, supportsColor } from "../src/tui/style.ts";
+import { Terminal } from "../src/tui/terminal.ts";
 import { fitToWidth, singleLine, truncateToWidth, visibleWidth, wrapText } from "../src/tui/text.ts";
 
 const ESC = "\u001b";
@@ -156,6 +159,37 @@ describe("key decoding", () => {
 
 	it("keeps ordering across mixed control and printable input", () => {
 		expect(decodeKeys(`a${ESC}[Ab\r`).map((key) => key.name)).toEqual(["char", "up", "char", "enter"]);
+	});
+
+	it("marks bracketed paste as text across input chunks", () => {
+		const decoder = new KeyDecoder();
+		expect(decoder.push(`${ESC}[200~pas`)).toEqual([]);
+		const keys = decoder.push(`ted${ESC}[201~`);
+		expect(keys.map((key) => key.char)).toEqual(["p", "a", "s", "t", "e", "d"]);
+		expect(keys.every((key) => key.paste)).toBe(true);
+	});
+});
+
+describe("terminal rendering", () => {
+	it("strips terminal controls while preserving generated SGR styling", () => {
+		const input = new PassThrough();
+		const chunks: string[] = [];
+		const output = Object.assign(new EventEmitter(), {
+			columns: 80,
+			rows: 6,
+			write: (chunk: string) => chunks.push(chunk),
+		});
+		const terminal = new Terminal({ input, output });
+		terminal.open();
+		terminal.render({
+			lines: [`${ESC}[31mred${ESC}[39m ${ESC}]0;owned\u0007title ${ESC}[5nprobe`],
+		});
+		terminal.close();
+
+		const rendered = chunks.join("");
+		expect(rendered).toContain(`${ESC}[31mred${ESC}[39m`);
+		expect(rendered).not.toContain(`${ESC}]0;owned`);
+		expect(rendered).not.toContain(`${ESC}[5n`);
 	});
 });
 

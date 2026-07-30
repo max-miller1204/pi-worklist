@@ -130,12 +130,14 @@ describe("goal board runtime", () => {
 		await seed(root, ["set_active", goalId]);
 
 		const refused = await openBoard(root);
-		refused.send("cnq");
+		refused.send("c");
+		refused.send("nq");
 		await refused.done;
 		expect((await refused.goals())[0].status, "n must not complete the goal").toBe("active");
 
 		const accepted = await openBoard(root);
-		accepted.send("cyq");
+		accepted.send("c");
+		accepted.send("yq");
 		await accepted.done;
 		expect((await accepted.goals())[0].status).toBe("done");
 	});
@@ -145,14 +147,39 @@ describe("goal board runtime", () => {
 		await seed(root, ["add", "Throwaway"]);
 
 		const refused = await openBoard(root);
-		refused.send(`d${ESC}q`);
+		refused.send("d");
+		refused.send(`${ESC}q`);
 		await refused.done;
 		expect(await refused.goals()).toHaveLength(1);
 
 		const accepted = await openBoard(root);
-		accepted.send("dyq");
+		accepted.send("d");
+		accepted.send("yq");
 		await accepted.done;
 		expect(await accepted.goals()).toHaveLength(0);
+	});
+
+	it("does not accept confirmation from the input chunk that opened it", async () => {
+		const root = await tempGitRepo();
+		await seed(root, ["add", "Keep this"]);
+		const board = await openBoard(root);
+
+		board.send("dy");
+		board.send("nq");
+		await board.done;
+
+		expect(await board.goals()).toHaveLength(1);
+	});
+
+	it("treats bracketed paste as editor text, never browse commands", async () => {
+		const root = await tempGitRepo();
+		await seed(root, ["add", "Keep this"]);
+		const board = await openBoard(root);
+
+		board.send(`${ESC}[200~dy${ESC}[201~a${ESC}[200~Pasted title${ESC}[201~\rq`);
+		await board.done;
+
+		expect((await board.goals()).map((goal) => goal.title)).toEqual(["Keep this", "Pasted title"]);
 	});
 
 	it("renames a goal without touching its description", async () => {
@@ -201,6 +228,20 @@ describe("goal board runtime", () => {
 		await board.done;
 	});
 
+	it("starts live reload when another process creates the missing .pi directory", async () => {
+		const root = await tempGitRepo();
+		const board = await openBoard(root);
+
+		await seed(root, ["add", "Created after the board opened"]);
+		await waitFor(
+			() => board.output.text.includes("Created after the board opened"),
+			"the first externally added goal to appear",
+		);
+
+		board.send("q");
+		await board.done;
+	});
+
 	it("edits a description through $EDITOR and stores the result", async () => {
 		const root = await tempGitRepo();
 		await seed(root, ["add", "Needs detail"]);
@@ -238,6 +279,8 @@ describe("goal board runtime", () => {
 		expect(raw, "must leave the alternate buffer").toContain(`${ESC}[?1049l`);
 		expect(raw, "must restore the cursor").toContain(`${ESC}[?25h`);
 		expect(raw, "must restore auto-wrap").toContain(`${ESC}[?7h`);
+		expect(raw, "must enable bracketed paste").toContain(`${ESC}[?2004h`);
+		expect(raw, "must disable bracketed paste").toContain(`${ESC}[?2004l`);
 	});
 
 	it("quits on ctrl+c", async () => {

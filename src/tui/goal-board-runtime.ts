@@ -117,7 +117,8 @@ export async function runGoalBoard(options: GoalBoardRuntimeOptions): Promise<vo
 	let running = true;
 	let renderScheduled = false;
 	let work: Promise<void> = Promise.resolve();
-	let watcher: FSWatcher | undefined;
+	let projectWatcher: FSWatcher | undefined;
+	let parentWatcher: FSWatcher | undefined;
 	let reloadTimer: NodeJS.Timeout | undefined;
 	let finish: () => void = () => {};
 	const finished = new Promise<void>((resolvePromise) => {
@@ -191,7 +192,8 @@ export async function runGoalBoard(options: GoalBoardRuntimeOptions): Promise<vo
 		if (!running) return;
 		running = false;
 		if (reloadTimer) clearTimeout(reloadTimer);
-		watcher?.close();
+		projectWatcher?.close();
+		parentWatcher?.close();
 		terminal.close();
 		finish();
 	};
@@ -236,23 +238,42 @@ export async function runGoalBoard(options: GoalBoardRuntimeOptions): Promise<vo
 	terminal.open();
 	draw();
 
+	const scheduleReload = (): void => {
+		if (reloadTimer) clearTimeout(reloadTimer);
+		reloadTimer = setTimeout(() => {
+			work = work
+				.then(reload)
+				.catch(() => {})
+				.finally(scheduleRender);
+		}, RELOAD_DEBOUNCE_MS);
+	};
+
 	// Another Pi session or CLI call may rewrite the file underneath the board.
 	// The file is replaced by rename, so the directory is what must be watched.
+	const projectDirectory = dirname(projectPath);
+	const attachProjectWatcher = (): void => {
+		projectWatcher?.close();
+		projectWatcher = undefined;
+		try {
+			projectWatcher = watch(projectDirectory, (_event, filename) => {
+				if (filename !== null && basename(filename) !== basename(projectPath)) return;
+				scheduleReload();
+			});
+		} catch {
+			projectWatcher = undefined;
+		}
+	};
+
 	try {
-		watcher = watch(dirname(projectPath), (_event, filename) => {
-			if (filename !== null && basename(filename) !== basename(projectPath)) return;
-			if (reloadTimer) clearTimeout(reloadTimer);
-			reloadTimer = setTimeout(() => {
-				work = work
-					.then(reload)
-					.catch(() => {})
-					.finally(scheduleRender);
-			}, RELOAD_DEBOUNCE_MS);
+		parentWatcher = watch(dirname(projectDirectory), (_event, filename) => {
+			if (filename !== null && basename(filename) !== basename(projectDirectory)) return;
+			attachProjectWatcher();
+			scheduleReload();
 		});
 	} catch {
-		// Live refresh is a convenience; the board still reloads after its own
-		// mutations and on demand with R.
+		parentWatcher = undefined;
 	}
+	attachProjectWatcher();
 
 	try {
 		await finished;

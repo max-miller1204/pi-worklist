@@ -225,6 +225,12 @@ describe("goal board navigation", () => {
 		expect(plainFrame(board)[0]).toContain("/focus mode");
 	});
 
+	it("reopens a grapheme search with its cursor in bounds", () => {
+		const board = createBoard();
+		press(board, "/🚀\r/");
+		expect(() => board.render(100, 20)).not.toThrow();
+	});
+
 	it("abandons a refined search back to the committed query", () => {
 		const board = createBoard();
 		press(board, "/focus\r");

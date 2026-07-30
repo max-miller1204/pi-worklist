@@ -10,6 +10,8 @@
 const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 const ESCAPE_CHARACTER = "\u001b";
+const BRACKETED_PASTE_START = `${ESCAPE_CHARACTER}[200~`;
+const BRACKETED_PASTE_END = `${ESCAPE_CHARACTER}[201~`;
 
 export type KeyName =
 	| "up"
@@ -39,6 +41,10 @@ export interface KeyEvent {
 	shift: boolean;
 	/** The typed grapheme, present for `char` and `space`. */
 	char?: string;
+	/** True when the terminal identified this event as pasted text. */
+	paste?: boolean;
+	/** Identifies the raw input read that delivered this event. */
+	inputBatch?: number;
 }
 
 /** Final byte of a CSI sequence to the key it represents. */
@@ -145,8 +151,7 @@ function isControlCode(code: number): boolean {
 	return code < 0x20 || code === 0x7f;
 }
 
-/** Decode one chunk of raw terminal input into the key events it contains. */
-export function decodeKeys(input: string): KeyEvent[] {
+function decodeRegularKeys(input: string): KeyEvent[] {
 	const events: KeyEvent[] = [];
 	let index = 0;
 	while (index < input.length) {
@@ -178,6 +183,85 @@ export function decodeKeys(input: string): KeyEvent[] {
 		index = end;
 	}
 	return events;
+}
+
+function decodePastedText(input: string): KeyEvent[] {
+	const normalized = input
+		.replace(/\r\n?/g, "\n")
+		.replace(/[\n\t]/g, " ")
+		// biome-ignore lint/suspicious/noControlCharactersInRegex: pasted controls must not become commands.
+		.replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
+	return [...GRAPHEME_SEGMENTER.segment(normalized)].map(({ segment }) => ({
+		name: segment === " " ? "space" : "char",
+		sequence: segment,
+		ctrl: false,
+		alt: false,
+		shift: false,
+		char: segment,
+		paste: true,
+	}));
+}
+
+function partialPasteStartLength(input: string): number {
+	for (
+		let length = Math.min(input.length, BRACKETED_PASTE_START.length - 1);
+		length >= 2;
+		length -= 1
+	) {
+		if (BRACKETED_PASTE_START.startsWith(input.slice(-length))) return length;
+	}
+	return 0;
+}
+
+export class KeyDecoder {
+	private pending = "";
+	private pasted = "";
+	private inPaste = false;
+
+	push(input: string): KeyEvent[] {
+		let remaining = this.pending + input;
+		this.pending = "";
+		const events: KeyEvent[] = [];
+
+		while (remaining !== "") {
+			if (this.inPaste) {
+				const end = remaining.indexOf(BRACKETED_PASTE_END);
+				if (end < 0) {
+					this.pasted += remaining;
+					return events;
+				}
+				this.pasted += remaining.slice(0, end);
+				events.push(...decodePastedText(this.pasted));
+				this.pasted = "";
+				this.inPaste = false;
+				remaining = remaining.slice(end + BRACKETED_PASTE_END.length);
+				continue;
+			}
+
+			const start = remaining.indexOf(BRACKETED_PASTE_START);
+			if (start >= 0) {
+				events.push(...decodeRegularKeys(remaining.slice(0, start)));
+				remaining = remaining.slice(start + BRACKETED_PASTE_START.length);
+				this.inPaste = true;
+				continue;
+			}
+
+			const partialLength = partialPasteStartLength(remaining);
+			if (partialLength > 0) {
+				this.pending = remaining.slice(-partialLength);
+				remaining = remaining.slice(0, -partialLength);
+			}
+			events.push(...decodeRegularKeys(remaining));
+			return events;
+		}
+
+		return events;
+	}
+}
+
+/** Decode one complete chunk of raw terminal input into its key events. */
+export function decodeKeys(input: string): KeyEvent[] {
+	return new KeyDecoder().push(input);
 }
 
 /** True when the event is Ctrl+C, which must always abandon the board. */

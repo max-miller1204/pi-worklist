@@ -1,5 +1,5 @@
 import type { KeyEvent } from "./keys.ts";
-import { decodeKeys } from "./keys.ts";
+import { KeyDecoder } from "./keys.ts";
 import { fitToWidth } from "./text.ts";
 
 /**
@@ -26,6 +26,11 @@ const ENABLE_AUTO_WRAP = `${CSI}?7h`;
 const CLEAR_SCREEN = `${CSI}2J`;
 const CLEAR_LINE = `${CSI}2K`;
 const RESET_STYLE = `${CSI}0m`;
+const ENABLE_BRACKETED_PASTE = `${CSI}?2004h`;
+const DISABLE_BRACKETED_PASTE = `${CSI}?2004l`;
+
+// biome-ignore lint/suspicious/noControlCharactersInRegex: only SGR escapes are safe frame content.
+const SGR_AT_START = /^\u001b\[[0-9;]*m/;
 
 const DEFAULT_COLUMNS = 80;
 const DEFAULT_ROWS = 24;
@@ -71,14 +76,18 @@ export class Terminal {
 	private readonly fallbackSize: { columns: number; rows: number };
 	private readonly keyHandlers: Array<(key: KeyEvent) => void> = [];
 	private readonly resizeHandlers: Array<() => void> = [];
+	private readonly keyDecoder = new KeyDecoder();
 	private previousLines: string[] = [];
 	private previousCursor: CursorPosition | undefined;
 	private active = false;
 	private rawModeApplied = false;
+	private inputBatch = 0;
 
 	private readonly onData = (chunk: string | Buffer): void => {
 		const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
-		for (const key of decodeKeys(text)) {
+		this.inputBatch += 1;
+		for (const decoded of this.keyDecoder.push(text)) {
+			const key = { ...decoded, inputBatch: this.inputBatch };
 			// Handlers may close the terminal, so re-check between deliveries.
 			if (!this.active) return;
 			for (const handler of [...this.keyHandlers]) handler(key);
@@ -126,7 +135,7 @@ export class Terminal {
 		process.once("exit", this.onProcessExit);
 
 		this.output.write(
-			`${ENTER_ALTERNATE_BUFFER}${HIDE_CURSOR}${DISABLE_AUTO_WRAP}${RESET_STYLE}${CLEAR_SCREEN}`,
+			`${ENTER_ALTERNATE_BUFFER}${HIDE_CURSOR}${DISABLE_AUTO_WRAP}${ENABLE_BRACKETED_PASTE}${RESET_STYLE}${CLEAR_SCREEN}`,
 		);
 	}
 
@@ -146,7 +155,9 @@ export class Terminal {
 			this.rawModeApplied = false;
 		}
 		this.input.pause();
-		this.output.write(`${RESET_STYLE}${ENABLE_AUTO_WRAP}${SHOW_CURSOR}${LEAVE_ALTERNATE_BUFFER}`);
+		this.output.write(
+			`${RESET_STYLE}${DISABLE_BRACKETED_PASTE}${ENABLE_AUTO_WRAP}${SHOW_CURSOR}${LEAVE_ALTERNATE_BUFFER}`,
+		);
 	}
 
 	onKey(handler: (key: KeyEvent) => void): void {
@@ -166,7 +177,9 @@ export class Terminal {
 		if (!this.active) return;
 		const columns = this.columns;
 		const rows = this.rows;
-		const next = frame.lines.slice(0, rows).map((line) => fitToWidth(line, columns));
+		const next = frame.lines
+			.slice(0, rows)
+			.map((line) => fitToWidth(sanitizeFrameLine(line), columns));
 		while (next.length < rows) next.push(" ".repeat(columns));
 
 		let output = "";
@@ -206,7 +219,9 @@ export class Terminal {
 				this.rawModeApplied = false;
 			}
 			this.input.pause();
-			this.output.write(`${RESET_STYLE}${ENABLE_AUTO_WRAP}${SHOW_CURSOR}${LEAVE_ALTERNATE_BUFFER}`);
+			this.output.write(
+				`${RESET_STYLE}${DISABLE_BRACKETED_PASTE}${ENABLE_AUTO_WRAP}${SHOW_CURSOR}${LEAVE_ALTERNATE_BUFFER}`,
+			);
 		}
 		try {
 			return await action();
@@ -220,11 +235,29 @@ export class Terminal {
 				this.input.resume();
 				this.input.on("data", this.onData);
 				this.output.write(
-					`${ENTER_ALTERNATE_BUFFER}${HIDE_CURSOR}${DISABLE_AUTO_WRAP}${RESET_STYLE}${CLEAR_SCREEN}`,
+					`${ENTER_ALTERNATE_BUFFER}${HIDE_CURSOR}${DISABLE_AUTO_WRAP}${ENABLE_BRACKETED_PASTE}${RESET_STYLE}${CLEAR_SCREEN}`,
 				);
 				this.previousLines = [];
 				this.previousCursor = undefined;
 			}
 		}
 	}
+}
+
+function sanitizeFrameLine(line: string): string {
+	let output = "";
+	for (let index = 0; index < line.length; index += 1) {
+		const code = line.charCodeAt(index);
+		if (code === 0x1b) {
+			const sgr = SGR_AT_START.exec(line.slice(index));
+			if (sgr) {
+				output += sgr[0];
+				index += sgr[0].length - 1;
+			}
+			continue;
+		}
+		if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) continue;
+		output += line[index];
+	}
+	return output;
 }
