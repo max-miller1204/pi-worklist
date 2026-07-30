@@ -1,4 +1,5 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, it } from "vitest";
 import { parseTasksCommand, WORKLIST_PROMPT_GUIDELINES } from "../src/extension.ts";
 import type { ProjectGoal, SessionTask } from "../src/types.ts";
@@ -6,6 +7,7 @@ import {
 	buildPromptSummary,
 	buildWidgetLines,
 	Dashboard,
+	DashboardDetail,
 	type DashboardResult,
 	type DashboardState,
 } from "../src/ui.ts";
@@ -122,6 +124,18 @@ function dashboardInput(
 }
 
 describe("dashboard ordering controls", () => {
+	it("opens details with Enter and reserves Space for status changes", () => {
+		const state: DashboardState = { scope: "project", selectedId: "g1" };
+		expect(dashboardInput("\r", state)).toEqual({
+			action: { kind: "view", scope: "project", id: "g1" },
+			state,
+		});
+		expect(dashboardInput(" ", state)).toEqual({
+			action: { kind: "advance", scope: "project", id: "g1" },
+			state,
+		});
+	});
+
 	it("inserts before the selected Session Task and appends separately", () => {
 		const state: DashboardState = { scope: "session", selectedId: "t3" };
 		expect(dashboardInput("i", state)).toEqual({
@@ -160,6 +174,72 @@ describe("dashboard ordering controls", () => {
 			action: { kind: "add", scope: "project" },
 			state,
 		});
+	});
+});
+
+describe("dashboard detail view", () => {
+	const theme = {
+		fg: (_color: string, text: string) => text,
+		bold: (text: string) => text,
+	} as Theme;
+
+	it("wraps and displays the complete Project Goal description", () => {
+		const goal = {
+			...goals[0],
+			description:
+				"A complete description that should wrap across several terminal lines without being truncated or hidden.\n\nSecond paragraph remains separate.",
+		};
+		const detail = new DashboardDetail({
+			item: { scope: "project", goal },
+			theme,
+			terminalRows: () => 40,
+			done: () => {},
+		});
+		const lines = detail.render(42);
+		const output = lines.join("\n");
+
+		expect(output).toContain("Project Goal Details");
+		expect(output).toContain("A complete description that should");
+		expect(output).toContain("wrap across several terminal lines");
+		expect(output).toContain("Second paragraph remains separate.");
+		expect(output).toContain(goal.id);
+		expect(lines.every((line) => visibleWidth(line) <= 42)).toBe(true);
+	});
+
+	it("shows the associated Project Goal details for a Session Task", () => {
+		const task = { ...tasks[1], goalId: goals[0].id };
+		const detail = new DashboardDetail({
+			item: { scope: "session", task, goal: goals[0] },
+			theme,
+			terminalRows: () => 40,
+			done: () => {},
+		});
+		const output = detail.render(60).join("\n");
+
+		expect(output).toContain("Session Task Details");
+		expect(output).toContain("Associated Project Goal");
+		expect(output).toContain(goals[0].description);
+	});
+
+	it("scrolls long details and closes with Escape", () => {
+		let closed = false;
+		const goal = { ...goals[0], description: "line ".repeat(200) };
+		const detail = new DashboardDetail({
+			item: { scope: "project", goal },
+			theme,
+			terminalRows: () => 12,
+			done: () => {
+				closed = true;
+			},
+		});
+		const before = detail.render(42).join("\n");
+		detail.handleInput("\u001b[B");
+		const after = detail.render(42).join("\n");
+		detail.handleInput("\u001b");
+
+		expect(before).not.toBe(after);
+		expect(after).toContain("above");
+		expect(closed).toBe(true);
 	});
 });
 

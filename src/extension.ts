@@ -16,6 +16,8 @@ import {
 	buildWidgetLines,
 	Dashboard,
 	type DashboardAction,
+	DashboardDetail,
+	type DashboardDetailItem,
 	type DashboardResult,
 	type DashboardState,
 } from "./ui.ts";
@@ -198,8 +200,46 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 		},
 	});
 
+	function findDashboardDetailItem(
+		action: Extract<DashboardAction, { kind: "view" }>,
+	): DashboardDetailItem | undefined {
+		if (action.scope === "project") {
+			const goal = projectGoals.find((candidate) => candidate.id === action.id);
+			return goal ? { scope: "project", goal } : undefined;
+		}
+		const task = applicationService.getSessionTasks().find((candidate) => candidate.id === action.id);
+		if (!task) return undefined;
+		const goal = task.goalId ? projectGoals.find((candidate) => candidate.id === task.goalId) : undefined;
+		return { scope: "session", task, ...(goal ? { goal } : {}) };
+	}
+
+	async function showDashboardDetail(item: DashboardDetailItem, ctx: ExtensionContext): Promise<void> {
+		await ctx.ui.custom<void>(
+			(tui, theme, _keys, done) => {
+				const detail = new DashboardDetail({ item, theme, terminalRows: () => tui.terminal.rows, done });
+				return {
+					render: (width) => detail.render(width),
+					invalidate: () => detail.invalidate(),
+					handleInput: (data) => {
+						detail.handleInput(data);
+						tui.requestRender();
+					},
+				};
+			},
+			{
+				overlay: true,
+				overlayOptions: { anchor: "center", width: 96, minWidth: 50, maxHeight: "85%", margin: 1 },
+			},
+		);
+	}
+
 	async function handleDashboardAction(action: DashboardAction, ctx: ExtensionContext): Promise<boolean> {
 		if (action.kind === "close") return false;
+		if (action.kind === "view") {
+			const item = findDashboardDetailItem(action);
+			if (item) await showDashboardDetail(item, ctx);
+			return true;
+		}
 		if (action.kind === "add" || action.kind === "insert") {
 			let inputLabel = action.scope === "session" ? "Add session task" : "Add project goal";
 			if (action.kind === "insert") inputLabel = "Insert session task";
