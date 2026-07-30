@@ -57,7 +57,7 @@ In Session Tasks, `a` appends, `i` inserts before the selected task, and Shift+U
 Project Goals support `a` to add but do not support insertion or reordering.
 In either scope, press Enter to open a detail window, Space to advance status, `e` to edit, `d` to delete, and Escape to close.
 The detail window wraps complete descriptions and metadata instead of truncating them.
-Use Up and Down to scroll long details, then Enter or Escape to return to the dashboard.
+Use Up and Down or `j` and `k` to scroll long details, with Page Up and Page Down for larger jumps, then Enter or Escape to return to the dashboard.
 For a Session Task associated with a Project Goal, the detail window also shows the goal title and full description.
 The dashboard keeps the current list and the selected task across each action, so a moved task stays selected at its new position.
 Session Task edits change the title, while Project Goal edits can also change the description.
