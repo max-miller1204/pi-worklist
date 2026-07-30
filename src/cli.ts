@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { basename } from "node:path";
 import {
 	type WorklistApplicationFailure,
 	type WorklistApplicationResult,
@@ -8,6 +9,7 @@ import {
 import { renderCliUsage } from "./cli-contract.ts";
 import { getWorklistPath, resolveGitRoot } from "./git.ts";
 import { WORKLIST_ERROR_CODES, type WorklistErrorCode } from "./integration-contract.ts";
+import { runGoalBoard } from "./tui/goal-board-runtime.ts";
 import type { ProjectGoal } from "./types.ts";
 
 /**
@@ -74,7 +76,14 @@ function parseArgs(argv: string[]): CliInvocation {
 	return { scope, action, rest, description, json, confirm, cwd };
 }
 
-function resolveProjectPath(invocation: CliInvocation): string {
+interface ProjectLocation {
+	/** Canonical git root, whose basename names the repository in the board header. */
+	root: string;
+	/** Absolute path of `<git-root>/.pi/worklist.json`. */
+	path: string;
+}
+
+function resolveProjectLocation(invocation: CliInvocation): ProjectLocation {
 	const result = resolveGitRoot(invocation.cwd);
 	if (!result.isGit || !result.root) {
 		throw new WorklistCliFailure({
@@ -90,7 +99,7 @@ function resolveProjectPath(invocation: CliInvocation): string {
 			meta: { changed: false, semanticNoOp: false, changedFields: [] },
 		});
 	}
-	return getWorklistPath(result.root);
+	return { root: result.root, path: getWorklistPath(result.root) };
 }
 
 function requireId(invocation: CliInvocation): string {
@@ -197,6 +206,41 @@ async function runSetActive(invocation: CliInvocation, service: WorklistApplicat
 	}
 }
 
+/**
+ * Open the full-screen goal board.
+ *
+ * The board owns the terminal, so it is refused wherever there is no human to
+ * drive it: piped output, CI, and agent shells all fall back to `list`, which is
+ * the machine-readable read path.
+ */
+async function runInteractiveBoard(
+	invocation: CliInvocation,
+	service: WorklistApplicationService,
+	location: ProjectLocation,
+): Promise<void> {
+	if (invocation.json) {
+		fail(`project ui is interactive and cannot be combined with --json\n\n${USAGE}`, 2);
+	}
+	if (!process.stdin.isTTY || !process.stdout.isTTY) {
+		fail(
+			"project ui needs an interactive terminal. Use 'pi-worklist project list --json' in scripts and agents.",
+			1,
+		);
+	}
+	// Surface a malformed or unreadable worklist through the normal failure path
+	// rather than opening an empty board over a file that could not be read.
+	const envelope = await executeCliOperation(service, { scope: "project", action: "list" });
+	await runGoalBoard({
+		service,
+		projectPath: location.path,
+		repositoryLabel: basename(location.root),
+		initialGoals: (envelope.ok ? envelope.result.goals : undefined) ?? [],
+		input: process.stdin,
+		output: process.stdout,
+		env: process.env,
+	});
+}
+
 async function run(invocation: CliInvocation): Promise<void> {
 	if (invocation.scope !== "project") {
 		if (invocation.scope === "session") {
@@ -208,9 +252,13 @@ async function run(invocation: CliInvocation): Promise<void> {
 		process.stdout.write(`${USAGE}\n`);
 		return;
 	}
-	const service = new WorklistApplicationService({ projectPath: resolveProjectPath(invocation) });
+	const location = resolveProjectLocation(invocation);
+	const service = new WorklistApplicationService({ projectPath: location.path });
 
 	switch (invocation.action) {
+		case "ui":
+			await runInteractiveBoard(invocation, service, location);
+			return;
 		case "list": {
 			const envelope = await executeCliOperation(service, { scope: "project", action: "list" });
 			const goals = (envelope.ok ? envelope.result.goals : undefined) ?? [];

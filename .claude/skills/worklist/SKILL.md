@@ -27,6 +27,7 @@ Actions:
 ```text
 list
 show <id>
+ui
 add <title...> [-- <description...>]
 update <id> [title...] [-- <description...>]
 set_active <id>
@@ -70,6 +71,9 @@ The full generated command reference lives in the package's `docs/cli.md`, rende
 - Exit code 3 (confirmation required) means the command needs `--confirm`; stop and ask the user instead of retrying with the flag.
 - Exit code 4 (conflict) means a concurrent change conflicted with yours; re-read current state with `list` or `show` before retrying.
 - `list`, `show`, `add`, `update`, and `set_active` are safe to run whenever they serve the user's request.
+- `ui` opens a full-screen board for the human at the keyboard, not for you.
+  Never run it: it holds the terminal until the user quits, and it exits with an error when stdin or stdout is not a terminal.
+  Suggest `npx -y pi-worklist project ui` when the user wants to browse or edit goals themselves; read state with `list` and `show` instead.
 - Session Tasks cannot be managed from outside a Pi session; the CLI intentionally rejects `session` scope.
   For your own in-session tracking, use your normal task tools instead.
 

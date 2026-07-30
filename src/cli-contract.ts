@@ -13,6 +13,8 @@ export interface CliActionContract {
 	summary: string;
 	/** Requires --confirm and an explicit user request. */
 	confirmRequired?: boolean;
+	/** Takes over the terminal until the user quits; agents must never run it. */
+	interactive?: boolean;
 }
 
 export interface CliFlagContract {
@@ -63,6 +65,12 @@ export const CLI_COMMAND_CONTRACT = {
 			name: "show",
 			usage: "show <id>",
 			summary: "Show one goal with its full description",
+		},
+		{
+			name: "ui",
+			usage: "ui",
+			summary: "Open the interactive goal board for a human at the keyboard",
+			interactive: true,
 		},
 		{
 			name: "add",
@@ -135,6 +143,7 @@ export const CLI_COMMAND_CONTRACT = {
 	] satisfies CliExitCodeContract[],
 	agentGuidelines: [
 		"Prefer --json and read the deterministic result envelope instead of parsing human output.",
+		"Never run ui: it is an interactive board for a human, it holds the terminal until they quit, and it refuses to start without one.",
 		"Never pass --confirm for complete, reopen, archive, or delete unless the user explicitly requested that exact action.",
 		"Treat exit code 3 as a request for explicit user confirmation, not as a retryable failure.",
 		"Treat exit code 4 as a concurrent-change conflict: re-read current state before retrying.",
@@ -192,7 +201,10 @@ export function renderCliUsage(): string {
 export function renderSkillMarkdown(): string {
 	const contract = CLI_COMMAND_CONTRACT;
 	const lifecycleActions = contract.actions.filter((action) => action.confirmRequired);
-	const safeActions = contract.actions.filter((action) => !action.confirmRequired && action.name !== "help");
+	const safeActions = contract.actions.filter(
+		(action) => !action.confirmRequired && !action.interactive && action.name !== "help",
+	);
+	const interactiveActions = contract.actions.filter((action) => action.interactive);
 	// A generated ID in the real `goal-<base36 time>-<8 hex>` shape, so the examples
 	// show what `list` and `add` actually hand back rather than a placeholder.
 	const exampleId = "goal-ms6gwxrg-56c1bde6";
@@ -261,6 +273,9 @@ export function renderSkillMarkdown(): string {
 		`- Exit code 3 (${exitCodeMeaning(3)}) means the command needs \`--confirm\`; stop and ask the user instead of retrying with the flag.`,
 		`- Exit code 4 (${exitCodeMeaning(4)}) means a concurrent change conflicted with yours; re-read current state with \`list\` or \`show\` before retrying.`,
 		`- ${actionNameList(safeActions)} are safe to run whenever they serve the user's request.`,
+		`- ${actionNameList(interactiveActions)} opens a full-screen board for the human at the keyboard, not for you.`,
+		"  Never run it: it holds the terminal until the user quits, and it exits with an error when stdin or stdout is not a terminal.",
+		`  Suggest \`npx -y ${contract.binary} ${contract.scope} ui\` when the user wants to browse or edit goals themselves; read state with \`list\` and \`show\` instead.`,
 		"- Session Tasks cannot be managed from outside a Pi session; the CLI intentionally rejects `session` scope.",
 		"  For your own in-session tracking, use your normal task tools instead.",
 		"",
@@ -278,10 +293,13 @@ export function renderSkillMarkdown(): string {
 /** The generated command reference and agent guidance document, written to docs/cli.md. */
 export function renderCliGuide(): string {
 	const contract = CLI_COMMAND_CONTRACT;
-	const actionRows = contract.actions.map(
-		(action) =>
-			`| \`${contract.binary} ${contract.scope} ${action.usage}\` | ${action.summary}${action.confirmRequired ? ". Requires explicit user confirmation" : ""} |`,
-	);
+	const actionRows = contract.actions.map((action) => {
+		const notes = [
+			action.confirmRequired ? ". Requires explicit user confirmation" : "",
+			action.interactive ? ". Requires a terminal; not for scripts or agents" : "",
+		].join("");
+		return `| \`${contract.binary} ${contract.scope} ${action.usage}\` | ${action.summary}${notes} |`;
+	});
 	const flagRows = contract.flags.map((flag) => `| \`${flag.usage}\` | ${flag.summary} |`);
 	const exitCodeRows = contract.exitCodes.map((exitCode) => `| \`${exitCode.code}\` | ${exitCode.meaning} |`);
 	const guidelineLines = contract.agentGuidelines.map((guideline) => `- ${guideline}`);

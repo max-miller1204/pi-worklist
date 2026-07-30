@@ -131,6 +131,7 @@ describe("single CLI command contract", () => {
 		expect(documented).toEqual([
 			"list",
 			"show",
+			"ui",
 			"add",
 			"update",
 			"set_active",

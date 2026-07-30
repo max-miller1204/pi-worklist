@@ -10,6 +10,7 @@ Manage repository-wide Project Goals in <git-root>/.pi/worklist.json through the
 | --- | --- |
 | `pi-worklist project list` | Show a compact bounded list of project goals |
 | `pi-worklist project show <id>` | Show one goal with its full description |
+| `pi-worklist project ui` | Open the interactive goal board for a human at the keyboard. Requires a terminal; not for scripts or agents |
 | `pi-worklist project add <title...> [-- <description...>]` | Add an open goal |
 | `pi-worklist project update <id> [title...] [-- <description...>]` | Edit a goal; "-- " alone clears the description |
 | `pi-worklist project set_active <id>` | Make a goal the single active goal |
@@ -40,6 +41,7 @@ Manage repository-wide Project Goals in <git-root>/.pi/worklist.json through the
 ## Agent guidance
 
 - Prefer --json and read the deterministic result envelope instead of parsing human output.
+- Never run ui: it is an interactive board for a human, it holds the terminal until they quit, and it refuses to start without one.
 - Never pass --confirm for complete, reopen, archive, or delete unless the user explicitly requested that exact action.
 - Treat exit code 3 as a request for explicit user confirmation, not as a retryable failure.
 - Treat exit code 4 as a concurrent-change conflict: re-read current state before retrying.
