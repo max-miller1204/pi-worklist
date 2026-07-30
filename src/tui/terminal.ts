@@ -193,9 +193,7 @@ export class Terminal {
 		if (!this.active) return;
 		const columns = this.columns;
 		const rows = this.rows;
-		const next = frame.lines
-			.slice(0, rows)
-			.map((line) => fitToWidth(sanitizeFrameLine(line), columns));
+		const next = frame.lines.slice(0, rows).map((line) => fitToWidth(sanitizeFrameLine(line), columns));
 		while (next.length < rows) next.push(" ".repeat(columns));
 
 		let output = "";
@@ -223,7 +221,7 @@ export class Terminal {
 	/**
 	 * Hand the terminal back for the duration of `action`, then take it again.
 	 *
-	 * Used to run the user's `$EDITOR`, which needs the normal screen, cooked
+	 * Used to run the user's external editor, which needs the normal screen, cooked
 	 * input, and a visible cursor of its own.
 	 */
 	async suspend<T>(action: () => Promise<T>): Promise<T> {

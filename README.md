@@ -183,7 +183,7 @@ Below about 76 columns the two panes stack instead, and the layout stays aligned
 | `←` `→` or Tab | Move focus between the list and the detail pane |
 | `g` `G`, Page Up, Page Down | Jump to the ends, or page through either pane |
 | Space | Advance: an open goal activates, the active goal completes, a settled goal reopens |
-| `s` | Make the selected goal the single active goal |
+| `s` | Make the selected open goal the single active goal |
 | `a`, `e` | Add a goal, or rename the selected one |
 | `E` | Edit the selected goal's description in `$VISUAL` or `$EDITOR` |
 | `c` `r` `x` `d` | Complete, reopen, archive, or delete the selected goal |

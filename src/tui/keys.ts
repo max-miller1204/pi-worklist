@@ -228,9 +228,7 @@ export class KeyDecoder {
 				const end = remaining.indexOf(BRACKETED_PASTE_END);
 				if (end < 0) {
 					const partialLength = partialMarkerLength(remaining, BRACKETED_PASTE_END);
-					this.appendPasted(
-						partialLength === 0 ? remaining : remaining.slice(0, -partialLength),
-					);
+					this.appendPasted(partialLength === 0 ? remaining : remaining.slice(0, -partialLength));
 					if (partialLength > 0) this.pasteEndPending = remaining.slice(-partialLength);
 					return events;
 				}

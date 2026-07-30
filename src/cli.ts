@@ -210,7 +210,7 @@ async function runSetActive(invocation: CliInvocation, service: WorklistApplicat
  * Open the full-screen goal board.
  *
  * The board owns the terminal, so it is refused wherever there is no human to
- * drive it: piped output, CI, and agent shells all fall back to `list`, which is
+ * drive it: piped output, CI, and agent shells are directed to `list --json`,
  * the machine-readable read path.
  */
 async function runInteractiveBoard(
