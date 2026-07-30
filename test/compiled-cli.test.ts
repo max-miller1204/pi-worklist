@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { glob, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -35,6 +35,36 @@ describe("compiled pi-worklist CLI bin", () => {
 		// Node refuses TypeScript under node_modules; the bin must not need type stripping.
 		expect(compiled).not.toContain('from "./application-service.ts"');
 		expect(compiled).toContain('from "./application-service.js"');
+	});
+
+	it("imports only declared dependencies, never a Pi peer", async () => {
+		// `npx -y pi-worklist` installs the package's own dependencies and nothing
+		// else, so every module the bin reaches at runtime, including the terminal
+		// board, must resolve without a Pi installation present.
+		const manifest = JSON.parse(await readFile(resolve("package.json"), "utf8")) as {
+			dependencies?: Record<string, string>;
+			peerDependencies?: Record<string, string>;
+		};
+		const allowed = new Set(Object.keys(manifest.dependencies ?? {}));
+		expect(Object.keys(manifest.peerDependencies ?? {}).length).toBeGreaterThan(0);
+
+		const compiled: string[] = [];
+		for await (const file of glob("dist/**/*.js")) compiled.push(file);
+		expect(compiled.length).toBeGreaterThan(0);
+
+		const offenders: string[] = [];
+		const sources = await Promise.all(compiled.map(async (file) => [file, await readFile(file, "utf8")]));
+		for (const [file, source] of sources) {
+			for (const match of source.matchAll(/(?:\bfrom|\brequire\()\s*["']([^"']+)["']/g)) {
+				const specifier = match[1];
+				if (specifier.startsWith(".") || specifier.startsWith("node:")) continue;
+				const packageName = specifier.startsWith("@")
+					? specifier.split("/").slice(0, 2).join("/")
+					: specifier.split("/")[0];
+				if (!allowed.has(packageName)) offenders.push(`${file} imports ${specifier}`);
+			}
+		}
+		expect(offenders, "the compiled bin must not depend on an uninstalled peer").toEqual([]);
 	});
 
 	it("runs the full goal lifecycle from the compiled bin", async () => {

@@ -21,6 +21,7 @@ Project Goals track the larger outcomes shared by every Pi session in a Git repo
 - A compact widget shows the active Project Goal and up to three unfinished Session Tasks.
 - The `worklist` model tool manages both scopes through one consistent API.
 - A Pi-free external CLI lets scripts and other agents manage Project Goals without a running Pi session.
+- `pi-worklist project ui` opens a dependency-free terminal board for browsing and editing Project Goals outside Pi.
 - An installable agent skill, generated from the same command contract as the CLI, teaches coding agents to drive that CLI in any repository.
 - Project Goal completion, reopening, archival, and deletion require explicit user intent.
 - Managed Session Task operations accept only existing open or active Project Goal associations and detect edits to the selected goal before reconciliation.
@@ -164,6 +165,36 @@ The complete command reference in [docs/cli.md](docs/cli.md) is generated from `
 In a development checkout, `node src/cli.ts project <action>` runs the same CLI; running the TypeScript entry point directly requires Node 22.18 or newer (for example Node 24), which strips types natively.
 On older Node versions, including the Node 20 floor of the package's `engines` range, the TypeScript entry point fails with an `Unknown file extension ".ts"` error, while the compiled bin has no such requirement.
 Session Tasks are intentionally unavailable here because they live inside a Pi session tree.
+
+## Terminal goal board
+
+`pi-worklist project ui` opens an interactive board over the same Project Goals, so the roadmap can be read and edited from a shell without starting a Pi session:
+
+```sh
+npx -y pi-worklist project ui
+```
+
+The board is a split view: the goal list on the left, the selected goal's status, timestamps, identifier, and complete description on the right.
+Below about 76 columns the two panes stack instead, and the layout stays aligned for titles containing wide or combined characters.
+
+| Key | Action |
+| --- | --- |
+| `↑` `↓` or `j` `k` | Move the selection, or scroll the detail pane once it has focus |
+| `←` `→` or Tab | Move focus between the list and the detail pane |
+| `g` `G`, Page Up, Page Down | Jump to the ends, or page through either pane |
+| Space | Advance: an open goal activates, the active goal completes, a settled goal reopens |
+| `s` | Make the selected open goal the single active goal |
+| `a`, `e` | Add a goal, or rename the selected one |
+| `E` | Edit the selected goal's description in `$VISUAL` or `$EDITOR` |
+| `c` `r` `x` `d` | Complete, reopen, archive, or delete the selected goal |
+| `f`, `/` | Cycle the status filter, or search titles and descriptions |
+| `R`, `?`, `q` | Reload from disk, show the key map, or quit |
+
+Every change routes through the same application service, cross-process lock, and atomic replacement as `/tasks` and the rest of the CLI, so a Pi session may be open on the same repository at the same time.
+The board reloads automatically when another process writes the file.
+Completing, reopening, archiving, and deleting each ask for confirmation first, and only an explicit `y` proceeds; that answer is the explicit user intent the application service requires.
+The board is drawn with no runtime dependencies, so the compiled bin needs nothing installed but Node.
+It requires a terminal and refuses to start without one, which keeps `list` and `--json` the read path for scripts and agents.
 
 ## Agent skill
 

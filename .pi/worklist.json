@@ -7,7 +7,7 @@
       "description": "Let the user select a Project Goal from the Worklist dashboard and request orchestration through a versioned capability handshake. Show the action only when pi-orchestrator is available, pass the stable goal ID and current goal revision, preserve explicit approval before execution, and keep retry, cancellation, logs, evidence, and run control in the orchestrator rather than duplicating those controls in pi-worklist.",
       "status": "open",
       "createdAt": "2026-07-13T00:00:00.000Z",
-      "updatedAt": "2026-07-24T02:12:07.822Z"
+      "updatedAt": "2026-07-30T20:36:13.993Z"
     },
     {
       "id": "future-promote",
@@ -15,7 +15,7 @@
       "description": "Future feature: manually turn a Session Task into a Project Goal.",
       "status": "open",
       "createdAt": "2026-07-13T00:00:01.000Z",
-      "updatedAt": "2026-07-13T00:00:01.000Z"
+      "updatedAt": "2026-07-30T20:35:56.075Z"
     },
     {
       "id": "future-archive-ui",
@@ -23,7 +23,7 @@
       "description": "Future feature: preserve completed Project Goals without showing them normally.",
       "status": "open",
       "createdAt": "2026-07-13T00:00:02.000Z",
-      "updatedAt": "2026-07-13T00:00:02.000Z"
+      "updatedAt": "2026-07-30T20:35:33.567Z"
     },
     {
       "id": "future-focus",
@@ -31,7 +31,7 @@
       "description": "Future feature: show only Session Tasks linked to the active Project Goal.",
       "status": "open",
       "createdAt": "2026-07-13T00:00:03.000Z",
-      "updatedAt": "2026-07-13T00:00:03.000Z"
+      "updatedAt": "2026-07-30T20:37:09.322Z"
     },
     {
       "id": "goal-mryb1h5b-f5473d74",
@@ -119,7 +119,7 @@
       "description": "Exercise capability negotiation, Project Goal selection, atomic projection reconciliation, deterministic result envelopes, typed conflicts, semantic no-ops, user overrides, /tree, /fork, /clone, /resume, session replacement, recovery, absent or incompatible orchestrator versions, and explicit Project Goal completion boundaries in real Pi integration tests.",
       "status": "open",
       "createdAt": "2026-07-24T18:18:33.265Z",
-      "updatedAt": "2026-07-24T18:18:33.265Z"
+      "updatedAt": "2026-07-30T20:12:46.613Z"
     },
     {
       "id": "goal-mrza1h0o-24e2abdf",
@@ -130,5 +130,5 @@
       "updatedAt": "2026-07-25T18:21:35.554Z"
     }
   ],
-  "revision": 17
+  "revision": 27
 }

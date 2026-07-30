@@ -1,0 +1,344 @@
+import { execFile } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { PassThrough } from "node:stream";
+import { promisify } from "node:util";
+import { describe, expect, it } from "vitest";
+import { WorklistApplicationService } from "../src/application-service.ts";
+import { parseEditorCommand, resolveEditorCommand, runGoalBoard } from "../src/tui/goal-board-runtime.ts";
+import type { ProjectGoal, ProjectWorklist } from "../src/types.ts";
+
+const execFileAsync = promisify(execFile);
+const cliPath = resolve("src/cli.ts");
+const ESC = "\u001b";
+
+/**
+ * End-to-end coverage for the board as a user drives it: real keystrokes in,
+ * real `.pi/worklist.json` out, through the same application service, lock, and
+ * atomic replacement a live Pi session uses.
+ */
+
+class FakeOutput extends EventEmitter {
+	readonly chunks: string[] = [];
+	columns = 100;
+	rows = 26;
+	isTTY = true;
+
+	write(chunk: string): boolean {
+		this.chunks.push(chunk);
+		return true;
+	}
+
+	/** Everything drawn so far, with styling and cursor moves removed. */
+	get text(): string {
+		// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping the ESC byte is the point here.
+		return this.chunks.join("").replace(/\u001b\[[0-9;?]*[a-zA-Z]/g, "");
+	}
+}
+
+interface Harness {
+	root: string;
+	projectPath: string;
+	input: PassThrough;
+	output: FakeOutput;
+	done: Promise<void>;
+	send(keys: string): void;
+	goals(): Promise<ProjectGoal[]>;
+}
+
+async function tempGitRepo(): Promise<string> {
+	const root = await mkdtemp(join(tmpdir(), "pi-worklist-board-"));
+	await execFileAsync("git", ["init", "-q"], { cwd: root });
+	return root;
+}
+
+async function seed(root: string, args: string[]): Promise<void> {
+	await execFileAsync(process.execPath, [cliPath, "project", ...args], { cwd: root });
+}
+
+async function readGoals(root: string): Promise<ProjectGoal[]> {
+	const raw = await readFile(join(root, ".pi", "worklist.json"), "utf8").catch(() => null);
+	if (raw === null) return [];
+	return (JSON.parse(raw) as ProjectWorklist).goals;
+}
+
+async function openBoard(root: string, env: NodeJS.ProcessEnv = {}): Promise<Harness> {
+	const projectPath = join(root, ".pi", "worklist.json");
+	const service = new WorklistApplicationService({ projectPath });
+	const input = new PassThrough();
+	const output = new FakeOutput();
+	const initialGoals = await readGoals(root);
+	const done = runGoalBoard({
+		service,
+		projectPath,
+		repositoryLabel: "fixture",
+		initialGoals,
+		input,
+		output,
+		env,
+	});
+	return {
+		root,
+		projectPath,
+		input,
+		output,
+		done,
+		send: (keys: string) => input.write(keys),
+		goals: () => readGoals(root),
+	};
+}
+
+async function waitFor(check: () => boolean | Promise<boolean>, description: string): Promise<void> {
+	const deadline = Date.now() + 5000;
+	while (Date.now() < deadline) {
+		if (await check()) return;
+		// Polling keeps the assertion independent of internal scheduling.
+		// pi-lens-ignore: await-in-loop
+		await new Promise((settle) => setTimeout(settle, 20));
+	}
+	throw new Error(`Timed out waiting for ${description}`);
+}
+
+describe("goal board runtime", () => {
+	it("adds a goal through the prompt and writes it to the shared project file", async () => {
+		const root = await tempGitRepo();
+		const board = await openBoard(root);
+		board.send("aShip the terminal board\rq");
+		await board.done;
+
+		const goals = await board.goals();
+		expect(goals).toHaveLength(1);
+		expect(goals[0]).toMatchObject({ title: "Ship the terminal board", status: "open" });
+	});
+
+	it("activates an open goal with space, without any confirmation", async () => {
+		const root = await tempGitRepo();
+		await seed(root, ["add", "Replace legacy auth"]);
+		const board = await openBoard(root);
+		board.send(" q");
+		await board.done;
+
+		expect((await board.goals())[0].status).toBe("active");
+	});
+
+	it("completes the active goal only after an explicit yes", async () => {
+		const root = await tempGitRepo();
+		await seed(root, ["add", "Replace legacy auth"]);
+		const goalId = (await readGoals(root))[0].id;
+		await seed(root, ["set_active", goalId]);
+
+		const refused = await openBoard(root);
+		refused.send("c");
+		refused.send("nq");
+		await refused.done;
+		expect((await refused.goals())[0].status, "n must not complete the goal").toBe("active");
+
+		const accepted = await openBoard(root);
+		accepted.send("c");
+		accepted.send("yq");
+		await accepted.done;
+		expect((await accepted.goals())[0].status).toBe("done");
+	});
+
+	it("deletes only after an explicit yes", async () => {
+		const root = await tempGitRepo();
+		await seed(root, ["add", "Throwaway"]);
+
+		const refused = await openBoard(root);
+		refused.send("d");
+		refused.send(`${ESC}q`);
+		await refused.done;
+		expect(await refused.goals()).toHaveLength(1);
+
+		const accepted = await openBoard(root);
+		accepted.send("d");
+		accepted.send("yq");
+		await accepted.done;
+		expect(await accepted.goals()).toHaveLength(0);
+	});
+
+	it("does not accept confirmation from the input chunk that opened it", async () => {
+		const root = await tempGitRepo();
+		await seed(root, ["add", "Keep this"]);
+		const board = await openBoard(root);
+
+		board.send("dy");
+		board.send("nq");
+		await board.done;
+
+		expect(await board.goals()).toHaveLength(1);
+	});
+
+	it("treats bracketed paste as editor text, never browse commands", async () => {
+		const root = await tempGitRepo();
+		await seed(root, ["add", "Keep this"]);
+		const board = await openBoard(root);
+
+		board.send(`${ESC}[200~dy${ESC}[201~a${ESC}[200~Pasted title${ESC}[201~\rq`);
+		await board.done;
+
+		expect((await board.goals()).map((goal) => goal.title)).toEqual(["Keep this", "Pasted title"]);
+	});
+
+	it("renames a goal without touching its description", async () => {
+		const root = await tempGitRepo();
+		await seed(root, ["add", "Old title", "--", "Keep this description"]);
+		const board = await openBoard(root);
+		board.send("e\u0015New title\rq");
+		await board.done;
+
+		expect((await board.goals())[0]).toMatchObject({
+			title: "New title",
+			description: "Keep this description",
+		});
+	});
+
+	it("shows the service error instead of pretending the change landed", async () => {
+		const root = await tempGitRepo();
+		await seed(root, ["add", "Finished work"]);
+		const goalId = (await readGoals(root))[0].id;
+		await seed(root, ["set_active", goalId]);
+		await seed(root, ["complete", goalId, "--confirm"]);
+
+		const board = await openBoard(root);
+		// `s` on a done goal is refused by the service, which asks for a reopen first.
+		board.send("fs");
+		await waitFor(() => board.output.text.includes("reopen"), "the refusal message");
+		board.send("q");
+		await board.done;
+
+		expect((await board.goals())[0].status).toBe("done");
+	});
+
+	it("picks up a change written by another process while the board is open", async () => {
+		const root = await tempGitRepo();
+		await seed(root, ["add", "First goal"]);
+		const board = await openBoard(root);
+		await waitFor(() => board.output.text.includes("First goal"), "the initial render");
+
+		await seed(root, ["add", "Added from another process"]);
+		await waitFor(
+			() => board.output.text.includes("Added from another process"),
+			"the externally added goal to appear",
+		);
+
+		board.send("q");
+		await board.done;
+	});
+
+	it("starts live reload when another process creates the missing .pi directory", async () => {
+		const root = await tempGitRepo();
+		const board = await openBoard(root);
+
+		await seed(root, ["add", "Created after the board opened"]);
+		await waitFor(
+			() => board.output.text.includes("Created after the board opened"),
+			"the first externally added goal to appear",
+		);
+
+		board.send("q");
+		await board.done;
+	});
+
+	it("edits a description through $EDITOR and stores the result", async () => {
+		const root = await tempGitRepo();
+		await seed(root, ["add", "Needs detail"]);
+		const editor = join(root, "fake-editor.sh");
+		await writeFile(editor, "#!/bin/sh\nprintf 'Written by the editor' > \"$1\"\n", "utf8");
+		await chmod(editor, 0o755);
+
+		const board = await openBoard(root, { EDITOR: editor });
+		board.send("E");
+		await waitFor(async () => (await board.goals())[0]?.description !== undefined, "the stored description");
+		board.send("q");
+		await board.done;
+
+		expect((await board.goals())[0].description).toBe("Written by the editor");
+	});
+
+	it("reports a missing editor instead of failing silently", async () => {
+		const root = await tempGitRepo();
+		await seed(root, ["add", "Needs detail"]);
+		const board = await openBoard(root, { PATH: join(root, "empty") });
+		board.send("E");
+		await waitFor(() => board.output.text.includes("$EDITOR"), "the missing editor message");
+		board.send("q");
+		await board.done;
+	});
+
+	it("restores the terminal on exit", async () => {
+		const root = await tempGitRepo();
+		const board = await openBoard(root);
+		board.send("q");
+		await board.done;
+
+		const raw = board.output.chunks.join("");
+		expect(raw, "must enter the alternate buffer").toContain(`${ESC}[?1049h`);
+		expect(raw, "must leave the alternate buffer").toContain(`${ESC}[?1049l`);
+		expect(raw, "must restore the cursor").toContain(`${ESC}[?25h`);
+		expect(raw, "must restore auto-wrap").toContain(`${ESC}[?7h`);
+		expect(raw, "must enable bracketed paste").toContain(`${ESC}[?2004h`);
+		expect(raw, "must disable bracketed paste").toContain(`${ESC}[?2004l`);
+	});
+
+	it("quits on ctrl+c", async () => {
+		const root = await tempGitRepo();
+		const board = await openBoard(root);
+		board.send("\u0003");
+		await board.done;
+		expect(board.output.chunks.join("")).toContain(`${ESC}[?1049l`);
+	});
+});
+
+describe("editor resolution", () => {
+	it("splits a configured command into argv, honoring quotes", () => {
+		expect(parseEditorCommand("code --wait")).toEqual(["code", "--wait"]);
+		expect(parseEditorCommand('"/opt/my editor/bin" -f')).toEqual(["/opt/my editor/bin", "-f"]);
+		expect(parseEditorCommand("   ")).toEqual([]);
+	});
+
+	it("prefers VISUAL over EDITOR", () => {
+		expect(resolveEditorCommand({ VISUAL: "visual-editor", EDITOR: "fallback" })).toEqual(["visual-editor"]);
+		expect(resolveEditorCommand({ EDITOR: "fallback -w" })).toEqual(["fallback", "-w"]);
+	});
+
+	it("reports no editor when nothing is configured or installed", () => {
+		expect(resolveEditorCommand({ PATH: "/nonexistent-directory" })).toBeUndefined();
+	});
+});
+
+describe("project ui command guards", () => {
+	async function runCli(cwd: string, args: string[]): Promise<{ code: number; stderr: string }> {
+		try {
+			await execFileAsync(process.execPath, [cliPath, ...args], { cwd });
+			return { code: 0, stderr: "" };
+		} catch (error) {
+			const failure = error as { code: number | null; stderr: string };
+			return { code: failure.code ?? 1, stderr: failure.stderr };
+		}
+	}
+
+	it("refuses to open without a terminal, pointing at the scriptable read path", async () => {
+		const root = await tempGitRepo();
+		const result = await runCli(root, ["project", "ui"]);
+		expect(result.code).toBe(1);
+		expect(result.stderr).toContain("interactive terminal");
+		expect(result.stderr).toContain("project list --json");
+	});
+
+	it("rejects --json as a usage error rather than opening a board", async () => {
+		const root = await tempGitRepo();
+		const result = await runCli(root, ["project", "ui", "--json"]);
+		expect(result.code).toBe(2);
+		expect(result.stderr).toContain("cannot be combined with --json");
+	});
+
+	it("still requires a git repository", async () => {
+		const outside = await mkdtemp(join(tmpdir(), "pi-worklist-not-a-repo-"));
+		const result = await runCli(outside, ["project", "ui"]);
+		expect(result.code).not.toBe(0);
+		expect(result.stderr).toContain("git repository");
+	});
+});
