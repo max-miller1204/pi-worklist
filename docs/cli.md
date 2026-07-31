@@ -28,6 +28,8 @@ Manage repository-wide Project Goals in <git-root>/.pi/worklist.json through the
 | `--confirm` | Acknowledge a lifecycle action; pass it only for an explicit user request |
 | `--cwd <dir>` | Resolve the git root from this directory instead of the working directory |
 
+Put every flag before `--`, because each token after it is description text: a trailing `--json` ends up inside the description instead of selecting JSON output, and the command prints human output while still exiting 0.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -41,6 +43,7 @@ Manage repository-wide Project Goals in <git-root>/.pi/worklist.json through the
 ## Agent guidance
 
 - Prefer --json and read the deterministic result envelope instead of parsing human output.
+- Write every flag before the -- separator, and read the CLI's own exit code rather than a shell pipeline's, so a swallowed flag cannot look like a failure or a success.
 - Never run ui: it is an interactive board for a human, it holds the terminal until they quit, and it refuses to start without one.
 - Never pass --confirm for complete, reopen, archive, or delete unless the user explicitly requested that exact action.
 - Treat exit code 3 as a request for explicit user confirmation, not as a retryable failure.

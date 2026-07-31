@@ -47,6 +47,7 @@ Flags:
 Prefer `--json` whenever you need to read IDs, statuses, or errors back rather than parsing human output.
 `list` output is compact and omits descriptions; use `show <id>` when you need a goal's complete description.
 Text after `--` becomes the goal description.
+Put every flag before `--`, because each token after it is description text: a trailing `--json` ends up inside the description instead of selecting JSON output, and the command prints human output while still exiting 0.
 `update <id> --` with nothing after the separator clears the description.
 
 Examples:

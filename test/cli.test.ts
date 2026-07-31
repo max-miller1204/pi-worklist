@@ -216,6 +216,61 @@ describe("project goal CLI", () => {
 		expect((await readGoals(root))[0].title).toBe("From elsewhere");
 	});
 
+	it("warns when a flag is written after the description separator", async () => {
+		const root = await tempGitRepo();
+
+		// The exact mistake this warning exists for: --json after the separator
+		// silently becomes description text, so stdout is human output and the
+		// command still exits 0.
+		const swallowed = await runCli(root, [
+			"project",
+			"add",
+			"Ship",
+			"the",
+			"CLI",
+			"--",
+			"External agent access",
+			"--json",
+		]);
+
+		expect(swallowed.code).toBe(0);
+		expect(swallowed.stderr).toContain("--json came after -- and became description text");
+		expect(swallowed.stderr).toContain("Global flags must come before the -- separator");
+		expect(swallowed.stdout).toContain("Added project goal");
+		// The separator's contract is unchanged: the text is still the description.
+		expect((await readGoals(root))[0].description).toBe("External agent access --json");
+
+		const correct = await runCli(root, [
+			"project",
+			"add",
+			"Ship",
+			"it",
+			"properly",
+			"--json",
+			"--",
+			"External agent access",
+		]);
+		expect(correct.stderr).toBe("");
+		expect(JSON.parse(correct.stdout).ok).toBe(true);
+	});
+
+	it("does not warn about description prose that merely mentions a flag", async () => {
+		const root = await tempGitRepo();
+
+		const result = await runCli(root, [
+			"project",
+			"add",
+			"Document",
+			"the",
+			"CLI",
+			"--",
+			"Explain how `--json` prints the result envelope",
+		]);
+
+		expect(result.code).toBe(0);
+		expect(result.stderr).toBe("");
+	});
+
 	it("reports malformed files without overwriting them", async () => {
 		const root = await tempGitRepo();
 		await runCli(root, ["project", "add", "Existing"]);

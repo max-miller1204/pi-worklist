@@ -6,7 +6,7 @@ import {
 	WorklistApplicationService,
 	type WorklistOperation,
 } from "./application-service.ts";
-import { renderCliUsage } from "./cli-contract.ts";
+import { CLI_COMMAND_CONTRACT, renderCliUsage } from "./cli-contract.ts";
 import { getWorklistPath, resolveGitRoot } from "./git.ts";
 import { WORKLIST_ERROR_CODES, type WorklistErrorCode } from "./integration-contract.ts";
 import { runGoalBoard } from "./tui/goal-board-runtime.ts";
@@ -49,10 +49,35 @@ function exitCodeForError(code: WorklistErrorCode): number {
 	return 1;
 }
 
+const GLOBAL_FLAG_NAMES: ReadonlySet<string> = new Set(CLI_COMMAND_CONTRACT.flags.map((flag) => flag.name));
+
+/**
+ * Warns when a global flag was written after the `--` separator.
+ *
+ * Every token after the separator is description text, so a trailing `--json`
+ * silently becomes part of the description instead of selecting JSON output,
+ * and the caller gets human output it never asked for. The flag still stays
+ * description text, because letting a description contain anything at all is
+ * the separator's whole purpose; only the silence is a defect. A flag before
+ * the separator is already validated strictly, so this closes the asymmetry.
+ */
+function warnMisplacedFlags(tokens: readonly string[]): void {
+	const misplaced = [...new Set(tokens.filter((token) => GLOBAL_FLAG_NAMES.has(token)))];
+	if (misplaced.length === 0) return;
+	const binary = CLI_COMMAND_CONTRACT.binary;
+	process.stderr.write(
+		`Warning: ${misplaced.join(", ")} came after -- and became description text, not ${misplaced.length === 1 ? "a flag" : "flags"}.\n` +
+			`Global flags must come before the -- separator, for example:\n` +
+			`  ${binary} ${CLI_COMMAND_CONTRACT.scope} add <title> ${misplaced[0]} -- <description>\n`,
+	);
+}
+
 function parseArgs(argv: string[]): CliInvocation {
 	const separator = argv.indexOf("--");
 	const head = separator === -1 ? argv : argv.slice(0, separator);
-	const description = separator === -1 ? undefined : argv.slice(separator + 1).join(" ");
+	const descriptionTokens = separator === -1 ? [] : argv.slice(separator + 1);
+	const description = separator === -1 ? undefined : descriptionTokens.join(" ");
+	warnMisplacedFlags(descriptionTokens);
 
 	const positionals: string[] = [];
 	let json = false;
