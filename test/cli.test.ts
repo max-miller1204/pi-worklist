@@ -252,6 +252,42 @@ describe("project goal CLI", () => {
 		]);
 		expect(correct.stderr).toBe("");
 		expect(JSON.parse(correct.stdout).ok).toBe(true);
+
+		const valueTakingFlag = await runCli(root, [
+			"project",
+			"add",
+			"Check",
+			"cwd",
+			"warning",
+			"--",
+			"Description",
+			"--cwd",
+		]);
+		expect(valueTakingFlag.code).toBe(0);
+		expect(valueTakingFlag.stderr).toContain(
+			"pi-worklist project add <title> --cwd <dir> -- <description>",
+		);
+	});
+
+	it("keeps JSON failures parseable when description text contains a flag", async () => {
+		const root = await tempGitRepo();
+		const result = await runCli(root, [
+			"project",
+			"update",
+			"goal-missing",
+			"--json",
+			"--",
+			"Description",
+			"--confirm",
+		]);
+
+		expect(result.code).toBe(1);
+		expect(result.stdout).toBe("");
+		expect(JSON.parse(result.stderr)).toMatchObject({
+			ok: false,
+			error: { code: "NOT_FOUND", details: { id: "goal-missing" } },
+			warnings: [{ code: "MISPLACED_GLOBAL_FLAG", flag: "--confirm", usage: "--confirm" }],
+		});
 	});
 
 	it("does not warn about description prose that merely mentions a flag", async () => {

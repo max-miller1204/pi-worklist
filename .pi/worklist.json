@@ -128,7 +128,15 @@
       "status": "done",
       "createdAt": "2026-07-24T18:31:54.214Z",
       "updatedAt": "2026-07-25T18:21:35.554Z"
+    },
+    {
+      "id": "goal-ms9bbhy9-b803a025",
+      "title": "Check cwd warning",
+      "description": "Description --cwd",
+      "status": "open",
+      "createdAt": "2026-07-31T19:05:23.361Z",
+      "updatedAt": "2026-07-31T19:05:23.361Z"
     }
   ],
-  "revision": 27
+  "revision": 28
 }

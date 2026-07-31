@@ -6,7 +6,7 @@ import {
 	WorklistApplicationService,
 	type WorklistOperation,
 } from "./application-service.ts";
-import { CLI_COMMAND_CONTRACT, renderCliUsage } from "./cli-contract.ts";
+import { CLI_COMMAND_CONTRACT, type CliFlagContract, renderCliUsage } from "./cli-contract.ts";
 import { getWorklistPath, resolveGitRoot } from "./git.ts";
 import { WORKLIST_ERROR_CODES, type WorklistErrorCode } from "./integration-contract.ts";
 import { runGoalBoard } from "./tui/goal-board-runtime.ts";
@@ -36,6 +36,13 @@ interface CliInvocation {
 	json: boolean;
 	confirm: boolean;
 	cwd: string;
+	warnings: CliWarning[];
+}
+
+interface CliWarning {
+	code: "MISPLACED_GLOBAL_FLAG";
+	flag: string;
+	usage: string;
 }
 
 function fail(message: string, code: number): never {
@@ -49,7 +56,9 @@ function exitCodeForError(code: WorklistErrorCode): number {
 	return 1;
 }
 
-const GLOBAL_FLAG_NAMES: ReadonlySet<string> = new Set(CLI_COMMAND_CONTRACT.flags.map((flag) => flag.name));
+const GLOBAL_FLAGS_BY_NAME: ReadonlyMap<string, CliFlagContract> = new Map(
+	CLI_COMMAND_CONTRACT.flags.map((flag) => [flag.name, flag]),
+);
 
 /**
  * Warns when a global flag was written after the `--` separator.
@@ -61,14 +70,22 @@ const GLOBAL_FLAG_NAMES: ReadonlySet<string> = new Set(CLI_COMMAND_CONTRACT.flag
  * the separator's whole purpose; only the silence is a defect. A flag before
  * the separator is already validated strictly, so this closes the asymmetry.
  */
-function warnMisplacedFlags(tokens: readonly string[]): void {
-	const misplaced = [...new Set(tokens.filter((token) => GLOBAL_FLAG_NAMES.has(token)))];
-	if (misplaced.length === 0) return;
+function findMisplacedFlagWarnings(tokens: readonly string[]): CliWarning[] {
+	const misplaced = [...new Set(tokens)].flatMap((token) => {
+		const flag = GLOBAL_FLAGS_BY_NAME.get(token);
+		return flag ? [{ code: "MISPLACED_GLOBAL_FLAG" as const, flag: flag.name, usage: flag.usage }] : [];
+	});
+	return misplaced;
+}
+
+function warnMisplacedFlags(warnings: readonly CliWarning[]): void {
+	if (warnings.length === 0) return;
 	const binary = CLI_COMMAND_CONTRACT.binary;
+	const names = warnings.map((warning) => warning.flag);
 	process.stderr.write(
-		`Warning: ${misplaced.join(", ")} came after -- and became description text, not ${misplaced.length === 1 ? "a flag" : "flags"}.\n` +
+		`Warning: ${names.join(", ")} came after -- and became description text, not ${names.length === 1 ? "a flag" : "flags"}.\n` +
 			`Global flags must come before the -- separator, for example:\n` +
-			`  ${binary} ${CLI_COMMAND_CONTRACT.scope} add <title> ${misplaced[0]} -- <description>\n`,
+			`  ${binary} ${CLI_COMMAND_CONTRACT.scope} add <title> ${warnings[0].usage} -- <description>\n`,
 	);
 }
 
@@ -77,7 +94,7 @@ function parseArgs(argv: string[]): CliInvocation {
 	const head = separator === -1 ? argv : argv.slice(0, separator);
 	const descriptionTokens = separator === -1 ? [] : argv.slice(separator + 1);
 	const description = separator === -1 ? undefined : descriptionTokens.join(" ");
-	warnMisplacedFlags(descriptionTokens);
+	const warnings = findMisplacedFlagWarnings(descriptionTokens);
 
 	const positionals: string[] = [];
 	let json = false;
@@ -98,7 +115,7 @@ function parseArgs(argv: string[]): CliInvocation {
 
 	const [scope, action, ...rest] = positionals;
 	if (!scope || !action) fail(USAGE, 2);
-	return { scope, action, rest, description, json, confirm, cwd };
+	return { scope, action, rest, description, json, confirm, cwd, warnings };
 }
 
 interface ProjectLocation {
@@ -182,10 +199,18 @@ async function executeCliOperation(
 
 function report(invocation: CliInvocation, envelope: WorklistApplicationResult, message: string): void {
 	if (invocation.json) {
-		process.stdout.write(`${JSON.stringify(envelope, null, 2)}\n`);
+		process.stdout.write(`${JSON.stringify(withCliWarnings(invocation, envelope), null, 2)}\n`);
 		return;
 	}
 	process.stdout.write(`${message}\n`);
+}
+
+function withCliWarnings(
+	invocation: CliInvocation,
+	envelope: WorklistApplicationResult,
+): WorklistApplicationResult & { warnings?: CliWarning[] } {
+	if (invocation.warnings.length === 0) return envelope;
+	return { ...envelope, warnings: invocation.warnings };
 }
 
 async function runLifecycle(
@@ -366,13 +391,14 @@ async function run(invocation: CliInvocation): Promise<void> {
 }
 
 const invocation = parseArgs(process.argv.slice(2));
+if (!invocation.json) warnMisplacedFlags(invocation.warnings);
 try {
 	await run(invocation);
 } catch (error) {
 	if (error instanceof WorklistCliFailure) {
 		const code = exitCodeForError(error.envelope.error.code);
 		if (invocation.json) {
-			process.stderr.write(`${JSON.stringify(error.envelope, null, 2)}\n`);
+			process.stderr.write(`${JSON.stringify(withCliWarnings(invocation, error.envelope), null, 2)}\n`);
 			process.exit(code);
 		}
 		if (error.envelope.error.code === WORKLIST_ERROR_CODES.APPROVAL_REQUIRED) {
