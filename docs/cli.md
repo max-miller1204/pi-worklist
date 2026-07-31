@@ -28,7 +28,7 @@ Manage repository-wide Project Goals in <git-root>/.pi/worklist.json through the
 | `--confirm` | Acknowledge a lifecycle action; pass it only for an explicit user request |
 | `--cwd <dir>` | Resolve the git root from this directory instead of the working directory |
 
-Put every flag before `--`, because each token after it is description text: a trailing `--json` ends up inside the description instead of selecting JSON output, and the command prints human output while still exiting 0.
+Put every flag before `--`, because each token after it is description text. A known global flag there remains in the description and triggers a warning: stderr for human output, or the JSON envelope's `warnings` array if `--json` was already enabled. A trailing `--json` therefore does not select JSON output; the command prints human output and still exits 0.
 
 ## Exit codes
 

@@ -264,9 +264,7 @@ describe("project goal CLI", () => {
 			"--cwd",
 		]);
 		expect(valueTakingFlag.code).toBe(0);
-		expect(valueTakingFlag.stderr).toContain(
-			"pi-worklist project add <title> --cwd <dir> -- <description>",
-		);
+		expect(valueTakingFlag.stderr).toContain("pi-worklist project add <title> --cwd <dir> -- <description>");
 	});
 
 	it("keeps JSON failures parseable when description text contains a flag", async () => {
