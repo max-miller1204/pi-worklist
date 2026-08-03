@@ -202,8 +202,9 @@ export function renderCliUsage(): string {
 /**
  * The installable agent skill, written to .claude/skills/worklist/SKILL.md.
  *
- * Every invocation is the non-interactive `npx -y` form so the same file works
- * from any repository; scope is chosen at install time, never in the content.
+ * Every published invocation is the non-interactive `npx -y <binary>@latest`
+ * form so the same file works from any repository without stale-cache selection;
+ * scope is chosen at install time, never in the content.
  */
 export function renderSkillMarkdown(): string {
 	const contract = CLI_COMMAND_CONTRACT;

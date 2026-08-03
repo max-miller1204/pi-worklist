@@ -46,7 +46,7 @@ describe("compiled pi-worklist CLI bin", () => {
 	});
 
 	it("imports only declared dependencies, never a Pi peer", async () => {
-		// `npx -y pi-worklist` installs the package's own dependencies and nothing
+		// `npx -y pi-worklist@latest` installs the package's own dependencies and nothing
 		// else, so every module the bin reaches at runtime, including the terminal
 		// board, must resolve without a Pi installation present.
 		const manifest = parseJson<{
