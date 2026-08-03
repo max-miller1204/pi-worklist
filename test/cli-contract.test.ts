@@ -55,9 +55,11 @@ describe("single CLI command contract", () => {
 	it("renders a repository-neutral skill covering the whole contract surface", () => {
 		const skill = renderSkillMarkdown();
 		expect(skill).toContain(`description: ${JSON.stringify(CLI_COMMAND_CONTRACT.skillDescription)}`);
-		// The skill installs globally, so every invocation must be the portable `npx -y` form
-		// and must never name a checkout path that only exists on the author's machine.
-		expect(skill).toContain(`npx -y ${CLI_COMMAND_CONTRACT.binary}`);
+		// The skill installs globally, so every invocation must use the portable,
+		// cache-safe `npx -y <binary>@latest` form and must never name a checkout
+		// path that only exists on the author's machine.
+		expect(skill).toContain(`npx -y ${CLI_COMMAND_CONTRACT.binary}@latest`);
+		expect(skill).not.toMatch(new RegExp(String.raw`\bnpx -y ${CLI_COMMAND_CONTRACT.binary}(?!@latest)`));
 		expect(skill).not.toMatch(new RegExp(String.raw`\bnpx ${CLI_COMMAND_CONTRACT.binary}\b`));
 		expect(skill).not.toContain("/home/");
 		expect(skill).toContain(DOCS_PATH);
@@ -79,6 +81,10 @@ describe("single CLI command contract", () => {
 		for (const exitCode of CLI_COMMAND_CONTRACT.exitCodes.filter((entry) => entry.code >= 1)) {
 			expect(skill, `SKILL.md is missing exit code ${exitCode.code}`).toContain(`Exit code ${exitCode.code}`);
 		}
+	});
+
+	it("documents the cache-safe published invocation in the generated CLI guide", () => {
+		expect(renderCliGuide()).toContain(`npx -y ${CLI_COMMAND_CONTRACT.binary}@latest`);
 	});
 
 	it("declares the same Node floor the package does", async () => {

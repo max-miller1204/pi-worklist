@@ -99,20 +99,31 @@ describe("project goal CLI", () => {
 
 	it("emits stable machine-readable result envelopes with --json", async () => {
 		const root = await tempGitRepo();
+		const manifest = JSON.parse(await readFile(resolve("package.json"), "utf8")) as { version: string };
 		const added = await runCli(root, ["project", "add", "--json", "Automate", "--", "Via Claude"]);
 		const payload = JSON.parse(added.stdout) as {
 			ok: boolean;
 			scope: string;
 			action: string;
 			result: { goal: ProjectGoal; goals: ProjectGoal[] };
-			meta: { changed: boolean; semanticNoOp: boolean; revisions?: { project?: string } };
+			meta: {
+				changed: boolean;
+				semanticNoOp: boolean;
+				cliVersion: string;
+				revisions?: { project?: string };
+			};
 		};
 		expect(payload.ok).toBe(true);
 		expect(payload.scope).toBe("project");
 		expect(payload.action).toBe("add");
 		expect(payload.result.goal.title).toBe("Automate");
 		expect(payload.result.goals).toHaveLength(1);
-		expect(payload.meta).toMatchObject({ changed: true, semanticNoOp: false, revisions: { project: "1" } });
+		expect(payload.meta).toMatchObject({
+			changed: true,
+			semanticNoOp: false,
+			cliVersion: manifest.version,
+			revisions: { project: "1" },
+		});
 
 		// Failures with --json print the full deterministic failure envelope on stderr.
 		const refused = await runCli(root, ["project", "complete", payload.result.goal.id, "--json"]);
@@ -130,7 +141,12 @@ describe("project goal CLI", () => {
 			scope: "project",
 			action: "complete",
 			error: { code: "APPROVAL_REQUIRED", retryable: false },
-			meta: { changed: false, semanticNoOp: false, changedFields: [] },
+			meta: {
+				changed: false,
+				semanticNoOp: false,
+				changedFields: [],
+				cliVersion: manifest.version,
+			},
 		});
 	});
 

@@ -4,6 +4,16 @@
 
 Manage repository-wide Project Goals in <git-root>/.pi/worklist.json through the same application service, cross-process lock, and atomic replacement as a live Pi session. Session Tasks live inside a Pi session and are deliberately out of scope.
 
+## Invocation
+
+Use the explicit `@latest` package specifier so a stale local npx cache cannot select an older CLI build:
+
+```sh
+npx -y pi-worklist@latest project <action> [arguments] [flags]
+```
+
+Every `--json` result envelope reports the running package version as `meta.cliVersion`.
+
 ## Commands
 
 | Command | Description |

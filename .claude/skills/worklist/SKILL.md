@@ -16,7 +16,7 @@ Always go through the pi-worklist CLI, which routes every mutation through the s
 The published package ships a compiled `pi-worklist` bin (Node 20 or newer), usable from any repository without installing anything first:
 
 ```sh
-npx -y pi-worklist project <action> [arguments] [flags]
+npx -y pi-worklist@latest project <action> [arguments] [flags]
 ```
 
 Run it from inside the target repository, or pass `--cwd <repo-root>` to target another one.
@@ -53,12 +53,12 @@ Put every flag before `--`, because each token after it is description text. A k
 Examples:
 
 ```sh
-npx -y pi-worklist project list --json
-npx -y pi-worklist project add Support goal templates -- Let teams share reusable goal outlines
-npx -y pi-worklist project show goal-ms6gwxrg-56c1bde6 --json
-npx -y pi-worklist project update goal-ms6gwxrg-56c1bde6 -- Replace only the description
-npx -y pi-worklist project update goal-ms6gwxrg-56c1bde6 Support shared goal templates
-npx -y pi-worklist project set_active goal-ms6gwxrg-56c1bde6
+npx -y pi-worklist@latest project list --json
+npx -y pi-worklist@latest project add Support goal templates -- Let teams share reusable goal outlines
+npx -y pi-worklist@latest project show goal-ms6gwxrg-56c1bde6 --json
+npx -y pi-worklist@latest project update goal-ms6gwxrg-56c1bde6 -- Replace only the description
+npx -y pi-worklist@latest project update goal-ms6gwxrg-56c1bde6 Support shared goal templates
+npx -y pi-worklist@latest project set_active goal-ms6gwxrg-56c1bde6
 ```
 
 Goal IDs are opaque: read them back from `list` or `add` output instead of constructing them.
@@ -74,7 +74,7 @@ The full generated command reference lives in the package's `docs/cli.md`, rende
 - `list`, `show`, `add`, `update`, and `set_active` are safe to run whenever they serve the user's request.
 - `ui` opens a full-screen board for the human at the keyboard, not for you.
   Never run it: it holds the terminal until the user quits, and it exits with an error when stdin or stdout is not a terminal.
-  Suggest `npx -y pi-worklist project ui` when the user wants to browse or edit goals themselves; read state with `list` and `show` instead.
+  Suggest `npx -y pi-worklist@latest project ui` when the user wants to browse or edit goals themselves; read state with `list` and `show` instead.
 - Session Tasks cannot be managed from outside a Pi session; the CLI intentionally rejects `session` scope.
   For your own in-session tracking, use your normal task tools instead.
 
@@ -84,4 +84,6 @@ The full generated command reference lives in the package's `docs/cli.md`, rende
 - Exit code 1 with a "git repository" message means the working directory is outside a repo; rerun with `--cwd <repo-root>`.
   With `--json`, that failure also arrives as the deterministic result envelope on stderr.
 - Exit code 2 (usage error) means the action or its flags were not recognized; re-read the action list above instead of guessing.
-- If `npx -y pi-worklist` cannot resolve the package, check network access to the npm registry; a local development checkout remains a fallback.
+- If `npx -y pi-worklist@latest` cannot resolve the package, check network access to the npm registry; a local development checkout remains a fallback.
+- Read `meta.cliVersion` from any `--json` result envelope when you need to verify which published build ran.
+  This reports the package's runtime version directly instead of requiring inspection of the npx cache.

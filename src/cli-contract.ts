@@ -207,6 +207,7 @@ export function renderCliUsage(): string {
  */
 export function renderSkillMarkdown(): string {
 	const contract = CLI_COMMAND_CONTRACT;
+	const publishedBinary = `${contract.binary}@latest`;
 	const lifecycleActions = contract.actions.filter((action) => action.confirmRequired);
 	const safeActions = contract.actions.filter(
 		(action) => !action.confirmRequired && !action.interactive && action.name !== "help",
@@ -242,7 +243,7 @@ export function renderSkillMarkdown(): string {
 		`The published package ships a compiled \`${contract.binary}\` bin (Node ${contract.runtime.binaryNodeFloor} or newer), usable from any repository without installing anything first:`,
 		"",
 		"```sh",
-		`npx -y ${contract.binary} ${contract.scope} <action> [arguments] [flags]`,
+		`npx -y ${publishedBinary} ${contract.scope} <action> [arguments] [flags]`,
 		"```",
 		"",
 		"Run it from inside the target repository, or pass `--cwd <repo-root>` to target another one.",
@@ -267,7 +268,7 @@ export function renderSkillMarkdown(): string {
 		"Examples:",
 		"",
 		"```sh",
-		...examples.map((example) => `npx -y ${contract.binary} ${contract.scope} ${example}`),
+		...examples.map((example) => `npx -y ${publishedBinary} ${contract.scope} ${example}`),
 		"```",
 		"",
 		"Goal IDs are opaque: read them back from `list` or `add` output instead of constructing them.",
@@ -283,7 +284,7 @@ export function renderSkillMarkdown(): string {
 		`- ${actionNameList(safeActions)} are safe to run whenever they serve the user's request.`,
 		`- ${actionNameList(interactiveActions)} opens a full-screen board for the human at the keyboard, not for you.`,
 		"  Never run it: it holds the terminal until the user quits, and it exits with an error when stdin or stdout is not a terminal.",
-		`  Suggest \`npx -y ${contract.binary} ${contract.scope} ui\` when the user wants to browse or edit goals themselves; read state with \`list\` and \`show\` instead.`,
+		`  Suggest \`npx -y ${publishedBinary} ${contract.scope} ui\` when the user wants to browse or edit goals themselves; read state with \`list\` and \`show\` instead.`,
 		"- Session Tasks cannot be managed from outside a Pi session; the CLI intentionally rejects `session` scope.",
 		"  For your own in-session tracking, use your normal task tools instead.",
 		"",
@@ -293,7 +294,9 @@ export function renderSkillMarkdown(): string {
 		'- Exit code 1 with a "git repository" message means the working directory is outside a repo; rerun with `--cwd <repo-root>`.',
 		"  With `--json`, that failure also arrives as the deterministic result envelope on stderr.",
 		`- Exit code 2 (${exitCodeMeaning(2)}) means the action or its flags were not recognized; re-read the action list above instead of guessing.`,
-		`- If \`npx -y ${contract.binary}\` cannot resolve the package, check network access to the npm registry; a local development checkout remains a fallback.`,
+		`- If \`npx -y ${publishedBinary}\` cannot resolve the package, check network access to the npm registry; a local development checkout remains a fallback.`,
+		`- Read \`meta.cliVersion\` from any \`--json\` result envelope when you need to verify which published build ran.`,
+		"  This reports the package's runtime version directly instead of requiring inspection of the npx cache.",
 		"",
 	].join("\n");
 }
@@ -301,6 +304,7 @@ export function renderSkillMarkdown(): string {
 /** The generated command reference and agent guidance document, written to docs/cli.md. */
 export function renderCliGuide(): string {
 	const contract = CLI_COMMAND_CONTRACT;
+	const publishedBinary = `${contract.binary}@latest`;
 	const actionRows = contract.actions.map((action) => {
 		const notes = [
 			action.confirmRequired ? ". Requires explicit user confirmation" : "",
@@ -317,6 +321,16 @@ export function renderCliGuide(): string {
 		"# pi-worklist CLI",
 		"",
 		contract.intro,
+		"",
+		"## Invocation",
+		"",
+		"Use the explicit `@latest` package specifier so a stale local npx cache cannot select an older CLI build:",
+		"",
+		"```sh",
+		`npx -y ${publishedBinary} ${contract.scope} <action> [arguments] [flags]`,
+		"```",
+		"",
+		"Every `--json` result envelope reports the running package version as `meta.cliVersion`.",
 		"",
 		"## Commands",
 		"",

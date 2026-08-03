@@ -24,6 +24,14 @@ async function runCompiledCli(cwd: string, args: string[]): Promise<CliResult> {
 	}
 }
 
+function parseJson<T>(text: string): T {
+	try {
+		return JSON.parse(text) as T;
+	} catch (error) {
+		throw new Error("Expected valid JSON in compiled CLI test", { cause: error });
+	}
+}
+
 describe("compiled pi-worklist CLI bin", () => {
 	beforeAll(async () => {
 		await execFileAsync("npm", ["run", "build"], { cwd: resolve(".") });
@@ -41,10 +49,10 @@ describe("compiled pi-worklist CLI bin", () => {
 		// `npx -y pi-worklist` installs the package's own dependencies and nothing
 		// else, so every module the bin reaches at runtime, including the terminal
 		// board, must resolve without a Pi installation present.
-		const manifest = JSON.parse(await readFile(resolve("package.json"), "utf8")) as {
+		const manifest = parseJson<{
 			dependencies?: Record<string, string>;
 			peerDependencies?: Record<string, string>;
-		};
+		}>(await readFile(resolve("package.json"), "utf8"));
 		const allowed = new Set(Object.keys(manifest.dependencies ?? {}));
 		expect(Object.keys(manifest.peerDependencies ?? {}).length).toBeGreaterThan(0);
 
@@ -79,18 +87,20 @@ describe("compiled pi-worklist CLI bin", () => {
 		expect(listed.code).toBe(0);
 		expect(listed.stdout).toContain("Compiled goal");
 
-		const worklist = JSON.parse(await readFile(join(root, ".pi", "worklist.json"), "utf8")) as {
-			goals: Array<{ id: string }>;
-		};
+		const worklist = parseJson<{ goals: Array<{ id: string }> }>(
+			await readFile(join(root, ".pi", "worklist.json"), "utf8"),
+		);
 		const goalId = worklist.goals[0]?.id;
 		expect(goalId).toBeTruthy();
 
 		const shown = await runCompiledCli(root, ["project", "show", `${goalId}`, "--json"]);
 		expect(shown.code).toBe(0);
-		expect(JSON.parse(shown.stdout)).toMatchObject({
+		const manifest = parseJson<{ version: string }>(await readFile(resolve("package.json"), "utf8"));
+		expect(parseJson(shown.stdout)).toMatchObject({
 			ok: true,
 			action: "show",
 			result: { goal: { id: goalId, description: "Full detail" } },
+			meta: { cliVersion: manifest.version },
 		});
 
 		const refused = await runCompiledCli(root, ["project", "delete", `${goalId}`]);
@@ -102,15 +112,15 @@ describe("compiled pi-worklist CLI bin", () => {
 			cwd: resolve("."),
 			maxBuffer: 10 * 1024 * 1024,
 		});
-		const [pack] = JSON.parse(stdout) as Array<{ files: Array<{ path: string }> }>;
+		const [pack] = parseJson<Array<{ files: Array<{ path: string }> }>>(stdout);
 		const paths = pack.files.map((file) => file.path);
 		expect(paths).toContain("dist/cli.js");
 		expect(paths).toContain("src/extension.ts");
 
-		const packageJson = JSON.parse(await readFile(resolve("package.json"), "utf8")) as {
+		const packageJson = parseJson<{
 			bin?: Record<string, string>;
 			files: string[];
-		};
+		}>(await readFile(resolve("package.json"), "utf8"));
 		expect(packageJson.bin).toEqual({ "pi-worklist": "dist/cli.js" });
 		expect(packageJson.files).toContain("dist");
 	}, 60_000);
