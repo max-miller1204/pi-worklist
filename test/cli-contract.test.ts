@@ -27,7 +27,7 @@ describe("single CLI command contract", () => {
 		for (const action of CLI_COMMAND_CONTRACT.actions) {
 			expect(usage).toContain(action.usage);
 			expect(usage).toContain(action.summary);
-			expect(guide).toContain(`pi-worklist project ${action.usage}`);
+			expect(guide).toContain(`npx -y pi-worklist@latest project ${action.usage}`);
 		}
 		for (const flag of CLI_COMMAND_CONTRACT.flags) {
 			expect(usage).toContain(flag.usage);
@@ -83,8 +83,23 @@ describe("single CLI command contract", () => {
 		}
 	});
 
-	it("documents the cache-safe published invocation in the generated CLI guide", () => {
-		expect(renderCliGuide()).toContain(`npx -y ${CLI_COMMAND_CONTRACT.binary}@latest`);
+	it("uses cache-safe invocations across every published CLI artifact", async () => {
+		const publishedInvocation = `npx -y ${CLI_COMMAND_CONTRACT.binary}@latest ${CLI_COMMAND_CONTRACT.scope}`;
+		const bareInvocation = new RegExp(
+			String.raw`\b${CLI_COMMAND_CONTRACT.binary} ${CLI_COMMAND_CONTRACT.scope}\b`,
+		);
+		const artifacts = [
+			[SKILL_PATH, renderSkillMarkdown()],
+			[DOCS_PATH, renderCliGuide()],
+			["README.md", await readFile(resolve("README.md"), "utf8")],
+		] as const;
+
+		for (const [path, contents] of artifacts) {
+			expect(contents, `${path} is missing the published CLI invocation`).toContain(publishedInvocation);
+			expect(contents, `${path} contains a bare published CLI invocation`).not.toMatch(bareInvocation);
+		}
+		expect(renderSkillMarkdown()).toContain("node <checkout>/src/cli.ts project <action>");
+		expect(artifacts[2][1]).toContain("node src/cli.ts project <action>");
 	});
 
 	it("declares the same Node floor the package does", async () => {

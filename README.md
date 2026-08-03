@@ -21,7 +21,7 @@ Project Goals track the larger outcomes shared by every Pi session in a Git repo
 - A compact widget shows the active Project Goal and up to three unfinished Session Tasks.
 - The `worklist` model tool manages both scopes through one consistent API.
 - A Pi-free external CLI lets scripts and other agents manage Project Goals without a running Pi session.
-- `pi-worklist project ui` opens a dependency-free terminal board for browsing and editing Project Goals outside Pi.
+- `npx -y pi-worklist@latest project ui` opens a dependency-free terminal board for browsing and editing Project Goals outside Pi.
 - An installable agent skill, generated from the same command contract as the CLI, teaches coding agents to drive that CLI in any repository.
 - Project Goal completion, reopening, archival, and deletion require explicit user intent.
 - Managed Session Task operations accept only existing open or active Project Goal associations and detect edits to the selected goal before reconciliation.
@@ -169,7 +169,7 @@ Session Tasks are intentionally unavailable here because they live inside a Pi s
 
 ## Terminal goal board
 
-`pi-worklist project ui` opens an interactive board over the same Project Goals, so the roadmap can be read and edited from a shell without starting a Pi session:
+`npx -y pi-worklist@latest project ui` opens an interactive board over the same Project Goals, so the roadmap can be read and edited from a shell without starting a Pi session:
 
 ```sh
 npx -y pi-worklist@latest project ui

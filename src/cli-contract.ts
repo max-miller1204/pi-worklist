@@ -310,7 +310,7 @@ export function renderCliGuide(): string {
 			action.confirmRequired ? ". Requires explicit user confirmation" : "",
 			action.interactive ? ". Requires a terminal; not for scripts or agents" : "",
 		].join("");
-		return `| \`${contract.binary} ${contract.scope} ${action.usage}\` | ${action.summary}${notes} |`;
+		return `| \`npx -y ${publishedBinary} ${contract.scope} ${action.usage}\` | ${action.summary}${notes} |`;
 	});
 	const flagRows = contract.flags.map((flag) => `| \`${flag.usage}\` | ${flag.summary} |`);
 	const exitCodeRows = contract.exitCodes.map((exitCode) => `| \`${exitCode.code}\` | ${exitCode.meaning} |`);
