@@ -4,21 +4,31 @@
 
 Manage repository-wide Project Goals in <git-root>/.pi/worklist.json through the same application service, cross-process lock, and atomic replacement as a live Pi session. Session Tasks live inside a Pi session and are deliberately out of scope.
 
+## Invocation
+
+Use the explicit `@latest` package specifier so a stale local npx cache cannot select an older CLI build:
+
+```sh
+npx -y pi-worklist@latest project <action> [arguments] [flags]
+```
+
+Every `--json` result envelope reports the running package version as `meta.cliVersion`.
+
 ## Commands
 
 | Command | Description |
 | --- | --- |
-| `pi-worklist project list` | Show a compact bounded list of project goals |
-| `pi-worklist project show <id>` | Show one goal with its full description |
-| `pi-worklist project ui` | Open the interactive goal board for a human at the keyboard. Requires a terminal; not for scripts or agents |
-| `pi-worklist project add <title...> [-- <description...>]` | Add an open goal |
-| `pi-worklist project update <id> [title...] [-- <description...>]` | Edit a goal; "-- " alone clears the description |
-| `pi-worklist project set_active <id>` | Make a goal the single active goal |
-| `pi-worklist project complete <id> --confirm` | Mark a goal done. Requires explicit user confirmation |
-| `pi-worklist project reopen <id> --confirm` | Reopen a done or archived goal. Requires explicit user confirmation |
-| `pi-worklist project archive <id> --confirm` | Archive a goal. Requires explicit user confirmation |
-| `pi-worklist project delete <id> --confirm` | Delete a goal permanently. Requires explicit user confirmation |
-| `pi-worklist project help` | Print this help |
+| `npx -y pi-worklist@latest project list` | Show a compact bounded list of project goals |
+| `npx -y pi-worklist@latest project show <id>` | Show one goal with its full description |
+| `npx -y pi-worklist@latest project ui` | Open the interactive goal board for a human at the keyboard. Requires a terminal; not for scripts or agents |
+| `npx -y pi-worklist@latest project add <title...> [-- <description...>]` | Add an open goal |
+| `npx -y pi-worklist@latest project update <id> [title...] [-- <description...>]` | Edit a goal; "-- " alone clears the description |
+| `npx -y pi-worklist@latest project set_active <id>` | Make a goal the single active goal |
+| `npx -y pi-worklist@latest project complete <id> --confirm` | Mark a goal done. Requires explicit user confirmation |
+| `npx -y pi-worklist@latest project reopen <id> --confirm` | Reopen a done or archived goal. Requires explicit user confirmation |
+| `npx -y pi-worklist@latest project archive <id> --confirm` | Archive a goal. Requires explicit user confirmation |
+| `npx -y pi-worklist@latest project delete <id> --confirm` | Delete a goal permanently. Requires explicit user confirmation |
+| `npx -y pi-worklist@latest project help` | Print this help |
 
 ## Flags
 

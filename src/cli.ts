@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createRequire } from "node:module";
 import { basename } from "node:path";
 import {
 	type WorklistApplicationFailure,
@@ -8,7 +9,11 @@ import {
 } from "./application-service.ts";
 import { CLI_COMMAND_CONTRACT, type CliFlagContract, renderCliUsage } from "./cli-contract.ts";
 import { getWorklistPath, resolveGitRoot } from "./git.ts";
-import { WORKLIST_ERROR_CODES, type WorklistErrorCode } from "./integration-contract.ts";
+import {
+	WORKLIST_ERROR_CODES,
+	type WorklistErrorCode,
+	type WorklistResultMeta,
+} from "./integration-contract.ts";
 import { runGoalBoard } from "./tui/goal-board-runtime.ts";
 import type { ProjectGoal } from "./types.ts";
 
@@ -26,6 +31,7 @@ type LifecycleAction = (typeof LIFECYCLE_ACTIONS)[number];
 
 const COMPACT_TITLE_LIMIT = 96;
 
+const packageVersion = (createRequire(import.meta.url)("../package.json") as { version: string }).version;
 const USAGE = renderCliUsage();
 
 interface CliInvocation {
@@ -44,6 +50,15 @@ interface CliWarning {
 	flag: string;
 	usage: string;
 }
+
+interface CliResultMeta extends WorklistResultMeta {
+	cliVersion: string;
+}
+
+type CliResultEnvelope = WorklistApplicationResult & {
+	meta: CliResultMeta;
+	warnings?: CliWarning[];
+};
 
 function fail(message: string, code: number): never {
 	process.stderr.write(`${message}\n`);
@@ -199,18 +214,19 @@ async function executeCliOperation(
 
 function report(invocation: CliInvocation, envelope: WorklistApplicationResult, message: string): void {
 	if (invocation.json) {
-		process.stdout.write(`${JSON.stringify(withCliWarnings(invocation, envelope), null, 2)}\n`);
+		process.stdout.write(`${JSON.stringify(withCliMetadata(invocation, envelope), null, 2)}\n`);
 		return;
 	}
 	process.stdout.write(`${message}\n`);
 }
 
-function withCliWarnings(
-	invocation: CliInvocation,
-	envelope: WorklistApplicationResult,
-): WorklistApplicationResult & { warnings?: CliWarning[] } {
-	if (invocation.warnings.length === 0) return envelope;
-	return { ...envelope, warnings: invocation.warnings };
+function withCliMetadata(invocation: CliInvocation, envelope: WorklistApplicationResult): CliResultEnvelope {
+	const cliEnvelope = {
+		...envelope,
+		meta: { ...envelope.meta, cliVersion: packageVersion },
+	};
+	if (invocation.warnings.length === 0) return cliEnvelope;
+	return { ...cliEnvelope, warnings: invocation.warnings };
 }
 
 async function runLifecycle(
@@ -398,7 +414,7 @@ try {
 	if (error instanceof WorklistCliFailure) {
 		const code = exitCodeForError(error.envelope.error.code);
 		if (invocation.json) {
-			process.stderr.write(`${JSON.stringify(withCliWarnings(invocation, error.envelope), null, 2)}\n`);
+			process.stderr.write(`${JSON.stringify(withCliMetadata(invocation, error.envelope), null, 2)}\n`);
 			process.exit(code);
 		}
 		if (error.envelope.error.code === WORKLIST_ERROR_CODES.APPROVAL_REQUIRED) {

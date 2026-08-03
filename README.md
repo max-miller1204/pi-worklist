@@ -21,7 +21,7 @@ Project Goals track the larger outcomes shared by every Pi session in a Git repo
 - A compact widget shows the active Project Goal and up to three unfinished Session Tasks.
 - The `worklist` model tool manages both scopes through one consistent API.
 - A Pi-free external CLI lets scripts and other agents manage Project Goals without a running Pi session.
-- `pi-worklist project ui` opens a dependency-free terminal board for browsing and editing Project Goals outside Pi.
+- `npx -y pi-worklist@latest project ui` opens a dependency-free terminal board for browsing and editing Project Goals outside Pi.
 - An installable agent skill, generated from the same command contract as the CLI, teaches coding agents to drive that CLI in any repository.
 - Project Goal completion, reopening, archival, and deletion require explicit user intent.
 - Managed Session Task operations accept only existing open or active Project Goal associations and detect edits to the selected goal before reconciliation.
@@ -148,19 +148,20 @@ External agents and scripts can manage Project Goals without a running Pi sessio
 The published package ships a compiled `pi-worklist` bin, so no development checkout is needed:
 
 ```sh
-npx -y pi-worklist project list
-npx -y pi-worklist project show <id>
-npx -y pi-worklist project add Support goal templates -- Let teams share reusable goal outlines
-npx -y pi-worklist project update <id> Replace the title -- Replace the description
-npx -y pi-worklist project set_active <id>
-npx -y pi-worklist project complete <id> --confirm
+npx -y pi-worklist@latest project list
+npx -y pi-worklist@latest project show <id>
+npx -y pi-worklist@latest project add Support goal templates -- Let teams share reusable goal outlines
+npx -y pi-worklist@latest project update <id> Replace the title -- Replace the description
+npx -y pi-worklist@latest project set_active <id>
+npx -y pi-worklist@latest project complete <id> --confirm
 ```
 
 The CLI routes every mutation through the same service, cross-process lock, and atomic replacement as a live Pi session, so concurrent use is safe.
 `list` output is deliberately compact without descriptions; `show <id>` prints one goal in full detail.
 Lifecycle actions (`complete`, `reopen`, `archive`, `delete`) require `--confirm`, mirroring the model tool's explicit-intent rule; an omitted flag exits with code 3 and changes nothing.
 Exit code 4 reports a concurrent-change conflict; re-read current state before retrying.
-`--json` prints the full deterministic application envelope, on stdout for success and stderr for failure, and `--cwd <dir>` resolves the Git root from another directory.
+The explicit `@latest` package specifier prevents a stale local npx cache from selecting an older CLI build.
+`--json` prints a deterministic CLI result envelope, preserving the full application result while adding the running package version in `meta.cliVersion`, on stdout for success and stderr for failure; `--cwd <dir>` resolves the Git root from another directory.
 The complete command reference in [docs/cli.md](docs/cli.md) is generated from `src/cli-contract.ts`, the same contract that renders the CLI help and agent guidance.
 In a development checkout, `node src/cli.ts project <action>` runs the same CLI; running the TypeScript entry point directly requires Node 22.18 or newer (for example Node 24), which strips types natively.
 On older Node versions, including the Node 20 floor of the package's `engines` range, the TypeScript entry point fails with an `Unknown file extension ".ts"` error, while the compiled bin has no such requirement.
@@ -168,10 +169,10 @@ Session Tasks are intentionally unavailable here because they live inside a Pi s
 
 ## Terminal goal board
 
-`pi-worklist project ui` opens an interactive board over the same Project Goals, so the roadmap can be read and edited from a shell without starting a Pi session:
+`npx -y pi-worklist@latest project ui` opens an interactive board over the same Project Goals, so the roadmap can be read and edited from a shell without starting a Pi session:
 
 ```sh
-npx -y pi-worklist project ui
+npx -y pi-worklist@latest project ui
 ```
 
 The board is a split view: the goal list on the left, the selected goal's status, timestamps, identifier, and complete description on the right.
@@ -211,7 +212,7 @@ Installing the npm package does not install the skill: the tarball carries `.cla
 
 `SKILL.md` is generated from `src/cli-contract.ts` by `scripts/generate-docs.ts`, the same contract that renders the CLI help and [docs/cli.md](docs/cli.md).
 Never hand-edit it; run `npm run docs` and commit the result, which `npm run docs:check` and the test suite both enforce.
-The generated skill is deliberately repository-neutral and invokes the CLI as `npx -y pi-worklist`, so a single file serves every checkout instead of drifting into separate global and in-repo variants.
+The generated skill is deliberately repository-neutral and invokes the CLI as `npx -y pi-worklist@latest`, so a single file serves every checkout without letting a stale npx cache select an older build.
 Working on the skill itself is the one case for symlinking `.claude/skills/worklist` into `~/.claude/skills/`, which makes the installed skill track your working tree.
 
 ## Development
