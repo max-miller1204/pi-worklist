@@ -80,7 +80,10 @@ describe("compiled pi-worklist CLI bin", () => {
 		const offenders: string[] = [];
 		const sources = await Promise.all(compiled.map(async (file) => [file, await readFile(file, "utf8")]));
 		for (const [file, source] of sources) {
-			for (const match of source.matchAll(/(?:\bfrom|\brequire\()\s*["']([^"']+)["']/g)) {
+			// A module specifier never contains whitespace or a comma, so excluding
+			// both keeps the scan from reading an ordinary string that happens to
+			// contain the word "from" as though it were an import.
+			for (const match of source.matchAll(/(?:\bfrom|\brequire\()\s*["']([^"'\s,]+)["']/g)) {
 				const specifier = match[1];
 				if (specifier.startsWith(".") || specifier.startsWith("node:")) continue;
 				const packageName = specifier.startsWith("@")
@@ -90,6 +93,23 @@ describe("compiled pi-worklist CLI bin", () => {
 			}
 		}
 		expect(offenders, "the compiled bin must not depend on an uninstalled peer").toEqual([]);
+	});
+
+	it("declares every Pi peer optional so installing the CLI stays small", async () => {
+		// npm auto-installs non-optional peers, so a peer the bin never loads is
+		// still downloaded by everyone: `npx -y pi-worklist@latest`, the invocation
+		// this package's own agent skill prescribes, pulled the entire Pi toolchain
+		// (~329 MB) to run a CLI whose real dependency tree is under 1 MB. The bin
+		// resolves without a Pi installation, asserted directly above, so nothing is
+		// lost by letting consumers who do not embed the extension skip them.
+		const manifest = parseJson<{
+			peerDependencies?: Record<string, string>;
+			peerDependenciesMeta?: Record<string, { optional?: boolean }>;
+		}>(await readFile(resolve("package.json"), "utf8"));
+		const peers = Object.keys(manifest.peerDependencies ?? {});
+		expect(peers.length).toBeGreaterThan(0);
+		const notOptional = peers.filter((peer) => manifest.peerDependenciesMeta?.[peer]?.optional !== true);
+		expect(notOptional, "every peer must be marked optional in peerDependenciesMeta").toEqual([]);
 	});
 
 	it("runs the full goal lifecycle from the compiled bin", async () => {

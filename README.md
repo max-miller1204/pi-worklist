@@ -158,7 +158,8 @@ Session Tasks are intentionally unavailable here because they live inside a Pi s
 
 ## Goal identifiers
 
-A Project Goal's ID is derived from its title when the goal is created: lowercase, hyphenated, capped near 40 characters at a word boundary, with `-2` and `-3` suffixes when a slug is already taken.
+A Project Goal's ID is derived from its title when the goal is created: lowercase, hyphenated, and capped near 40 characters at a word boundary.
+When the cap truncates a title, common dangling function words are dropped from the tail; `-2` and `-3` suffixes distinguish slugs that are already taken.
 `Support goal templates` becomes `support-goal-templates`, so an ID reads as words in a shell, a commit message, or a PR description instead of as `goal-ms6gwxrg-56c1bde6`.
 If a title would produce the old random-ID shape, minting adds a collision suffix so new slugs and legacy IDs remain permanently distinguishable.
 
