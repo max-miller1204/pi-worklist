@@ -19,6 +19,19 @@ export interface ProjectGoal {
 	status: ProjectGoalStatus;
 	createdAt: string;
 	updatedAt: string;
+	/**
+	 * IDs this goal answered to before an ID migration renamed it, oldest first.
+	 * They stay resolvable and reserved, so references written down elsewhere
+	 * keep working and no later goal can claim a name still in use.
+	 */
+	previousIds?: string[];
+}
+
+/** One goal's ID rewrite, as planned or applied by an ID migration. */
+export interface GoalIdMigration {
+	from: string;
+	to: string;
+	title: string;
 }
 
 export interface SessionSnapshot {
@@ -33,6 +46,8 @@ export interface ProjectWorklist {
 	/** Absent only in legacy version 1 files, which readers normalize to revision 0. */
 	revision?: number;
 	goals: ProjectGoal[];
+	/** IDs formerly owned by deleted goals. Reserved permanently, but not resolvable. */
+	retiredIds?: string[];
 }
 
 export interface RevisionedProjectWorklist extends ProjectWorklist {
@@ -46,6 +61,10 @@ export interface WorklistOperationResult {
 	tasks?: SessionTask[];
 	goal?: ProjectGoal;
 	goals?: ProjectGoal[];
+	/** Goal IDs reserved by deletions and excluded from resolution. */
+	retiredIds?: string[];
+	/** Project Goal ID rewrites, applied or planned, from an ID migration. */
+	migrations?: GoalIdMigration[];
 }
 
 export type WorklistToolDetails = WorklistOperationResult;

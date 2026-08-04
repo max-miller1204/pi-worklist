@@ -40,9 +40,18 @@ describe("single CLI command contract", () => {
 			expect(guide).toContain(guideline);
 		}
 		expect(guide).toContain("## Agent guidance");
-		expect(CLI_COMMAND_CONTRACT.agentGuidelines.some((guideline) => guideline.includes("--confirm"))).toBe(
-			true,
+		const confirmGuidance = CLI_COMMAND_CONTRACT.agentGuidelines.filter((guideline) =>
+			guideline.includes("--confirm"),
 		);
+		expect(confirmGuidance.length).toBeGreaterThan(0);
+		// The guidance names its actions in prose, so a newly confirm-gated action
+		// would otherwise be documented everywhere except where an agent reads the rule.
+		for (const action of CLI_COMMAND_CONTRACT.actions.filter((entry) => entry.confirmRequired)) {
+			expect(
+				confirmGuidance.some((guideline) => guideline.includes(action.name)),
+				`agent guidance never names the confirm-gated action \`${action.name}\``,
+			).toBe(true);
+		}
 	});
 
 	it("scopes action-limited flags to documented actions and states the limit everywhere", () => {
@@ -174,6 +183,7 @@ describe("single CLI command contract", () => {
 		expect(documented).toEqual([
 			"list",
 			"show",
+			"find",
 			"ui",
 			"add",
 			"update",
@@ -182,6 +192,7 @@ describe("single CLI command contract", () => {
 			"reopen",
 			"archive",
 			"delete",
+			"migrate_ids",
 			"help",
 		]);
 

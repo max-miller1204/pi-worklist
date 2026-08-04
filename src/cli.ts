@@ -2,6 +2,7 @@
 import { createRequire } from "node:module";
 import { basename } from "node:path";
 import {
+	projectGoalSelectionError,
 	type WorklistApplicationFailure,
 	type WorklistApplicationResult,
 	WorklistApplicationService,
@@ -9,9 +10,10 @@ import {
 } from "./application-service.ts";
 import { CLI_COMMAND_CONTRACT, type CliFlagContract, renderCliUsage } from "./cli-contract.ts";
 import { getWorklistPath, resolveGitRoot } from "./git.ts";
+import { matchesGoalQuery, planGoalIdMigration, resolveGoalSelector } from "./goal-selection.ts";
 import { WORKLIST_ERROR_CODES, type WorklistErrorCode, type WorklistResultMeta } from "./result-envelope.ts";
 import { runGoalBoard } from "./tui/goal-board-runtime.ts";
-import type { ProjectGoal } from "./types.ts";
+import type { GoalIdMigration, ProjectGoal, WorklistOperationResult } from "./types.ts";
 
 /**
  * Pi-free command line for Project Goals, so external agents and scripts can
@@ -38,6 +40,8 @@ interface CliInvocation {
 	/** Treat the text after `--` as an addition to the description rather than a replacement. */
 	append: boolean;
 	expectedUpdatedAt?: string;
+	/** Report what a mutation would do without writing it. */
+	dryRun: boolean;
 	json: boolean;
 	confirm: boolean;
 	cwd: string;
@@ -140,6 +144,7 @@ function parseArgs(argv: string[]): CliInvocation {
 	let json = false;
 	let confirm = false;
 	let append = false;
+	let dryRun = false;
 	let expectedUpdatedAt: string | undefined;
 	let cwd = process.cwd();
 	for (let index = 0; index < head.length; index++) {
@@ -152,6 +157,7 @@ function parseArgs(argv: string[]): CliInvocation {
 		if (part === "--json") json = true;
 		else if (part === "--confirm") confirm = true;
 		else if (part === "--append") append = true;
+		else if (part === "--dry-run") dryRun = true;
 		else if (part === "--cwd") {
 			cwd = readFlagValue(head, index, part, "a directory");
 			index++;
@@ -169,6 +175,7 @@ function parseArgs(argv: string[]): CliInvocation {
 		rest,
 		description,
 		append,
+		dryRun,
 		expectedUpdatedAt,
 		json,
 		confirm,
@@ -228,13 +235,20 @@ function formatGoalList(goals: ProjectGoal[]): string {
 
 /** Explicit full-detail read: every stored field, including the complete description. */
 function formatGoalDetail(goal: ProjectGoal): string {
+	const previousIds = goal.previousIds ?? [];
 	return [
 		`${goal.id}: ${goal.title}`,
 		`status: ${goal.status}`,
 		`created: ${goal.createdAt}`,
 		`updated: ${goal.updatedAt}`,
+		...(previousIds.length > 0 ? [`former ids: ${previousIds.join(", ")}`] : []),
 		...(goal.description !== undefined ? ["description:", goal.description] : []),
 	].join("\n");
+}
+
+function formatMigrations(migrations: readonly GoalIdMigration[], headline: string): string {
+	if (migrations.length === 0) return "No goal IDs need migration.";
+	return [headline, ...migrations.map((migration) => `  ${migration.from} -> ${migration.to}`)].join("\n");
 }
 
 /** A failed operation, carrying the full deterministic failure envelope for --json output. */
@@ -255,6 +269,61 @@ async function executeCliOperation(
 	const envelope = await service.execute(operation, { source: "cli" });
 	if (!envelope.ok) throw new WorklistCliFailure(envelope);
 	return envelope;
+}
+
+/** The goals a read action works over, listed through the shared service. */
+async function readGoals(service: WorklistApplicationService): Promise<{
+	goals: ProjectGoal[];
+	meta: WorklistResultMeta;
+}> {
+	const envelope = await executeCliOperation(service, { scope: "project", action: "list" });
+	return { goals: (envelope.ok ? envelope.result.goals : undefined) ?? [], meta: envelope.meta };
+}
+
+async function readProjectSnapshot(
+	service: WorklistApplicationService,
+	action: string,
+): Promise<{ goals: ProjectGoal[]; retiredIds: string[]; meta: WorklistResultMeta }> {
+	const envelope = await service.readProjectSnapshot(action);
+	if (!envelope.ok) throw new WorklistCliFailure(envelope);
+	return {
+		goals: envelope.result.goals ?? [],
+		retiredIds: envelope.result.retiredIds ?? [],
+		meta: envelope.meta,
+	};
+}
+
+/**
+ * The goal a read action's `<id>` argument names.
+ *
+ * Reads resolve here rather than in the application service because they never
+ * mutate, but they resolve through the same function and report the same typed
+ * failures, so a prefix or a former ID means exactly what it means everywhere.
+ */
+function selectGoal(
+	goals: readonly ProjectGoal[],
+	selector: string,
+	action: string,
+	retiredIds: readonly string[] = [],
+): ProjectGoal {
+	const resolution = resolveGoalSelector(goals, selector, retiredIds);
+	if (resolution.kind === "found") return resolution.goal;
+	throw new WorklistCliFailure({
+		ok: false,
+		scope: "project",
+		action,
+		error: projectGoalSelectionError(selector, resolution).toResultError(),
+		meta: { changed: false, semanticNoOp: false, changedFields: [] },
+	});
+}
+
+/** A read-only envelope over goals the CLI selected itself, in the shared shape. */
+function readEnvelope(
+	action: string,
+	result: WorklistOperationResult,
+	meta: WorklistResultMeta,
+): WorklistApplicationResult {
+	return { ok: true, scope: "project", action, result, meta };
 }
 
 function report(invocation: CliInvocation, envelope: WorklistApplicationResult, message: string): void {
@@ -294,6 +363,43 @@ async function runLifecycle(
 	const goal = envelope.ok ? envelope.result.goal : undefined;
 	if (!goal) throw new Error(`Project goal ${id} was not returned after ${action}`);
 	report(invocation, envelope, `Project goal ${goal.id} is now ${goal.status}`);
+}
+
+/**
+ * Rewrite generated goal IDs, or report what such a rewrite would do.
+ *
+ * A dry run plans over a plain read with the same function the mutation runs
+ * under the lock, so it stays a preview by construction: it writes nothing,
+ * needs no confirmation, and is advisory about a worklist another process may
+ * still be changing.
+ */
+async function runGoalIdMigration(
+	invocation: CliInvocation,
+	service: WorklistApplicationService,
+): Promise<void> {
+	if (invocation.dryRun) {
+		// Both flags at once asks to write and not to write. Refusing beats
+		// honoring one silently, which would read as a migration that ran.
+		if (invocation.confirm) {
+			fail(`project migrate_ids cannot combine --dry-run with --confirm\n\n${USAGE}`, 2);
+		}
+		const { goals, retiredIds, meta } = await readProjectSnapshot(service, "migrate_ids");
+		const migrations = planGoalIdMigration({ version: 1, goals, retiredIds });
+		const result = { scope: "project", action: "migrate_ids", goals, migrations } as const;
+		report(
+			invocation,
+			readEnvelope("migrate_ids", result, meta),
+			formatMigrations(migrations, `${migrations.length} goal ID(s) would change:`),
+		);
+		return;
+	}
+	const envelope = await executeCliOperation(service, {
+		scope: "project",
+		action: "migrate_ids",
+		confirm: invocation.confirm,
+	});
+	const migrations = (envelope.ok ? envelope.result.migrations : undefined) ?? [];
+	report(invocation, envelope, formatMigrations(migrations, `Migrated ${migrations.length} goal ID(s):`));
 }
 
 async function runSetActive(invocation: CliInvocation, service: WorklistApplicationService): Promise<void> {
@@ -384,31 +490,25 @@ async function run(invocation: CliInvocation): Promise<void> {
 			return;
 		}
 		case "show": {
-			const id = requireId(invocation);
-			const envelope = await executeCliOperation(service, { scope: "project", action: "list" });
-			const goal = envelope.ok ? envelope.result.goals?.find((candidate) => candidate.id === id) : undefined;
-			if (!goal) {
-				throw new WorklistCliFailure({
-					ok: false,
-					scope: "project",
-					action: "show",
-					error: {
-						code: WORKLIST_ERROR_CODES.NOT_FOUND,
-						message: `Project goal ${id} was not found.`,
-						retryable: false,
-						details: { entity: "project-goal", id, resolution: "refresh-and-select-existing" },
-					},
-					meta: { changed: false, semanticNoOp: false, changedFields: [] },
-				});
-			}
-			const detailEnvelope: WorklistApplicationResult = {
-				ok: true,
-				scope: "project",
-				action: "show",
-				result: { scope: "project", action: "show", goal },
-				meta: envelope.meta,
-			};
-			report(invocation, detailEnvelope, formatGoalDetail(goal));
+			const selector = requireId(invocation);
+			const { goals, retiredIds, meta } = await readProjectSnapshot(service, "show");
+			const goal = selectGoal(goals, selector, "show", retiredIds);
+			const detail = { scope: "project", action: "show", goal } as const;
+			report(invocation, readEnvelope("show", detail, meta), formatGoalDetail(goal));
+			return;
+		}
+		case "find": {
+			const query = invocation.rest.join(" ").trim();
+			if (!query) fail(`project find requires search text\n\n${USAGE}`, 2);
+			const { goals, meta } = await readGoals(service);
+			const matches = goals.filter((goal) => matchesGoalQuery(goal, query));
+			const result = { scope: "project", action: "find", goals: matches } as const;
+			const message = matches.length === 0 ? `No project goals match ${query}.` : formatGoalList(matches);
+			report(invocation, readEnvelope("find", result, meta), message);
+			return;
+		}
+		case "migrate_ids": {
+			await runGoalIdMigration(invocation, service);
 			return;
 		}
 		case "add": {

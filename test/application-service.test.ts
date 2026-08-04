@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import {
@@ -646,6 +646,19 @@ describe("worklist application service", () => {
 			},
 			meta: { changed: false, semanticNoOp: false, changedFields: [] },
 		});
+		await expect(service.readProjectSnapshot("migrate_ids")).resolves.toEqual({
+			ok: false,
+			scope: "project",
+			action: "migrate_ids",
+			error: {
+				code: WORKLIST_ERROR_CODES.PERSISTENCE_FAILED,
+				message:
+					"Malformed project worklist or unsupported schema. Repair .pi/worklist.json before retrying.",
+				retryable: false,
+				details: { resolution: "repair-project-file" },
+			},
+			meta: { changed: false, semanticNoOp: false, changedFields: [] },
+		});
 	});
 
 	it("applies one operation contract for tool, command, dashboard, and CLI callers", async () => {
@@ -701,6 +714,169 @@ describe("worklist application service", () => {
 				description: "One rule set",
 			}),
 		]);
+	});
+
+	it("resolves goal selectors for every interface and refuses ambiguous ones", async () => {
+		const projectPath = join(
+			await mkdtemp(join(tmpdir(), "pi-worklist-application-selector-")),
+			".pi",
+			"worklist.json",
+		);
+		const service = new WorklistApplicationService({ projectPath });
+		await service.execute({ scope: "project", action: "add", title: "Ship the CLI" }, { source: "cli" });
+		await service.execute({ scope: "project", action: "add", title: "Ship the CLI" }, { source: "cli" });
+		await service.execute(
+			{ scope: "project", action: "add", title: "Support goal templates" },
+			{ source: "tool" },
+		);
+
+		// A prefix resolves the same way whichever interface sends it.
+		for (const source of ["tool", "command", "dashboard", "cli"] as const) {
+			await expect(
+				service.execute(
+					{ scope: "project", action: "update", id: "supp", title: `Renamed by ${source}` },
+					{ source },
+				),
+			).resolves.toMatchObject({
+				ok: true,
+				result: { goal: { id: "support-goal-templates", title: `Renamed by ${source}` } },
+				meta: { changedEntities: { projectGoalIds: ["support-goal-templates"] } },
+			});
+			await expect(
+				service.execute({ scope: "project", action: "update", id: "ship", title: "Guessed" }, { source }),
+			).resolves.toMatchObject({
+				ok: false,
+				error: {
+					code: WORKLIST_ERROR_CODES.VALIDATION_FAILED,
+					details: {
+						resolution: "provide-unambiguous-goal-id",
+						candidateCount: 2,
+						candidates: [{ id: "ship-the-cli" }, { id: "ship-the-cli-2" }],
+					},
+				},
+			});
+		}
+		expect((await service.getProjectGoals()).map((goal) => goal.title)).toEqual([
+			"Ship the CLI",
+			"Ship the CLI",
+			"Renamed by cli",
+		]);
+
+		// A baseline guard applies to the goal the selector resolved to, not to the
+		// literal text the caller typed, so a prefix cannot slip past the check.
+		const resolved = (await service.getProjectGoals()).find((goal) => goal.id === "support-goal-templates");
+		await expect(
+			service.execute(
+				{
+					scope: "project",
+					action: "update",
+					id: "supp",
+					title: "Stale",
+					expectedUpdatedAt: "2020-01-01T00:00:00.000Z",
+				},
+				{ source: "cli" },
+			),
+		).resolves.toMatchObject({
+			ok: false,
+			error: {
+				code: WORKLIST_ERROR_CODES.CONFLICT,
+				conflict: { type: "goal-updated-at", id: "support-goal-templates" },
+			},
+		});
+		await expect(
+			service.execute(
+				{
+					scope: "project",
+					action: "update",
+					id: "supp",
+					title: "Fresh",
+					expectedUpdatedAt: resolved?.updatedAt,
+				},
+				{ source: "cli" },
+			),
+		).resolves.toMatchObject({ ok: true, result: { goal: { id: "support-goal-templates" } } });
+	});
+
+	it("migrates generated goal IDs only on explicit confirmation", async () => {
+		const projectPath = join(
+			await mkdtemp(join(tmpdir(), "pi-worklist-application-migrate-")),
+			".pi",
+			"worklist.json",
+		);
+		await mkdir(dirname(projectPath), { recursive: true });
+		await writeFile(
+			projectPath,
+			`${JSON.stringify({
+				version: 1,
+				revision: 1,
+				goals: [
+					{
+						id: "goal-ms6gwxrg-56c1bde6",
+						title: "Support goal templates",
+						status: "active",
+						createdAt: "2026-05-04T09:12:31.004Z",
+						updatedAt: "2026-05-04T09:12:31.004Z",
+					},
+				],
+			})}\n`,
+			"utf8",
+		);
+		const service = new WorklistApplicationService({ projectPath });
+		await expect(service.readProjectSnapshot("migrate_ids")).resolves.toMatchObject({
+			ok: true,
+			action: "migrate_ids",
+			result: {
+				goals: [{ id: "goal-ms6gwxrg-56c1bde6" }],
+				retiredIds: [],
+			},
+			meta: {
+				changed: false,
+				semanticNoOp: false,
+				revisions: { project: "1" },
+			},
+		});
+
+		const refused = await service.execute({ scope: "project", action: "migrate_ids" }, { source: "cli" });
+		expect(refused).toMatchObject({
+			ok: false,
+			error: { code: WORKLIST_ERROR_CODES.APPROVAL_REQUIRED, retryable: false },
+		});
+		expect((await service.getProjectGoals())[0].id).toBe("goal-ms6gwxrg-56c1bde6");
+
+		const migrated = await service.execute(
+			{ scope: "project", action: "migrate_ids", confirm: true },
+			{ source: "cli" },
+		);
+		expect(migrated).toMatchObject({
+			ok: true,
+			result: {
+				migrations: [{ from: "goal-ms6gwxrg-56c1bde6", to: "support-goal-templates" }],
+			},
+			meta: {
+				changed: true,
+				semanticNoOp: false,
+				changedEntities: { projectGoalIds: ["support-goal-templates"] },
+				revisions: { project: "2" },
+			},
+		});
+
+		// Whatever still refers to the goal by its old ID keeps resolving to it.
+		await expect(
+			service.execute(
+				{ scope: "project", action: "update", id: "goal-ms6gwxrg-56c1bde6", title: "Still reachable" },
+				{ source: "tool" },
+			),
+		).resolves.toMatchObject({ ok: true, result: { goal: { id: "support-goal-templates" } } });
+
+		const rerun = await service.execute(
+			{ scope: "project", action: "migrate_ids", confirm: true },
+			{ source: "cli" },
+		);
+		expect(rerun).toMatchObject({
+			ok: true,
+			result: { migrations: [] },
+			meta: { changed: false, semanticNoOp: true, revisions: { project: "3" } },
+		});
 	});
 
 	it("enforces shared validation and explicit confirmation regardless of caller", async () => {

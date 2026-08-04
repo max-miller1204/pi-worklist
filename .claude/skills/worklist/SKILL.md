@@ -1,6 +1,6 @@
 ---
 name: worklist
-description: "Manage pi-worklist Project Goals (the shared roadmap in a repo's .pi/worklist.json) from any Claude session. Use when the user asks to add, list, update, activate, complete, reopen, archive, or delete a project goal, or to capture brainstormed ideas or future goals on a project's worklist or roadmap."
+description: "Manage pi-worklist Project Goals (the shared roadmap in a repo's .pi/worklist.json) from any Claude session. Use when the user asks to add, list, find, update, activate, complete, reopen, archive, or delete a project goal; migrate goal IDs; or capture brainstormed ideas or future goals on a project's worklist or roadmap."
 ---
 
 <!-- Generated from src/cli-contract.ts by scripts/generate-docs.ts. Do not edit manually. -->
@@ -27,6 +27,7 @@ Actions:
 ```text
 list
 show <id>
+find <text...>
 ui
 add <title...> [-- <description...>]
 update <id> [title...] [-- <description...>]
@@ -35,16 +36,18 @@ complete <id> --confirm
 reopen <id> --confirm
 archive <id> --confirm
 delete <id> --confirm
+migrate_ids --confirm
 help
 ```
 
 Flags:
 
 - `--json` - Print the deterministic result envelope as JSON (stdout on success, stderr on failure).
-- `--confirm` - Acknowledge a lifecycle action; pass it only for an explicit user request.
+- `--confirm` - Acknowledge an action that requires confirmation; pass it only for an explicit user request.
 - `--cwd <dir>` - Resolve the git root from this directory instead of the working directory.
 - `--append` - Add the text after -- as a new paragraph instead of replacing the description; cannot be combined with a title change; only for project update.
 - `--expect-updated-at <timestamp>` - Refuse the change as a conflict unless the goal's updatedAt still matches this value; only for project update, set_active, complete, reopen, archive, and delete.
+- `--dry-run` - Report the ID rewrites without writing them, and without needing --confirm; only for project migrate_ids.
 
 Prefer `--json` whenever you need to read IDs, statuses, or errors back rather than parsing human output.
 `list` output is compact and omits descriptions; use `show <id>` when you need a goal's complete description.
@@ -60,26 +63,38 @@ Examples:
 ```sh
 npx -y pi-worklist@latest project list --json
 npx -y pi-worklist@latest project add Support goal templates -- Let teams share reusable goal outlines
-npx -y pi-worklist@latest project show goal-ms6gwxrg-56c1bde6 --json
-npx -y pi-worklist@latest project update goal-ms6gwxrg-56c1bde6 -- Replace only the description
-npx -y pi-worklist@latest project update goal-ms6gwxrg-56c1bde6 Support shared goal templates
-npx -y pi-worklist@latest project update goal-ms6gwxrg-56c1bde6 --append -- Blocked on the template schema until it lands
-npx -y pi-worklist@latest project update goal-ms6gwxrg-56c1bde6 --expect-updated-at 2026-05-04T09:12:31.004Z --append -- Reviewed and still current
-npx -y pi-worklist@latest project set_active goal-ms6gwxrg-56c1bde6
+npx -y pi-worklist@latest project find templates --json
+npx -y pi-worklist@latest project show support-goal-templates --json
+npx -y pi-worklist@latest project update support-goal-templates -- Replace only the description
+npx -y pi-worklist@latest project update support-goal-templates Support shared goal templates
+npx -y pi-worklist@latest project update support-goal-templates --append -- Blocked on the template schema until it lands
+npx -y pi-worklist@latest project update support-goal-templates --expect-updated-at 2026-05-04T09:12:31.004Z --append -- Reviewed and still current
+npx -y pi-worklist@latest project set_active support-goal-templates
 ```
 
-Goal IDs are opaque: read them back from `list` or `add` output instead of constructing them.
 The full generated command reference lives in the package's `docs/cli.md`, rendered from the same contract as this skill.
+
+## Goal IDs
+
+- A goal's ID is derived from its title when the goal is created and frozen from then on, so it reads as words and a later rename never invalidates a reference written down elsewhere.
+- A title-derived ID never uses the legacy random-ID shape, so `migrate_ids` can identify generated IDs without consulting a title that may have changed.
+- Read an ID back from `list`, `find`, or `add` instead of deriving it from a title yourself: truncation and collision suffixes make a guessed slug unreliable.
+- Every `<id>` argument also accepts a unique prefix of an ID, or an ID the goal answered to before `migrate_ids` renamed it.
+- An ambiguous prefix is refused with the goals it matched instead of resolved by guesswork, so widen the prefix rather than retrying it.
+- Deleting a goal permanently retires its current and former IDs: they stop resolving, but no later goal can claim them and inherit stale references.
+- `find <text>` searches titles and descriptions, so locating a goal never needs `list --json` plus client-side filtering.
 
 ## Guardrails
 
-- `complete`, `reopen`, `archive`, and `delete` are lifecycle actions reserved for explicit user intent.
-  Pass `--confirm` only when the user explicitly requested that exact action on that goal in this conversation.
+- `complete`, `reopen`, `archive`, `delete`, and `migrate_ids` are reserved for explicit user intent.
+  Pass `--confirm` only for the exact action the user requested and, when the action names a goal, only for that exact goal.
   Never pass it because a goal merely looks finished or stale.
+- `migrate_ids` names no goal and rewrites every generated ID in the repository at once, so it needs an explicit request of its own.
+  `--dry-run` reports the rewrites it would make without writing them and without `--confirm`; prefer it when you are showing the user what would change.
 - Exit code 3 (confirmation required) means the command needs `--confirm`; stop and ask the user instead of retrying with the flag.
 - Exit code 4 (conflict) means a concurrent change conflicted with yours; re-read current state with `list` or `show` before retrying.
   A conflicting change wrote nothing at all, so rebuild it against the goal you just re-read and pass that goal's new `updatedAt`.
-- `list`, `show`, `add`, `update`, and `set_active` are safe to run whenever they serve the user's request.
+- `list`, `show`, `find`, `add`, `update`, and `set_active` are safe to run whenever they serve the user's request.
 - `ui` opens a full-screen board for the human at the keyboard, not for you.
   Never run it: it holds the terminal until the user quits, and it exits with an error when stdin or stdout is not a terminal.
   Suggest `npx -y pi-worklist@latest project ui` when the user wants to browse or edit goals themselves; read state with `list` and `show` instead.
