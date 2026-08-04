@@ -1014,12 +1014,8 @@ export class WorklistApplicationService {
 		return {
 			...operation,
 			...(operation.id ? { id: resolve(operation.id, "id") } : {}),
-			...(operation.beforeId !== undefined
-				? { beforeId: resolve(operation.beforeId, "beforeId") }
-				: {}),
-			...(operation.afterId !== undefined
-				? { afterId: resolve(operation.afterId, "afterId") }
-				: {}),
+			...(operation.beforeId !== undefined ? { beforeId: resolve(operation.beforeId, "beforeId") } : {}),
+			...(operation.afterId !== undefined ? { afterId: resolve(operation.afterId, "afterId") } : {}),
 		};
 	}
 

@@ -1,9 +1,4 @@
-import {
-	findGoalByStoredId,
-	generateGoalId,
-	planGoalIdMigration,
-	takenGoalIds,
-} from "./goal-selection.ts";
+import { findGoalByStoredId, generateGoalId, planGoalIdMigration, takenGoalIds } from "./goal-selection.ts";
 import { mutateProjectWorklist, type ProjectMutationOptions, readProjectWorklist } from "./project-store.ts";
 import type { GoalIdMigration, ProjectGoal, ProjectGoalPlacement, ProjectGoalStatus } from "./types.ts";
 
@@ -458,9 +453,7 @@ export async function deleteProjectGoal(
 		path,
 		(worklist) => {
 			const removed = findGoalByStoredId(worklist.goals, id, worklist.retiredIds ?? []);
-			const goals = removed
-				? worklist.goals.filter((goal) => goal.id !== removed.id)
-				: worklist.goals;
+			const goals = removed ? worklist.goals.filter((goal) => goal.id !== removed.id) : worklist.goals;
 			const retiredIds = removed
 				? [...new Set([...(worklist.retiredIds ?? []), removed.id, ...(removed.previousIds ?? [])])]
 				: worklist.retiredIds;

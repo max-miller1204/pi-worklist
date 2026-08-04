@@ -440,15 +440,11 @@ describe("goal board reordering", () => {
 
 	it("accepts shift+arrows for the terminals that report them", () => {
 		const board = createBoard();
-		expect(press(board, `${ESC}[1;2B`)).toMatchObject([
-			{ kind: "reorder", goalId: "g-active", delta: 1 },
-		]);
+		expect(press(board, `${ESC}[1;2B`)).toMatchObject([{ kind: "reorder", goalId: "g-active", delta: 1 }]);
 		// A plain arrow is still navigation, not a reorder.
 		expect(press(board, `${ESC}[B`)).toEqual([]);
 		expect(board.selectedGoal?.id).toBe("g-open-1");
-		expect(press(board, `${ESC}[1;2A`)).toMatchObject([
-			{ kind: "reorder", goalId: "g-open-1", delta: -1 },
-		]);
+		expect(press(board, `${ESC}[1;2A`)).toMatchObject([{ kind: "reorder", goalId: "g-open-1", delta: -1 }]);
 	});
 
 	it("anchors on the visible neighbour, skipping the rows a filter hides", () => {

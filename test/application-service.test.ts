@@ -934,10 +934,7 @@ describe("worklist application service", () => {
 		await service.execute({ scope: "project", action: "add", title: "First follow-up" }, { source: "cli" });
 		for (const field of ["beforeId", "afterId"] as const) {
 			await expect(
-				service.execute(
-					{ scope: "project", action: "move", id: "third", [field]: "fir" },
-					{ source: "cli" },
-				),
+				service.execute({ scope: "project", action: "move", id: "third", [field]: "fir" }, { source: "cli" }),
 			).resolves.toMatchObject({
 				ok: false,
 				error: {
