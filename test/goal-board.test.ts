@@ -177,6 +177,9 @@ describe("goal board presentation", () => {
 			frame.some((line) => line.includes(`${DIM}${title}`));
 		expect(dimmedTitle(board.render(100, 20).lines, "Ship the CLI")).toBe(true);
 		expect(dimmedTitle(board.render(100, 20).lines, "Add focus mode")).toBe(false);
+		press(board, "gjjj\r");
+		expect(board.selectedGoal?.id).toBe("g-done");
+		expect(dimmedTitle(board.render(100, 20).lines, "Ship the CLI")).toBe(false);
 
 		// A list of nothing but done goals has no live work to recede behind.
 		const done = createBoard(GOALS, true);

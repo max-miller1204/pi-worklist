@@ -834,11 +834,12 @@ export class GoalBoard {
 		// selected row always keeps full contrast so the cursor is never the dim one.
 		const emphasized = isSelected && this.focus === "list";
 		const settled = goal.status === "done" || goal.status === "archived";
+		const dimmed = this.filter === "all" && settled && !isSelected;
 		const label = isPinned(goal)
 			? accent(emphasized ? bold(title) : title)
 			: emphasized
 				? bold(title)
-				: this.filter === "all" && settled
+				: dimmed
 					? dim(title)
 					: title;
 		const row = ` ${pointer} ${marker} ${label}`;
