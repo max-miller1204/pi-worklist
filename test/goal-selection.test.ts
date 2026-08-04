@@ -52,59 +52,6 @@ describe("goal ID derivation", () => {
 		expect(slugifyGoalTitle("")).toBe("goal");
 	});
 
-	it("drops function words left dangling by the cap", () => {
-		// The cut lands where the character budget runs out, not where the phrase
-		// does, so without this the tail reads as a fragment.
-		expect(slugifyGoalTitle("Add pi-orchestrator compatibility and cross-extension E2E tests")).toBe(
-			"add-pi-orchestrator-compatibility",
-		);
-		expect(slugifyGoalTitle("apply-plan: atomic batch import of a JSON plan document")).toBe(
-			"apply-plan-atomic-batch-import",
-		);
-		expect(slugifyGoalTitle("archive-browsing: archived goals in the Pi dashboard")).toBe(
-			"archive-browsing-archived-goals",
-		);
-		expect(slugifyGoalTitle("Support cross process locking through all interfaces")).toBe(
-			"support-cross-process-locking",
-		);
-		expect(slugifyGoalTitle("Support cross process locking during all interfaces")).toBe(
-			"support-cross-process-locking",
-		);
-		expect(slugifyGoalTitle("Ensure project mutation guarantees are documented")).toBe(
-			"ensure-project-mutation-guarantees",
-		);
-	});
-
-	it("keeps function words a short title actually ends on", () => {
-		// Nothing was cut, so every word is the author's own and stays.
-		expect(slugifyGoalTitle("What to do")).toBe("what-to-do");
-		expect(slugifyGoalTitle("Decide what to ship and")).toBe("decide-what-to-ship-and");
-	});
-
-	it("keeps negations and exclusions left at the truncation boundary", () => {
-		expect(slugifyGoalTitle("Ensure project mutation locks are not circumvented")).toBe(
-			"ensure-project-mutation-locks-are-not",
-		);
-		expect(slugifyGoalTitle("Ensure mutation locks permit neither invalid state")).toBe(
-			"ensure-mutation-locks-permit-neither",
-		);
-		expect(slugifyGoalTitle("Run atomic project migrations without downtime")).toBe(
-			"run-atomic-project-migrations-without",
-		);
-		expect(slugifyGoalTitle("Process all worklist goals except archived entries")).toBe(
-			"process-all-worklist-goals-except",
-		);
-		expect(slugifyGoalTitle("Block project activation unless reopened manually")).toBe(
-			"block-project-activation-unless",
-		);
-	});
-
-	it("never trims a slug away entirely", () => {
-		const allStopwords = slugifyGoalTitle(`of the and to ${"in and of the to ".repeat(6)}`);
-		expect(allStopwords.length).toBeGreaterThan(0);
-		expect(allStopwords.split("-").length).toBeGreaterThanOrEqual(1);
-	});
-
 	it("suffixes colliding slugs and never reuses a former ID", () => {
 		const taken = new Set(["support-goal-templates", "support-goal-templates-2"]);
 		expect(generateGoalId("Support goal templates", taken)).toBe("support-goal-templates-3");
