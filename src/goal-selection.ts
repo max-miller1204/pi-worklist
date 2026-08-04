@@ -33,53 +33,17 @@ const LEGACY_GOAL_ID_PATTERN = /^goal-[0-9a-z]+-[0-9a-f]{8}$/;
 export const MAX_REPORTED_GOAL_CANDIDATES = 10;
 
 /**
- * Function words that read as a dangling fragment at the end of a truncated slug.
- *
- * Only the tail of a slug the cap already cut is trimmed, never a slug short
- * enough to survive whole: a title really called "What to do" should keep its
- * own words, while `...batch import of a JSON plan document` should not leave
- * `of-a` hanging off the end.
- */
-const TRAILING_SLUG_STOPWORDS = new Set([
-	"a",
-	"an",
-	"and",
-	"as",
-	"at",
-	"but",
-	"by",
-	"for",
-	"from",
-	"in",
-	"into",
-	"is",
-	"of",
-	"on",
-	"or",
-	"that",
-	"the",
-	"to",
-	"with",
-]);
-
-/** Drops dangling function words, always keeping at least one segment. */
-function dropTrailingStopwords(slug: string): string {
-	const segments = slug.split("-");
-	while (segments.length > 1 && TRAILING_SLUG_STOPWORDS.has(segments[segments.length - 1])) {
-		segments.pop();
-	}
-	return segments.join("-");
-}
-
-/**
  * The slug a title yields, before collision handling.
  *
  * Accented and non-Latin characters decompose to ASCII where they can and are
  * dropped where they cannot, so the result is always shell-safe and typeable.
  *
- * A slug the cap had to cut also loses any function words left dangling at the
- * end, because the cut lands wherever the character budget runs out rather than
- * where the phrase does.
+ * A truncated slug keeps whatever word the cap left at its end, including a
+ * function word: `add-pi-orchestrator-compatibility-and` is accepted. Trimming
+ * those tails was tried and abandoned, because no word list separates the ones
+ * that only shorten a name from the ones that reverse it. Dropping `off` from
+ * `keep-safe-checks-off` yields an ID asserting the opposite of its goal, and
+ * an identifier that misleads is worse than one that reads a little abruptly.
  */
 export function slugifyGoalTitle(title: string): string {
 	const ascii = title.normalize("NFKD").replace(/\p{Diacritic}/gu, "");
@@ -91,8 +55,8 @@ export function slugifyGoalTitle(title: string): string {
 	if (slug.length <= GOAL_ID_MAX_LENGTH) return slug;
 	const capped = slug.slice(0, GOAL_ID_MAX_LENGTH);
 	const boundary = capped.lastIndexOf("-");
-	const truncated = boundary >= MIN_WORD_BOUNDARY_LENGTH ? capped.slice(0, boundary) : capped;
-	return dropTrailingStopwords(truncated.replace(/-+$/, ""));
+	if (boundary >= MIN_WORD_BOUNDARY_LENGTH) return capped.slice(0, boundary);
+	return capped.replace(/-+$/, "");
 }
 
 /** Every live or retired ID reserved across the whole worklist. */
