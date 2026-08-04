@@ -32,6 +32,23 @@ function parseJson<T>(text: string): T {
 	}
 }
 
+interface PackedPackage {
+	files: Array<{ path: string }>;
+}
+
+/**
+ * The packed packages reported by `npm pack --json`.
+ *
+ * npm has emitted two shapes for this payload: an array of results through
+ * npm 11, and an object keyed by package name from npm 12. Both describe the
+ * same tarball, and this test only asserts what that tarball contains, so it
+ * reads either rather than failing on whichever npm happens to be installed.
+ */
+function packedPackages(stdout: string): PackedPackage[] {
+	const parsed = parseJson<PackedPackage[] | Record<string, PackedPackage>>(stdout);
+	return Array.isArray(parsed) ? parsed : Object.values(parsed);
+}
+
 describe("compiled pi-worklist CLI bin", () => {
 	beforeAll(async () => {
 		await execFileAsync("npm", ["run", "build"], { cwd: resolve(".") });
@@ -112,8 +129,11 @@ describe("compiled pi-worklist CLI bin", () => {
 			cwd: resolve("."),
 			maxBuffer: 10 * 1024 * 1024,
 		});
-		const [pack] = parseJson<Array<{ files: Array<{ path: string }> }>>(stdout);
-		const paths = pack.files.map((file) => file.path);
+		const packs = packedPackages(stdout);
+		// One package is packed, so an empty list means the payload was read wrong
+		// rather than that the tarball is missing files.
+		expect(packs).toHaveLength(1);
+		const paths = packs[0].files.map((file) => file.path);
 		expect(paths).toContain("dist/cli.js");
 		expect(paths).toContain("src/extension.ts");
 
