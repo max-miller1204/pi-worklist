@@ -267,7 +267,10 @@ describe("worklist application service", () => {
 				{ scope: "project", action: "add", title: "New", appendDescription: "Add" },
 				"only supported for project update",
 			],
-			[{ scope: "project", action: "update", id, title: "New", expectedUpdatedAt: "   " }, "must not be blank"],
+			[
+				{ scope: "project", action: "update", id, title: "New", expectedUpdatedAt: "   " },
+				"must not be blank",
+			],
 			[
 				{
 					scope: "project",

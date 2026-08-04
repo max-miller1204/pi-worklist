@@ -77,7 +77,7 @@ const GLOBAL_FLAGS_BY_NAME: ReadonlyMap<string, CliFlagContract> = new Map(
 );
 
 /**
- * Warns when a global flag was written after the `--` separator.
+ * Warns when a known flag was written after the `--` separator.
  *
  * Every token after the separator is description text, so a trailing `--json`
  * silently becomes part of the description instead of selecting JSON output,

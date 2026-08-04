@@ -138,7 +138,8 @@ export const CLI_COMMAND_CONTRACT = {
 		{
 			name: "--append",
 			usage: "--append",
-			summary: "Add the text after -- as a new paragraph instead of replacing the description",
+			summary:
+				"Add the text after -- as a new paragraph instead of replacing the description; cannot be combined with a title change",
 			actions: ["update"],
 		},
 		{
@@ -170,7 +171,7 @@ export const CLI_COMMAND_CONTRACT = {
 		"Treat exit code 4 as a concurrent-change conflict: re-read current state before retrying.",
 		"Use list for orientation and show <id> when you need a goal's complete description.",
 		"Add a note with --append instead of resending a description you did not write, so nothing in the existing text can be lost in transcription.",
-		"Pass --expect-updated-at with the updatedAt from your own read whenever you change a goal, so a concurrent edit conflicts instead of being silently overwritten.",
+		"Pass --expect-updated-at with the updatedAt from your own read whenever you change a goal, so your mutation conflicts if the goal changed in the meantime.",
 		"Broad outcomes belong in Project Goals; do not mirror your internal step-by-step plan into them.",
 	],
 } as const;
@@ -303,7 +304,7 @@ export function renderSkillMarkdown(): string {
 		"`update <id> --` with nothing after the separator clears the description.",
 		"`update <id> --append -- <text>` adds that text as a new paragraph instead, so recording a note never rewrites, and never risks losing, prose you did not author.",
 		"`--expect-updated-at <updatedAt>`, copied from your own `show` of that goal, refuses the change when someone edited the goal after you read it.",
-		"Pass it on every change you make to a goal you did not just create: without it, a concurrent edit is silently overwritten rather than reported.",
+		"Pass it on every change you make to a goal you did not just create: without it, your mutation proceeds even if the goal changed after you read it.",
 		"",
 		"Examples:",
 		"",

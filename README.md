@@ -24,7 +24,7 @@ Project Goals track the larger outcomes shared by every Pi session in a Git repo
 - `npx -y pi-worklist@latest project ui` opens a dependency-free terminal board for browsing and editing Project Goals outside Pi.
 - An installable agent skill, generated from the same command contract as the CLI, teaches coding agents to drive that CLI in any repository.
 - Project Goal completion, reopening, archival, and deletion require explicit user intent.
-- Cross-process locking and atomic replacement prevent concurrent Pi processes from losing updates or corrupting the project file.
+- Cross-process locking and atomic replacement serialize writes and prevent project-file corruption; optional goal baselines detect stale mutations.
 
 ## Install
 
@@ -139,12 +139,12 @@ npx -y pi-worklist@latest project set_active <id>
 npx -y pi-worklist@latest project complete <id> --confirm
 ```
 
-The CLI routes every mutation through the same service, cross-process lock, and atomic replacement as a live Pi session, so concurrent use is safe.
+The CLI routes every mutation through the same service, cross-process lock, and atomic replacement as a live Pi session, so physical writes are serialized and atomic.
 `list` output is deliberately compact without descriptions; `show <id>` prints one goal in full detail.
 Lifecycle actions (`complete`, `reopen`, `archive`, `delete`) require `--confirm`, mirroring the model tool's explicit-intent rule; an omitted flag exits with code 3 and changes nothing.
 `--append` adds the text after `--` as a new paragraph instead of replacing the description, so recording a note never re-sends, and never risks losing, prose the caller did not write.
 `--expect-updated-at <timestamp>` carries the goal's `updatedAt` from the caller's own read, and applies to `update`, `set_active`, and the lifecycle actions.
-Without it, two callers that both read and then write silently overwrite each other, because the cross-process lock serializes writes without noticing that the second caller's baseline went stale.
+Without it, a mutation built on a stale read proceeds unreported; a full description replacement can silently overwrite newer prose because the cross-process lock serializes writes without tracking the caller's baseline.
 Exit code 4 reports a concurrent-change conflict, whether the file-wide revision or a single goal moved; nothing is written, so re-read current state, rebuild the change on it, and retry.
 The explicit `@latest` package specifier prevents a stale local npx cache from selecting an older CLI build.
 `--json` prints a deterministic CLI result envelope, preserving the full application result while adding the running package version in `meta.cliVersion`, on stdout for success and stderr for failure; `--cwd <dir>` resolves the Git root from another directory.
