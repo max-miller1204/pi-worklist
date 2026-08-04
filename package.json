@@ -1,6 +1,6 @@
 {
 	"name": "pi-worklist",
-	"version": "0.8.2",
+	"version": "0.9.0",
 	"description": "A Pi extension for session tasks and project goals.",
 	"type": "module",
 	"keywords": [
