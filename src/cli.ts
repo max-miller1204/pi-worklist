@@ -9,11 +9,7 @@ import {
 } from "./application-service.ts";
 import { CLI_COMMAND_CONTRACT, type CliFlagContract, renderCliUsage } from "./cli-contract.ts";
 import { getWorklistPath, resolveGitRoot } from "./git.ts";
-import {
-	WORKLIST_ERROR_CODES,
-	type WorklistErrorCode,
-	type WorklistResultMeta,
-} from "./integration-contract.ts";
+import { WORKLIST_ERROR_CODES, type WorklistErrorCode, type WorklistResultMeta } from "./result-envelope.ts";
 import { runGoalBoard } from "./tui/goal-board-runtime.ts";
 import type { ProjectGoal } from "./types.ts";
 

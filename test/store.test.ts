@@ -43,6 +43,30 @@ describe("project store", () => {
 		expect(JSON.parse(await readFile(path, "utf8"))).toEqual({ version: 1, revision: 1, goals: [] });
 	});
 
+	it("accepts legacy externalMutations values and preserves unknown keys across mutations", async () => {
+		const path = await tempPath();
+		await mkdir(join(path, ".."), { recursive: true });
+		const worklist = {
+			version: 1,
+			revision: 7,
+			goals: [],
+			externalMutations: { legacy: "non-array value" },
+			consumerMetadata: { preserved: true },
+		};
+		await writeFile(path, `${JSON.stringify(worklist, null, 2)}\n`);
+
+		expect(isProjectWorklist(worklist)).toBe(true);
+		expect((await readProjectWorklist(path)).data).toMatchObject(worklist);
+
+		const mutation = await mutateProjectWorklist(
+			path,
+			(current) => ({ worklist: current, result: "updated" }),
+			{ expectedRevision: "7" },
+		);
+		expect(mutation).toEqual({ data: "updated", revision: 8 });
+		expect(JSON.parse(await readFile(path, "utf8"))).toEqual({ ...worklist, revision: 8 });
+	});
+
 	it("refuses to overwrite malformed data", async () => {
 		const path = await tempPath();
 		await mkdir(join(path, ".."), { recursive: true });

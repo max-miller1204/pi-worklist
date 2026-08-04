@@ -5,9 +5,9 @@
       "id": "future-start-goal",
       "title": "Integrate Project Goal launch with pi-orchestrator",
       "description": "Let the user select a Project Goal from the Worklist dashboard and request orchestration through a versioned capability handshake. Show the action only when pi-orchestrator is available, pass the stable goal ID and current goal revision, preserve explicit approval before execution, and keep retry, cancellation, logs, evidence, and run control in the orchestrator rather than duplicating those controls in pi-worklist.",
-      "status": "open",
+      "status": "archived",
       "createdAt": "2026-07-13T00:00:00.000Z",
-      "updatedAt": "2026-07-30T20:36:13.993Z"
+      "updatedAt": "2026-08-04T00:20:56.716Z"
     },
     {
       "id": "future-promote",
@@ -109,17 +109,17 @@
       "id": "goal-mrz9kb00-72e82709",
       "title": "Add orchestration-aware Worklist UI",
       "description": "Show managed-task badges, projected execution state, failures, and bounded run or result references in the Worklist dashboard and widget. Provide an action that opens the associated pi-orchestrator run while keeping retry, cancellation, logs, artifacts, evidence, and recovery controls in pi-orchestrator.",
-      "status": "open",
+      "status": "archived",
       "createdAt": "2026-07-24T18:18:33.264Z",
-      "updatedAt": "2026-07-24T18:18:33.264Z"
+      "updatedAt": "2026-08-04T00:20:56.808Z"
     },
     {
       "id": "goal-mrz9kb01-0b0a7daa",
       "title": "Add pi-orchestrator compatibility and cross-extension E2E tests",
       "description": "Exercise capability negotiation, Project Goal selection, atomic projection reconciliation, deterministic result envelopes, typed conflicts, semantic no-ops, user overrides, /tree, /fork, /clone, /resume, session replacement, recovery, absent or incompatible orchestrator versions, and explicit Project Goal completion boundaries in real Pi integration tests.",
-      "status": "open",
+      "status": "archived",
       "createdAt": "2026-07-24T18:18:33.265Z",
-      "updatedAt": "2026-07-30T20:12:46.613Z"
+      "updatedAt": "2026-08-04T00:20:56.896Z"
     },
     {
       "id": "goal-mrza1h0o-24e2abdf",
@@ -162,5 +162,5 @@
       "updatedAt": "2026-08-03T21:21:05.707Z"
     }
   ],
-  "revision": 35
+  "revision": 38
 }

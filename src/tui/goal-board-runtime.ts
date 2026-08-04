@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import type { WorklistApplicationService, WorklistOperation } from "../application-service.ts";
-import { WORKLIST_ERROR_CODES } from "../integration-contract.ts";
+import { WORKLIST_ERROR_CODES } from "../result-envelope.ts";
 import type { ProjectGoal } from "../types.ts";
 import type { BoardIntent } from "./goal-board.ts";
 import { GoalBoard } from "./goal-board.ts";

@@ -5,7 +5,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { describe, expect, it } from "vitest";
 import worklistExtension from "../src/extension.ts";
 import { formatSessionTasks } from "../src/format.ts";
-import { WORKLIST_ERROR_CODES } from "../src/integration-contract.ts";
+import { WORKLIST_ERROR_CODES } from "../src/result-envelope.ts";
 import { SESSION_SNAPSHOT_TYPE, SessionStore } from "../src/session-store.ts";
 import { executeWorklist } from "../src/tool.ts";
 
@@ -168,31 +168,18 @@ describe("session state and tool", () => {
 		expect(snapshot.tasks).toEqual([{ id: "stable-task", title: "Legacy task", status: "doing" }]);
 	});
 
-	it("preserves valid managed projections while keeping them out of normal task reads", async () => {
+	it("reads v3 snapshots carrying legacy orchestrator metadata and sheds it on the next write", async () => {
 		const { api, entries } = fakePi();
 		const store = new SessionStore(api);
-		const managed = {
-			version: 1,
-			owner: "pi-orchestrator",
-			producer: { id: "pi-orchestrator", version: "0.8.0" },
-			external: { system: "pi-orchestrator", kind: "workflow-step", id: "step-secret" },
-			planRevision: 4,
-			approvedPlanRevision: 3,
-			createdAt: "2026-07-24T20:00:00.000Z",
-			updatedAt: "2026-07-24T20:05:00.000Z",
-			execution: {
-				state: "running",
-				updatedAt: "2026-07-24T20:05:00.000Z",
-				runId: "run-secret",
-				summary: "private projected summary",
-				runReference: "pi-orchestrator://runs/run-secret",
-			},
-			resultReference: "pi-orchestrator://results/result-secret",
-			sessionContributionReference: "pi://sessions/session-secret#entry-secret",
-		};
 		store.reconstruct({
 			sessionManager: {
 				getBranch: () => [
+					{
+						type: "custom",
+						id: "receipt-entry",
+						customType: "worklist-session-reconciliation-receipt",
+						data: { idempotencyKey: "legacy-key", fingerprint: "legacy", goalId: "goal-1", tasks: [] },
+					},
 					{
 						type: "custom",
 						id: "managed-snapshot",
@@ -206,7 +193,22 @@ describe("session state and tool", () => {
 									title: "Projected work",
 									status: "todo",
 									goalId: "goal-1",
-									managed,
+									managed: {
+										version: 1,
+										owner: "pi-orchestrator",
+										external: { system: "pi-orchestrator", kind: "workflow-step", id: "step-1" },
+									},
+								},
+							],
+							projectionReconciliations: [
+								{ idempotencyKey: "legacy-key", fingerprint: "legacy", goalId: "goal-1", tasks: [] },
+							],
+							managedOverrideTombstones: [
+								{
+									external: { system: "pi-orchestrator", kind: "workflow-step", id: "step-2" },
+									taskId: "deleted-task",
+									goalId: "goal-1",
+									overriddenAt: "2026-07-24T20:00:00.000Z",
 								},
 							],
 						},
@@ -218,16 +220,19 @@ describe("session state and tool", () => {
 		expect(store.getTasks()).toEqual([
 			{ id: "managed-task", title: "Projected work", status: "todo", goalId: "goal-1" },
 		]);
+		expect(store.getRevision()).toBe("managed-revision");
+
 		const outcome = await store.setTaskStatus("managed-task", "doing", {
 			expectedRevision: "managed-revision",
 		});
 		expect(outcome.result).not.toHaveProperty("managed");
-		const snapshot = (entries.at(-1) as { data: { tasks: Array<Record<string, unknown>> } }).data;
-		expect(snapshot.tasks[0]).toMatchObject({
-			id: "managed-task",
-			status: "doing",
-			managed,
-		});
+		const snapshot = (entries.at(-1) as { data: Record<string, unknown> }).data;
+		expect(snapshot.version).toBe(3);
+		expect(snapshot.tasks).toEqual([
+			{ id: "managed-task", title: "Projected work", status: "doing", goalId: "goal-1" },
+		]);
+		expect(snapshot).not.toHaveProperty("projectionReconciliations");
+		expect(snapshot).not.toHaveProperty("managedOverrideTombstones");
 	});
 
 	it("ignores snapshots with unsupported versions", () => {

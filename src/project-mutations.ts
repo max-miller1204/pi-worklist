@@ -1,19 +1,11 @@
 import {
-	approvedGoalBatchFingerprint,
-	boundProjectExternalMutationRecords,
-	normalizeProjectExternalMutationRecord,
-} from "./approved-goal-batches.ts";
-import type { ApprovedProjectGoalInput, ExplicitGoalBatchApproval } from "./integration-contract.ts";
-import type { ExternalWorkItemIdentity } from "./managed-projection.ts";
-import {
 	generateId,
 	mutateProjectWorklist,
 	type ProjectMutationOptions,
-	ProjectRevisionConflictError,
 	readProjectWorklist,
 	sortGoals,
 } from "./project-store.ts";
-import type { ProjectExternalMutationRecord, ProjectGoal, ProjectGoalStatus } from "./types.ts";
+import type { ProjectGoal, ProjectGoalStatus } from "./types.ts";
 
 /**
  * Pi-free Project Goal persistence primitives.
@@ -268,133 +260,6 @@ export async function transitionProjectGoal(
 	if (result.error) throw new Error(result.error);
 	if (!result.data) throw new ProjectGoalNotFoundError(id);
 	return mutationOutcome({ ...result, data: result.data });
-}
-
-export interface ApprovedBatchCreationInput {
-	idempotencyKey: string;
-	expectedProjectRevision?: string;
-	approval: ExplicitGoalBatchApproval;
-	goals: ApprovedProjectGoalInput[];
-}
-
-export interface CreatedApprovedGoal {
-	external: ExternalWorkItemIdentity;
-	goal: ProjectGoal;
-}
-
-export type ApprovedBatchCreationOutcome =
-	| {
-			kind: "created";
-			createdGoals: CreatedApprovedGoal[];
-			goals: ProjectGoal[];
-			revision: string;
-			changed: true;
-	  }
-	| { kind: "replayed"; createdGoals: CreatedApprovedGoal[]; revision: string; changed: false }
-	| { kind: "idempotency-key-conflict"; revision: string; changed: false }
-	| {
-			kind: "replayed-goal-missing";
-			goalId: string;
-			external: ExternalWorkItemIdentity;
-			revision: string;
-			changed: false;
-	  };
-
-/**
- * Creates every approved goal atomically or creates nothing.
- *
- * Under the store lock, an identical idempotency-key replay wins before
- * expected-revision validation, and a new mutation checks its expected revision
- * before any canonical write. Validation of the approval evidence itself belongs
- * to the application service; this primitive only persists.
- */
-export async function createApprovedProjectGoalBatch(
-	path: string,
-	input: ApprovedBatchCreationInput,
-): Promise<ApprovedBatchCreationOutcome> {
-	type MutationOutcome =
-		| { kind: "created"; createdGoals: CreatedApprovedGoal[]; goals: ProjectGoal[]; changed: true }
-		| { kind: "replayed"; createdGoals: CreatedApprovedGoal[]; changed: false }
-		| { kind: "idempotency-key-conflict"; changed: false }
-		| {
-				kind: "replayed-goal-missing";
-				goalId: string;
-				external: ExternalWorkItemIdentity;
-				changed: false;
-		  };
-
-	const fingerprint = approvedGoalBatchFingerprint(input.approval, input.goals);
-	const result = await mutateProjectWorklist<MutationOutcome>(path, (worklist) => {
-		const existing = (worklist.externalMutations ?? [])
-			.map(normalizeProjectExternalMutationRecord)
-			.find((candidate) => candidate?.idempotencyKey === input.idempotencyKey);
-		if (existing) {
-			if (existing.fingerprint !== fingerprint) {
-				return { worklist, result: { kind: "idempotency-key-conflict", changed: false }, changed: false };
-			}
-			const createdGoals: CreatedApprovedGoal[] = [];
-			for (const created of existing.createdGoals) {
-				const goal = worklist.goals.find((candidate) => candidate.id === created.goalId);
-				if (!goal) {
-					return {
-						worklist,
-						result: {
-							kind: "replayed-goal-missing",
-							goalId: created.goalId,
-							external: created.external,
-							changed: false,
-						},
-						changed: false,
-					};
-				}
-				createdGoals.push({ external: created.external, goal });
-			}
-			return { worklist, result: { kind: "replayed", createdGoals, changed: false }, changed: false };
-		}
-
-		if (
-			input.expectedProjectRevision !== undefined &&
-			input.expectedProjectRevision !== String(worklist.revision)
-		) {
-			throw new ProjectRevisionConflictError(input.expectedProjectRevision, String(worklist.revision));
-		}
-
-		const now = new Date().toISOString();
-		const createdGoals: CreatedApprovedGoal[] = input.goals.map((approved) => ({
-			external: {
-				system: approved.external.system,
-				kind: approved.external.kind,
-				id: approved.external.id,
-			},
-			goal: {
-				id: generateId("goal"),
-				title: approved.title,
-				...(approved.description !== undefined ? { description: approved.description } : {}),
-				status: "open" as const,
-				createdAt: now,
-				updatedAt: now,
-			},
-		}));
-		const record: ProjectExternalMutationRecord = {
-			idempotencyKey: input.idempotencyKey,
-			fingerprint,
-			operation: "project-goals.create-approved-batch",
-			approvalId: input.approval.approvalId,
-			createdGoals: createdGoals.map(({ external, goal }) => ({ external, goalId: goal.id })),
-		};
-		const goals = sortGoals([...worklist.goals, ...createdGoals.map(({ goal }) => goal)]);
-		const externalMutations = boundProjectExternalMutationRecords([
-			...(worklist.externalMutations ?? []),
-			record,
-		]);
-		return {
-			worklist: { ...worklist, goals, externalMutations },
-			result: { kind: "created", createdGoals, goals, changed: true },
-		};
-	});
-	if (result.error) throw new Error(result.error);
-	if (result.revision === undefined) throw new Error("Project mutation did not return a revision");
-	return { ...result.data, revision: String(result.revision) } as ApprovedBatchCreationOutcome;
 }
 
 export async function deleteProjectGoal(

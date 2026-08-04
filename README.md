@@ -24,9 +24,7 @@ Project Goals track the larger outcomes shared by every Pi session in a Git repo
 - `npx -y pi-worklist@latest project ui` opens a dependency-free terminal board for browsing and editing Project Goals outside Pi.
 - An installable agent skill, generated from the same command contract as the CLI, teaches coding agents to drive that CLI in any repository.
 - Project Goal completion, reopening, archival, and deletion require explicit user intent.
-- Managed Session Task operations accept only existing open or active Project Goal associations and detect edits to the selected goal before reconciliation.
 - Cross-process locking and atomic replacement prevent concurrent Pi processes from losing updates or corrupting the project file.
-- A versioned inter-extension contract defines bounded, capability-negotiated integration over Pi's shared event bus.
 
 ## Install
 
@@ -95,19 +93,14 @@ The model-facing tool instead requires `confirm=true`, and its prompt rules proh
 
 Session Tasks are stored as versioned Pi custom entries in the current session tree.
 Each snapshot carries an opaque concurrency token that follows the active `/tree`, `/fork`, `/clone`, or resumed branch.
-Snapshot version 3 can retain a validated version 1 managed projection on a task with a non-empty Project Goal association.
-The projection contains the producer and external workflow-step identity, approved plan revision, orchestration run ID, timestamps, lightweight read-only execution state, and bounded result or session-contribution references.
-Managed metadata without a Project Goal ID is detached during snapshot migration rather than being persisted as an orchestrator-managed task.
-Attempts, retries, logs, dependencies, artifacts, evidence, and recovery remain canonical in pi-orchestrator and are omitted during projection normalization.
-Snapshots written by earlier releases are still loaded, derive their token from the Pi custom entry ID when necessary, retain existing task IDs, and drop legacy descriptions during in-memory migration.
+Snapshots written by earlier releases are still loaded, derive their token from the Pi custom entry ID when necessary, retain existing task IDs, and drop legacy descriptions and legacy orchestrator metadata during in-memory migration.
 The next Session Task mutation writes the migrated state as snapshot version 3.
 A branch without a snapshot uses the opaque baseline token `0`.
 Completed tasks remain in canonical queue order.
-Ordinary Session Task reads and mutation results omit managed metadata.
 Only the active goal and an intentionally bounded list of incomplete task titles and statuses are added to the current turn's system prompt, preserving their relative queue order.
 
 Project Goals use a schema-versioned JSON file at `.pi/worklist.json` in the canonical Git root.
-The file carries a monotonic numeric revision, while application and protocol callers receive that revision as an opaque string.
+The file carries a monotonic numeric revision, while application callers receive that revision as an opaque string.
 Legacy files without a revision remain readable at revision `0` and gain revision `1` on their next mutation.
 Optional expected-revision checks run under the same cross-process lock as persistence and return a typed conflict without rewriting stale state.
 Session Task expected-revision checks run inside the serialized mutation queue and return the active branch token in conflicts.
@@ -115,10 +108,6 @@ A semantic no-op preserves the Project Worklist file bytes, Project Goal timesta
 The file is human-readable and suitable for version control.
 A malformed or unsupported file is reported and never overwritten automatically.
 Project Goal operations are unavailable outside a Git repository, while Session Tasks continue to work normally.
-Orchestration goal selection returns the stable goal ID, its monotonic `updatedAt` token, and the containing Project Worklist revision.
-Done or archived goals must be explicitly reopened before orchestration.
-Archival and confirmed deletion preserve existing Session Task projections for inspection without silently changing the Session Task branch, so closed or temporarily orphaned projections remain visible but cannot receive new managed mutations.
-Reopening the same goal restores eligibility under its stable ID, while deletion never silently recreates or reassigns the goal.
 
 ## Model tool
 
@@ -131,16 +120,6 @@ Agents are instructed to split non-trivial work into several concrete, independe
 Session Task statuses are `todo`, `doing`, and `done`.
 Project Goal statuses are `open`, `active`, `done`, and `archived`.
 Only activation is a non-destructive direct Project Goal status change.
-
-## Inter-extension contract
-
-The version 1 machine-readable contract is exported from `pi-worklist/integration-contract`.
-It defines stable `pi.events` channel names, protocol and capability versions, request and result unions, actor and run correlation metadata, bounded projections, managed external identities, revisions, idempotency, deterministic mutation metadata, typed errors, timeouts, and change events.
-The contract deliberately excludes Project Goal completion, archival, deletion, and rewriting operations.
-Approved Project Goal batch creation requires explicit approval evidence in its payload.
-
-See [Pi Worklist Integration Protocol v1](docs/integration-protocol-v1.md) for the transport rules, fallback behavior, operation ownership, and approval boundary shared with pi-orchestrator.
-Importing the contract has no side effects and does not instantiate a SessionStore or register an event handler.
 
 ## External CLI
 
@@ -226,7 +205,6 @@ npm run pack:check
 ```
 
 The test suite includes real Pi RPC load tests in temporary repositories.
-One RPC test loads separate provider and consumer fixtures and verifies a capability-negotiation round trip over the shared `pi.events` bus.
 The package uses TypeScript source directly because Pi loads extensions through jiti.
 
 ## Publishing and the Pi gallery
