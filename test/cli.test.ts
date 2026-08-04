@@ -188,6 +188,119 @@ describe("project goal CLI", () => {
 		expect(await readGoals(root)).toHaveLength(0);
 	});
 
+	it("appends a paragraph and refuses a change built on a stale read", async () => {
+		const root = await tempGitRepo();
+		await runCli(root, ["project", "add", "Stage", "E", "--", "First paragraph."]);
+		const [baseline] = await readGoals(root);
+
+		const appended = await runCli(root, [
+			"project",
+			"update",
+			baseline.id,
+			"--append",
+			"--",
+			"Stale as of 2026-08-03.",
+		]);
+		expect(appended.code).toBe(0);
+		expect((await readGoals(root))[0].description).toBe("First paragraph.\n\nStale as of 2026-08-03.");
+
+		// The append moved the goal, so the original read is no longer a valid baseline.
+		const conflict = await runCli(root, [
+			"project",
+			"update",
+			baseline.id,
+			"--expect-updated-at",
+			baseline.updatedAt,
+			"--json",
+			"--",
+			"A whole description rebuilt from a stale read",
+		]);
+		const current = (await readGoals(root))[0];
+		expect(conflict.code).toBe(4);
+		expect(conflict.stdout).toBe("");
+		expect(JSON.parse(conflict.stderr)).toMatchObject({
+			ok: false,
+			scope: "project",
+			action: "update",
+			error: {
+				code: "CONFLICT",
+				retryable: true,
+				conflict: {
+					type: "goal-updated-at",
+					id: baseline.id,
+					expectedUpdatedAt: baseline.updatedAt,
+					actualUpdatedAt: current.updatedAt,
+					resolution: "refresh-and-retry",
+				},
+			},
+		});
+		expect(current.description).toBe("First paragraph.\n\nStale as of 2026-08-03.");
+
+		const retried = await runCli(root, [
+			"project",
+			"update",
+			baseline.id,
+			"--expect-updated-at",
+			current.updatedAt,
+			"--append",
+			"--",
+			"Added after re-reading.",
+		]);
+		expect(retried.code).toBe(0);
+		expect((await readGoals(root))[0].description).toBe(
+			"First paragraph.\n\nStale as of 2026-08-03.\n\nAdded after re-reading.",
+		);
+	});
+
+	it("guards lifecycle actions and refuses flags the action would ignore", async () => {
+		const root = await tempGitRepo();
+		await runCli(root, ["project", "add", "Guarded"]);
+		const [goal] = await readGoals(root);
+		const stale = "1999-01-01T00:00:00.000Z";
+
+		const blocked = await runCli(root, [
+			"project",
+			"complete",
+			goal.id,
+			"--confirm",
+			"--expect-updated-at",
+			stale,
+		]);
+		expect(blocked.code).toBe(4);
+		expect((await readGoals(root))[0].status).toBe("open");
+
+		const activated = await runCli(root, [
+			"project",
+			"set_active",
+			goal.id,
+			"--expect-updated-at",
+			goal.updatedAt,
+		]);
+		expect(activated.code).toBe(0);
+		expect((await readGoals(root))[0].status).toBe("active");
+
+		const misuses = [
+			["project", "list", "--expect-updated-at", stale],
+			["project", "add", "Nope", "--append", "--", "text"],
+			["project", "update", goal.id, "--append"],
+			["project", "update", goal.id, "--append", "--"],
+			// --append takes no value, so text written as though it did would otherwise
+			// be read as a new title and silently rename the goal.
+			["project", "update", goal.id, "Renamed", "--append", "--", "note"],
+			["project", "update", goal.id, "--expect-updated-at"],
+		];
+		for (const args of misuses) {
+			// Each misuse is asserted against the same fixture goal, so the calls stay sequential.
+			// pi-lens-ignore: await-in-loop
+			const refused = await runCli(root, args);
+			expect(refused.code, args.join(" ")).toBe(2);
+		}
+		const unchanged = await readGoals(root);
+		expect(unchanged).toHaveLength(1);
+		expect(unchanged[0]).toMatchObject({ title: "Guarded", status: "active" });
+		expect(unchanged[0].description).toBeUndefined();
+	});
+
 	it("rejects the session scope and unknown input with usage errors", async () => {
 		const root = await tempGitRepo();
 		const session = await runCli(root, ["session", "add", "Nope"]);
@@ -251,7 +364,7 @@ describe("project goal CLI", () => {
 
 		expect(swallowed.code).toBe(0);
 		expect(swallowed.stderr).toContain("--json came after -- and became description text");
-		expect(swallowed.stderr).toContain("Global flags must come before the -- separator");
+		expect(swallowed.stderr).toContain("Flags must come before the -- separator");
 		expect(swallowed.stdout).toContain("Added project goal");
 		// The separator's contract is unchanged: the text is still the description.
 		expect((await readGoals(root))[0].description).toBe("External agent access --json");
@@ -280,7 +393,9 @@ describe("project goal CLI", () => {
 			"--cwd",
 		]);
 		expect(valueTakingFlag.code).toBe(0);
-		expect(valueTakingFlag.stderr).toContain("pi-worklist project add <title> --cwd <dir> -- <description>");
+		expect(valueTakingFlag.stderr).toContain(
+			"pi-worklist project <action> [arguments] --cwd <dir> -- <description>",
+		);
 	});
 
 	it("keeps JSON failures parseable when description text contains a flag", async () => {

@@ -8,6 +8,7 @@ import {
 	createEmptyWorklist,
 	isProjectWorklist,
 	mutateProjectWorklist,
+	ProjectGoalConflictError,
 	readProjectWorklist,
 } from "../src/project-store.ts";
 
@@ -65,6 +66,46 @@ describe("project store", () => {
 		);
 		expect(mutation).toEqual({ data: "updated", revision: 8 });
 		expect(JSON.parse(await readFile(path, "utf8"))).toEqual({ ...worklist, revision: 8 });
+	});
+
+	it("refuses a mutation whose target goal moved after the caller read it", async () => {
+		const path = await tempPath();
+		await mkdir(join(path, ".."), { recursive: true });
+		const stored = {
+			version: 1,
+			revision: 4,
+			goals: [
+				{
+					id: "goal-1",
+					title: "Guarded",
+					status: "open",
+					createdAt: "2026-05-04T09:12:31.004Z",
+					updatedAt: "2026-05-04T09:12:31.004Z",
+				},
+			],
+		};
+		await writeFile(path, `${JSON.stringify(stored, null, 2)}\n`);
+		const beforeConflict = await readFile(path, "utf8");
+
+		await expect(
+			mutateProjectWorklist(path, (worklist) => ({ worklist, result: "written" }), {
+				expectedGoal: { id: "goal-1", updatedAt: "2026-05-04T09:12:30.000Z" },
+			}),
+		).rejects.toThrow(ProjectGoalConflictError);
+		expect(await readFile(path, "utf8")).toBe(beforeConflict);
+
+		// The same instant in another ISO 8601 spelling is the same baseline, not a change.
+		const equivalent = await mutateProjectWorklist(path, (worklist) => ({ worklist, result: "written" }), {
+			expectedGoal: { id: "goal-1", updatedAt: "2026-05-04T10:12:31.004+01:00" },
+		});
+		expect(equivalent).toEqual({ data: "written", revision: 5 });
+
+		// A goal that is gone belongs to the mutation's own not-found, which is more
+		// precise than a conflict about a timestamp nothing carries any more.
+		const missing = await mutateProjectWorklist(path, (worklist) => ({ worklist, result: "written" }), {
+			expectedGoal: { id: "goal-missing", updatedAt: "2026-05-04T09:12:31.004Z" },
+		});
+		expect(missing).toEqual({ data: "written", revision: 6 });
 	});
 
 	it("refuses to overwrite malformed data", async () => {

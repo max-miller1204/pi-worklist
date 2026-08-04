@@ -35,9 +35,14 @@ interface CliInvocation {
 	action: string;
 	rest: string[];
 	description?: string;
+	/** Treat the text after `--` as an addition to the description rather than a replacement. */
+	append: boolean;
+	expectedUpdatedAt?: string;
 	json: boolean;
 	confirm: boolean;
 	cwd: string;
+	/** Flag names as written, so action-scoped flags can be refused where they would be ignored. */
+	flagsUsed: ReadonlySet<string>;
 	warnings: CliWarning[];
 }
 
@@ -72,7 +77,7 @@ const GLOBAL_FLAGS_BY_NAME: ReadonlyMap<string, CliFlagContract> = new Map(
 );
 
 /**
- * Warns when a global flag was written after the `--` separator.
+ * Warns when a known flag was written after the `--` separator.
  *
  * Every token after the separator is description text, so a trailing `--json`
  * silently becomes part of the description instead of selecting JSON output,
@@ -95,9 +100,32 @@ function warnMisplacedFlags(warnings: readonly CliWarning[]): void {
 	const names = warnings.map((warning) => warning.flag);
 	process.stderr.write(
 		`Warning: ${names.join(", ")} came after -- and became description text, not ${names.length === 1 ? "a flag" : "flags"}.\n` +
-			`Global flags must come before the -- separator, for example:\n` +
-			`  ${binary} ${CLI_COMMAND_CONTRACT.scope} add <title> ${warnings[0].usage} -- <description>\n`,
+			`Flags must come before the -- separator, for example:\n` +
+			`  ${binary} ${CLI_COMMAND_CONTRACT.scope} <action> [arguments] ${warnings[0].usage} -- <description>\n`,
 	);
+}
+
+/**
+ * Refuses an action-scoped flag on an action that would ignore it.
+ *
+ * The scopes come from the same contract entry the help text and skill render,
+ * so a flag can never be quietly dropped by a command they said would honor it.
+ */
+function validateFlagActions(invocation: CliInvocation): void {
+	for (const flag of CLI_COMMAND_CONTRACT.flags) {
+		if (!flag.actions || !invocation.flagsUsed.has(flag.name)) continue;
+		if (flag.actions.includes(invocation.action)) continue;
+		fail(
+			`${flag.name} is only supported by ${CLI_COMMAND_CONTRACT.scope} ${flag.actions.join(", ")}\n\n${USAGE}`,
+			2,
+		);
+	}
+}
+
+function readFlagValue(head: readonly string[], index: number, flag: string, expected: string): string {
+	const value = head[index + 1];
+	if (!value || value.startsWith("--")) fail(`${flag} requires ${expected}\n\n${USAGE}`, 2);
+	return value;
 }
 
 function parseArgs(argv: string[]): CliInvocation {
@@ -108,25 +136,46 @@ function parseArgs(argv: string[]): CliInvocation {
 	const warnings = findMisplacedFlagWarnings(descriptionTokens);
 
 	const positionals: string[] = [];
+	const flagsUsed = new Set<string>();
 	let json = false;
 	let confirm = false;
+	let append = false;
+	let expectedUpdatedAt: string | undefined;
 	let cwd = process.cwd();
 	for (let index = 0; index < head.length; index++) {
 		const part = head[index];
+		if (!part.startsWith("--")) {
+			positionals.push(part);
+			continue;
+		}
+		flagsUsed.add(part);
 		if (part === "--json") json = true;
 		else if (part === "--confirm") confirm = true;
+		else if (part === "--append") append = true;
 		else if (part === "--cwd") {
-			const value = head[index + 1];
-			if (!value || value.startsWith("--")) fail(`--cwd requires a directory\n\n${USAGE}`, 2);
-			cwd = value;
+			cwd = readFlagValue(head, index, part, "a directory");
 			index++;
-		} else if (part.startsWith("--")) fail(`Unknown flag ${part}\n\n${USAGE}`, 2);
-		else positionals.push(part);
+		} else if (part === "--expect-updated-at") {
+			expectedUpdatedAt = readFlagValue(head, index, part, "a timestamp");
+			index++;
+		} else fail(`Unknown flag ${part}\n\n${USAGE}`, 2);
 	}
 
 	const [scope, action, ...rest] = positionals;
 	if (!scope || !action) fail(USAGE, 2);
-	return { scope, action, rest, description, json, confirm, cwd, warnings };
+	return {
+		scope,
+		action,
+		rest,
+		description,
+		append,
+		expectedUpdatedAt,
+		json,
+		confirm,
+		cwd,
+		flagsUsed,
+		warnings,
+	};
 }
 
 interface ProjectLocation {
@@ -236,6 +285,7 @@ async function runLifecycle(
 		action,
 		id,
 		confirm: invocation.confirm,
+		expectedUpdatedAt: invocation.expectedUpdatedAt,
 	});
 	if (action === "delete") {
 		report(invocation, envelope, `Deleted project goal ${id}`);
@@ -249,7 +299,12 @@ async function runLifecycle(
 async function runSetActive(invocation: CliInvocation, service: WorklistApplicationService): Promise<void> {
 	const id = requireId(invocation);
 	try {
-		const envelope = await executeCliOperation(service, { scope: "project", action: "set_active", id });
+		const envelope = await executeCliOperation(service, {
+			scope: "project",
+			action: "set_active",
+			id,
+			expectedUpdatedAt: invocation.expectedUpdatedAt,
+		});
 		const goal = envelope.ok ? envelope.result.goal : undefined;
 		if (!goal) throw new Error(`Activated Project Goal ${id} was not returned`);
 		report(invocation, envelope, `Activated project goal ${goal.id}`);
@@ -310,6 +365,7 @@ async function run(invocation: CliInvocation): Promise<void> {
 		}
 		fail(`Unknown scope ${invocation.scope}\n\n${USAGE}`, 2);
 	}
+	validateFlagActions(invocation);
 	if (invocation.action === "help") {
 		process.stdout.write(`${USAGE}\n`);
 		return;
@@ -373,6 +429,17 @@ async function run(invocation: CliInvocation): Promise<void> {
 		case "update": {
 			const id = requireId(invocation);
 			const title = invocation.rest.slice(1).join(" ").trim() || undefined;
+			if (invocation.append) {
+				if (!invocation.description?.trim()) {
+					fail(`project update --append requires the text to append after --\n\n${USAGE}`, 2);
+				}
+				// --append takes no value of its own, so text written as though it did
+				// arrives here as a title. Refusing the combination turns that mistake
+				// into a usage error instead of a silent rename.
+				if (title !== undefined) {
+					fail(`project update cannot change the title while appending to the description\n\n${USAGE}`, 2);
+				}
+			}
 			if (title === undefined && invocation.description === undefined) {
 				fail(`project update requires a new title, a -- description, or both\n\n${USAGE}`, 2);
 			}
@@ -381,7 +448,10 @@ async function run(invocation: CliInvocation): Promise<void> {
 				action: "update",
 				id,
 				title,
-				description: invocation.description,
+				...(invocation.append
+					? { appendDescription: invocation.description }
+					: { description: invocation.description }),
+				expectedUpdatedAt: invocation.expectedUpdatedAt,
 			});
 			const goal = envelope.ok ? envelope.result.goal : undefined;
 			if (!goal) throw new Error(`Updated Project Goal ${id} was not returned`);

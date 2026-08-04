@@ -37,8 +37,10 @@ Every `--json` result envelope reports the running package version as `meta.cliV
 | `--json` | Print the deterministic result envelope as JSON (stdout on success, stderr on failure) |
 | `--confirm` | Acknowledge a lifecycle action; pass it only for an explicit user request |
 | `--cwd <dir>` | Resolve the git root from this directory instead of the working directory |
+| `--append` | Add the text after -- as a new paragraph instead of replacing the description; cannot be combined with a title change; only for project update |
+| `--expect-updated-at <timestamp>` | Refuse the change as a conflict unless the goal's updatedAt still matches this value; only for project update, set_active, complete, reopen, archive, and delete |
 
-Put every flag before `--`, because each token after it is description text. A known global flag there remains in the description and triggers a warning: stderr for human output, or the JSON envelope's `warnings` array if `--json` was already enabled. A trailing `--json` therefore does not select JSON output; the command prints human output and still exits 0.
+Put every flag before `--`, because each token after it is description text. A known flag there remains in the description and triggers a warning: stderr for human output, or the JSON envelope's `warnings` array if `--json` was already enabled. A trailing `--json` therefore does not select JSON output; the command prints human output and still exits 0.
 
 ## Exit codes
 
@@ -59,4 +61,6 @@ Put every flag before `--`, because each token after it is description text. A k
 - Treat exit code 3 as a request for explicit user confirmation, not as a retryable failure.
 - Treat exit code 4 as a concurrent-change conflict: re-read current state before retrying.
 - Use list for orientation and show <id> when you need a goal's complete description.
+- Add a note with --append instead of resending a description you did not write, so nothing in the existing text can be lost in transcription.
+- Pass --expect-updated-at with the updatedAt from your own read whenever you change a goal, so your mutation conflicts if the goal changed in the meantime.
 - Broad outcomes belong in Project Goals; do not mirror your internal step-by-step plan into them.

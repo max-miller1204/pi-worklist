@@ -13,8 +13,15 @@ export interface ProjectStoreResult<T> {
 	changed?: false;
 }
 
+/** The caller's baseline for one goal, as read from that goal's `updatedAt`. */
+export interface ProjectGoalPrecondition {
+	id: string;
+	updatedAt: string;
+}
+
 export interface ProjectMutationOptions {
 	expectedRevision?: string;
+	expectedGoal?: ProjectGoalPrecondition;
 }
 
 export type ProjectMutation<T> = (current: RevisionedProjectWorklist) => {
@@ -34,6 +41,51 @@ export class ProjectRevisionConflictError extends Error {
 		this.expectedRevision = expectedRevision;
 		this.actualRevision = actualRevision;
 	}
+}
+
+export class ProjectGoalConflictError extends Error {
+	readonly goalId: string;
+	readonly expectedUpdatedAt: string;
+	readonly actualUpdatedAt: string;
+
+	constructor(goalId: string, expectedUpdatedAt: string, actualUpdatedAt: string) {
+		super(`Project goal ${goalId} changed from ${expectedUpdatedAt} to ${actualUpdatedAt}.`);
+		this.name = "ProjectGoalConflictError";
+		this.goalId = goalId;
+		this.expectedUpdatedAt = expectedUpdatedAt;
+		this.actualUpdatedAt = actualUpdatedAt;
+	}
+}
+
+/**
+ * Two timestamps naming the same instant, so a caller that echoes back a goal's
+ * `updatedAt` in a different but equivalent ISO 8601 spelling is not told its
+ * baseline moved. Unparseable values only match themselves, which fails closed.
+ */
+function isSameInstant(left: string, right: string): boolean {
+	if (left === right) return true;
+	const leftTime = Date.parse(left);
+	return !Number.isNaN(leftTime) && leftTime === Date.parse(right);
+}
+
+/**
+ * Rejects a mutation whose caller read the target goal before someone else
+ * changed it.
+ *
+ * The whole-store revision cannot express this: it moves for every goal, so
+ * guarding one goal with it rejects unrelated concurrent work, while guarding
+ * nothing lets two readers of the same goal silently clobber each other. A goal
+ * that no longer exists is left to the mutation itself, whose not-found is more
+ * precise than a conflict about a timestamp nothing carries any more.
+ */
+function assertGoalPrecondition(
+	worklist: RevisionedProjectWorklist,
+	precondition: ProjectGoalPrecondition | undefined,
+): void {
+	if (!precondition) return;
+	const target = worklist.goals.find((goal) => goal.id === precondition.id);
+	if (!target || isSameInstant(precondition.updatedAt, target.updatedAt)) return;
+	throw new ProjectGoalConflictError(precondition.id, precondition.updatedAt, target.updatedAt);
 }
 
 export function isProjectWorklist(value: unknown): value is ProjectWorklist {
@@ -123,6 +175,7 @@ export async function mutateProjectWorklist<T>(
 		if (options.expectedRevision !== undefined && options.expectedRevision !== actualRevision) {
 			throw new ProjectRevisionConflictError(options.expectedRevision, actualRevision);
 		}
+		assertGoalPrecondition(readResult.data, options.expectedGoal);
 
 		const { worklist, result, changed = true } = mutate(readResult.data);
 		if (!isRevisionedProjectWorklist(worklist)) {
@@ -148,7 +201,7 @@ export async function mutateProjectWorklist<T>(
 		tempName = undefined;
 		return { data: result, revision };
 	} catch (err) {
-		if (err instanceof ProjectRevisionConflictError) throw err;
+		if (err instanceof ProjectRevisionConflictError || err instanceof ProjectGoalConflictError) throw err;
 		return {
 			data: undefined as unknown as T,
 			error: `Project mutation failed: ${String(err)}`,

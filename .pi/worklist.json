@@ -109,9 +109,9 @@
       "id": "goal-ms9cijz9-c8b6b3b8",
       "title": "Add optimistic concurrency and append primitives to project update",
       "description": "project update replaces the whole description, which is racy and error-prone for external callers: the cross-process lock serializes writes but nothing detects that the caller's baseline was stale, so two sessions that both read then update silently last-writer-clobber, and changing one line means faithfully re-supplying the entire multi-paragraph blob. Add (a) an optimistic-concurrency guard, e.g. --expect-updated-at <timestamp>, rejecting with the existing exit-code-4 conflict semantics when the goal changed after the caller's read, and (b) an additive primitive, e.g. --append-description <text>, so the common add-a-note case never rewrites the blob at all. Motivated 2026-07-31 by an agent session in the colony repo that had to reconstruct a long stage-E goal description just to add a staleness note and one soft-dep token.",
-      "status": "open",
+      "status": "done",
       "createdAt": "2026-07-31T19:38:52.196Z",
-      "updatedAt": "2026-07-31T19:38:52.196Z"
+      "updatedAt": "2026-08-04T03:32:56.771Z"
     },
     {
       "id": "goal-msdocm75-9bedb8be",
@@ -274,5 +274,5 @@
       "updatedAt": "2026-08-04T02:37:54.548Z"
     }
   ],
-  "revision": 80
+  "revision": 81
 }

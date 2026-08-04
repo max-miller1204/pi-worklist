@@ -16,12 +16,24 @@ export const WORKLIST_ERROR_CODES = {
 
 export type WorklistErrorCode = (typeof WORKLIST_ERROR_CODES)[keyof typeof WORKLIST_ERROR_CODES];
 
-export interface WorklistConflictDetails {
+/** A whole-store baseline that moved: another writer changed anything at all. */
+export interface WorklistRevisionConflictDetails {
 	type: "revision";
 	expectedRevision?: string;
 	actualRevision?: string;
 	resolution: "refresh-and-retry";
 }
+
+/** One goal's baseline that moved, which a whole-store revision cannot express. */
+export interface WorklistGoalConflictDetails {
+	type: "goal-updated-at";
+	id: string;
+	expectedUpdatedAt: string;
+	actualUpdatedAt: string;
+	resolution: "refresh-and-retry";
+}
+
+export type WorklistConflictDetails = WorklistRevisionConflictDetails | WorklistGoalConflictDetails;
 
 export interface WorklistError {
 	code: WorklistErrorCode;

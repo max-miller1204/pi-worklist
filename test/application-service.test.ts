@@ -87,6 +87,233 @@ describe("worklist application service", () => {
 		expect(await readFile(projectPath, "utf8")).toBe(beforeConflict);
 	});
 
+	it("guards one goal's baseline and appends to it without replaying the stored text", async () => {
+		const projectPath = join(
+			await mkdtemp(join(tmpdir(), "pi-worklist-application-goal-baseline-")),
+			".pi",
+			"worklist.json",
+		);
+		const service = new WorklistApplicationService({ projectPath });
+		const added = await service.execute(
+			{ scope: "project", action: "add", title: "Stage E", description: "First paragraph." },
+			{ source: "cli" },
+		);
+		if (!added.ok || !added.result.goal) return;
+		const baseline = added.result.goal;
+
+		// Another writer moves the goal, leaving the first caller's baseline stale.
+		const other = await service.execute(
+			{
+				scope: "project",
+				action: "update",
+				id: baseline.id,
+				appendDescription: "Recorded by someone else.",
+			},
+			{ source: "tool" },
+		);
+		expect(other).toMatchObject({
+			ok: true,
+			result: { goal: { description: "First paragraph.\n\nRecorded by someone else." } },
+			meta: { changed: true, revisions: { project: "2" } },
+		});
+		if (!other.ok || !other.result.goal) return;
+		const current = other.result.goal.updatedAt;
+		const beforeConflict = await readFile(projectPath, "utf8");
+
+		const conflict = await service.execute(
+			{
+				scope: "project",
+				action: "update",
+				id: baseline.id,
+				description: "Stale overwrite",
+				expectedUpdatedAt: baseline.updatedAt,
+			},
+			{ source: "cli" },
+		);
+		expect(conflict).toEqual({
+			ok: false,
+			scope: "project",
+			action: "update",
+			error: {
+				code: WORKLIST_ERROR_CODES.CONFLICT,
+				message: `Project goal ${baseline.id} changed from ${baseline.updatedAt} to ${current}.`,
+				retryable: true,
+				conflict: {
+					type: "goal-updated-at",
+					id: baseline.id,
+					expectedUpdatedAt: baseline.updatedAt,
+					actualUpdatedAt: current,
+					resolution: "refresh-and-retry",
+				},
+			},
+			meta: { changed: false, semanticNoOp: false, changedFields: [] },
+		});
+		expect(await readFile(projectPath, "utf8")).toBe(beforeConflict);
+
+		// The same change lands once it is rebuilt on a fresh read.
+		const retried = await service.execute(
+			{
+				scope: "project",
+				action: "update",
+				id: baseline.id,
+				appendDescription: "Added after re-reading.",
+				expectedUpdatedAt: current,
+			},
+			{ source: "cli" },
+		);
+		expect(retried).toMatchObject({
+			ok: true,
+			result: {
+				goal: {
+					description: "First paragraph.\n\nRecorded by someone else.\n\nAdded after re-reading.",
+				},
+			},
+			meta: { changed: true, revisions: { project: "3" } },
+		});
+	});
+
+	it("guards readable legacy timestamps by exact value", async () => {
+		const projectPath = join(
+			await mkdtemp(join(tmpdir(), "pi-worklist-application-legacy-baseline-")),
+			".pi",
+			"worklist.json",
+		);
+		await mkdir(join(projectPath, ".."), { recursive: true });
+		await writeFile(
+			projectPath,
+			`${JSON.stringify(
+				{
+					version: 1,
+					revision: 1,
+					goals: [
+						{
+							id: "goal-legacy",
+							title: "Legacy baseline",
+							status: "open",
+							createdAt: "2026-05-04T09:12:31.004Z",
+							updatedAt: " legacy ",
+						},
+					],
+				},
+				null,
+				2,
+			)}\n`,
+		);
+		const service = new WorklistApplicationService({ projectPath });
+		const beforeConflict = await readFile(projectPath, "utf8");
+
+		const conflict = await service.execute(
+			{
+				scope: "project",
+				action: "update",
+				id: "goal-legacy",
+				title: "Stale rewrite",
+				expectedUpdatedAt: "yesterday",
+			},
+			{ source: "cli" },
+		);
+		expect(conflict).toMatchObject({
+			ok: false,
+			error: {
+				code: WORKLIST_ERROR_CODES.CONFLICT,
+				conflict: {
+					type: "goal-updated-at",
+					expectedUpdatedAt: "yesterday",
+					actualUpdatedAt: " legacy ",
+				},
+			},
+		});
+		expect(await readFile(projectPath, "utf8")).toBe(beforeConflict);
+
+		const updated = await service.execute(
+			{
+				scope: "project",
+				action: "update",
+				id: "goal-legacy",
+				title: "Guarded rewrite",
+				expectedUpdatedAt: " legacy ",
+			},
+			{ source: "cli" },
+		);
+		expect(updated).toMatchObject({
+			ok: true,
+			result: { goal: { id: "goal-legacy", title: "Guarded rewrite" } },
+			meta: { changed: true, revisions: { project: "2" } },
+		});
+	});
+
+	it("rejects description and baseline options that would lose or ignore stored text", async () => {
+		const projectPath = join(
+			await mkdtemp(join(tmpdir(), "pi-worklist-application-goal-options-")),
+			".pi",
+			"worklist.json",
+		);
+		const service = new WorklistApplicationService({ projectPath });
+		const added = await service.execute(
+			{ scope: "project", action: "add", title: "Stage E", description: "First paragraph." },
+			{ source: "cli" },
+		);
+		if (!added.ok || !added.result.goal) return;
+		const id = added.result.goal.id;
+		const beforeRejections = await readFile(projectPath, "utf8");
+
+		const rejections: Array<[Parameters<typeof service.execute>[0], string]> = [
+			[
+				{ scope: "project", action: "update", id, description: "Replace", appendDescription: "Add" },
+				"mutually exclusive",
+			],
+			[{ scope: "project", action: "update", id, appendDescription: "   " }, "must not be blank"],
+			[
+				{ scope: "project", action: "add", title: "New", appendDescription: "Add" },
+				"only supported for project update",
+			],
+			[
+				{ scope: "project", action: "update", id, title: "New", expectedUpdatedAt: "   " },
+				"must not be blank",
+			],
+			[
+				{
+					scope: "project",
+					action: "add",
+					id,
+					title: "New",
+					expectedUpdatedAt: "2026-05-04T09:12:31.004Z",
+				},
+				"only supported for target-goal mutations",
+			],
+			[
+				{ scope: "project", action: "list", id, expectedUpdatedAt: "2026-05-04T09:12:31.004Z" },
+				"only supported for target-goal mutations",
+			],
+		];
+		for (const [operation, message] of rejections) {
+			// Each rejection is asserted against the same untouched fixture file.
+			// pi-lens-ignore: await-in-loop
+			const rejected = await service.execute(operation, { source: "cli" });
+			expect(rejected, JSON.stringify(operation)).toMatchObject({
+				ok: false,
+				error: { code: WORKLIST_ERROR_CODES.VALIDATION_FAILED },
+			});
+			expect(rejected.ok ? "" : rejected.error.message).toContain(message);
+		}
+		expect(await readFile(projectPath, "utf8")).toBe(beforeRejections);
+
+		// Session Tasks have no description, so they have no goal baseline either.
+		const sessionService = new WorklistApplicationService({ sessionStore: createSessionStore().store });
+		const sessionRejection = await sessionService.execute(
+			{ scope: "session", action: "update", id: "task-1", expectedUpdatedAt: "2026-05-04T09:12:31.004Z" },
+			{ source: "cli" },
+		);
+		expect(sessionRejection).toMatchObject({
+			ok: false,
+			error: {
+				code: WORKLIST_ERROR_CODES.VALIDATION_FAILED,
+				message: "expectedUpdatedAt is only supported for project goals.",
+				details: { fields: ["expectedUpdatedAt"], resolution: "remove-expected-updated-at" },
+			},
+		});
+	});
+
 	it("preserves Project Goal files, revisions, and timestamps for semantic no-ops", async () => {
 		const projectPath = join(
 			await mkdtemp(join(tmpdir(), "pi-worklist-application-no-op-")),

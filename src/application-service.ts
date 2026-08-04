@@ -6,11 +6,17 @@ import {
 	PROJECT_LIFECYCLE_TARGET_STATUS,
 	ProjectGoalActivationBlockedError,
 	ProjectGoalNotFoundError,
+	type ProjectGoalUpdate,
 	readProjectGoals,
 	transitionProjectGoal,
 	updateProjectGoal,
 } from "./project-mutations.ts";
-import { ProjectRevisionConflictError } from "./project-store.ts";
+import {
+	ProjectGoalConflictError,
+	type ProjectGoalPrecondition,
+	type ProjectMutationOptions,
+	ProjectRevisionConflictError,
+} from "./project-store.ts";
 import {
 	canonicalChangedFields,
 	WORKLIST_ERROR_CODES,
@@ -40,12 +46,16 @@ export interface WorklistOperation {
 	id?: string;
 	title?: string;
 	description?: string;
+	/** Project Goal only: append a paragraph instead of replacing the description. */
+	appendDescription?: string;
 	status?: SessionTaskStatus | ProjectGoalStatus;
 	goalId?: string;
 	beforeId?: string;
 	afterId?: string;
 	confirm?: boolean;
 	expectedRevision?: string;
+	/** Project Goal only: the target goal's `updatedAt` as the caller last read it. */
+	expectedUpdatedAt?: string;
 }
 
 interface WorklistApplicationResultBase {
@@ -184,7 +194,101 @@ function normalizePlacement(operation: WorklistOperation): SessionTaskPlacement 
 	return placement;
 }
 
+/** Fields describing a Project Goal's prose or baseline, which a Session Task has no counterpart for. */
+const PROJECT_ONLY_FIELDS = [
+	{ field: "description", resolution: "remove-description" },
+	{ field: "appendDescription", resolution: "remove-append-description" },
+	{ field: "expectedUpdatedAt", resolution: "remove-expected-updated-at" },
+] as const;
+
+function rejectProjectOnlyFields(operation: WorklistOperation): void {
+	const unsupported = PROJECT_ONLY_FIELDS.find((entry) => operation[entry.field] !== undefined);
+	if (!unsupported) return;
+	throw validationError(`${unsupported.field} is only supported for project goals.`, {
+		fields: [unsupported.field],
+		resolution: unsupported.resolution,
+	});
+}
+
+/**
+ * The caller's baseline for the one goal an operation targets.
+ *
+ * Callers echo back the `updatedAt` they read, so a mutation built on a stale
+ * read is refused as a conflict instead of silently overwriting whoever wrote
+ * in between. It is deliberately narrower than the whole-store revision, which
+ * moves for every unrelated goal and so cannot guard a single goal usefully.
+ */
+function normalizeExpectedGoal(operation: WorklistOperation): ProjectGoalPrecondition | undefined {
+	if (operation.expectedUpdatedAt === undefined) return undefined;
+	const updatedAt = operation.expectedUpdatedAt;
+	if (!updatedAt.trim()) {
+		throw validationError("expectedUpdatedAt must not be blank.", {
+			fields: ["expectedUpdatedAt"],
+			resolution: "provide-non-blank-expected-updated-at",
+		});
+	}
+	if (!operation.id) {
+		throw validationError("expectedUpdatedAt requires the id of the goal it guards.", {
+			fields: ["expectedUpdatedAt", "id"],
+			resolution: "provide-project-goal-id",
+		});
+	}
+	return { id: operation.id, updatedAt };
+}
+
+/** Exactly one kind of description change per update: replace the whole blob, or add to it. */
+function normalizeDescriptionUpdate(operation: WorklistOperation): ProjectGoalUpdate {
+	if (operation.appendDescription === undefined) return { description: operation.description };
+	if (operation.description !== undefined) {
+		throw validationError(
+			"description and appendDescription are mutually exclusive; replace the description or append to it.",
+			{
+				fields: ["appendDescription", "description"],
+				resolution: "provide-one-description-change",
+			},
+		);
+	}
+	const appendDescription = operation.appendDescription.trim();
+	if (!appendDescription) {
+		throw validationError("appendDescription must not be blank.", {
+			fields: ["appendDescription"],
+			resolution: "provide-non-blank-append-text",
+		});
+	}
+	return { appendDescription };
+}
+
 const READ_ACTIONS = new Set(["list"]);
+const EXPECTED_UPDATED_AT_ACTIONS = new Set([
+	"update",
+	"set_active",
+	"complete",
+	"reopen",
+	"archive",
+	"delete",
+]);
+
+/**
+ * Refuses Project Goal options an action would otherwise accept and ignore.
+ *
+ * Silently dropping either one is the failure they exist to prevent: an ignored
+ * append still rewrites nothing, and an ignored baseline still lets a stale
+ * caller overwrite a concurrent edit.
+ */
+function rejectUnsupportedProjectOptions(operation: WorklistOperation): void {
+	if (operation.appendDescription !== undefined && operation.action !== "update") {
+		throw validationError("appendDescription is only supported for project update.", {
+			fields: ["appendDescription"],
+			resolution: "use-project-update",
+		});
+	}
+	if (operation.expectedUpdatedAt !== undefined && !EXPECTED_UPDATED_AT_ACTIONS.has(operation.action)) {
+		throw validationError("expectedUpdatedAt is only supported for target-goal mutations.", {
+			fields: ["expectedUpdatedAt"],
+			resolution: "remove-expected-updated-at",
+		});
+	}
+}
 
 interface SuccessMetadataInput {
 	operation: WorklistOperation;
@@ -545,6 +649,19 @@ export class WorklistApplicationService {
 					},
 				};
 				failureMeta = { ...failureMeta, revisions: { project: error.actualRevision } };
+			} else if (error instanceof ProjectGoalConflictError) {
+				typedError = {
+					code: WORKLIST_ERROR_CODES.CONFLICT,
+					message: error.message,
+					retryable: true,
+					conflict: {
+						type: "goal-updated-at",
+						id: error.goalId,
+						expectedUpdatedAt: error.expectedUpdatedAt,
+						actualUpdatedAt: error.actualUpdatedAt,
+						resolution: "refresh-and-retry",
+					},
+				};
 			} else if (isSessionRevisionConflictError(error)) {
 				typedError = {
 					code: WORKLIST_ERROR_CODES.CONFLICT,
@@ -587,12 +704,7 @@ export class WorklistApplicationService {
 		placement: SessionTaskPlacement | undefined,
 	): Promise<SessionExecutionResult> {
 		const sessionStore = this.requireSessionStore();
-		if (operation.description !== undefined) {
-			throw validationError("description is only supported for project goals.", {
-				fields: ["description"],
-				resolution: "remove-description",
-			});
-		}
+		rejectProjectOnlyFields(operation);
 
 		switch (operation.action) {
 			case "list":
@@ -624,7 +736,11 @@ export class WorklistApplicationService {
 
 	private async executeProject(operation: WorklistOperation): Promise<ProjectExecutionResult> {
 		const projectPath = this.requireProjectPath();
-		const options = { expectedRevision: operation.expectedRevision };
+		rejectUnsupportedProjectOptions(operation);
+		const options: ProjectMutationOptions = {
+			expectedRevision: operation.expectedRevision,
+			expectedGoal: normalizeExpectedGoal(operation),
+		};
 		switch (operation.action) {
 			case "list": {
 				const { goals, revision } = await readProjectGoals(projectPath);
@@ -660,10 +776,7 @@ export class WorklistApplicationService {
 				const { goal, goals, revision, changed } = await updateProjectGoal(
 					projectPath,
 					operation.id,
-					{
-						title: operation.title,
-						description: operation.description,
-					},
+					{ title: operation.title, ...normalizeDescriptionUpdate(operation) },
 					options,
 				);
 				return {
@@ -683,14 +796,14 @@ export class WorklistApplicationService {
 						},
 					);
 				}
-				return this.activateProjectGoal(projectPath, operation);
+				return this.activateProjectGoal(projectPath, operation, options);
 			case "set_active":
-				return this.activateProjectGoal(projectPath, operation);
+				return this.activateProjectGoal(projectPath, operation, options);
 			case "complete":
 			case "reopen":
 			case "archive":
 			case "delete":
-				return this.transitionProjectGoal(projectPath, operation);
+				return this.transitionProjectGoal(projectPath, operation, options);
 			default:
 				throw createApplicationError(
 					WORKLIST_ERROR_CODES.INVALID_REQUEST,
@@ -715,6 +828,7 @@ export class WorklistApplicationService {
 	private async activateProjectGoal(
 		projectPath: string,
 		operation: WorklistOperation,
+		options: ProjectMutationOptions,
 	): Promise<ProjectExecutionResult> {
 		if (!operation.id) {
 			throw validationError("id is required for project set_active.", {
@@ -725,7 +839,7 @@ export class WorklistApplicationService {
 		const { goal, goals, revision, changed, changedGoalIds } = await activateProjectGoal(
 			projectPath,
 			operation.id,
-			{ expectedRevision: operation.expectedRevision },
+			options,
 		);
 		return {
 			result: { scope: "project", action: "set_active", goal, goals },
@@ -738,6 +852,7 @@ export class WorklistApplicationService {
 	private async transitionProjectGoal(
 		projectPath: string,
 		operation: WorklistOperation,
+		options: ProjectMutationOptions,
 	): Promise<ProjectExecutionResult> {
 		if (!operation.id) {
 			throw validationError(`id is required for project ${operation.action}.`, {
@@ -756,9 +871,7 @@ export class WorklistApplicationService {
 			);
 		}
 		if (operation.action === "delete") {
-			const { goals, revision, changed } = await deleteProjectGoal(projectPath, operation.id, {
-				expectedRevision: operation.expectedRevision,
-			});
+			const { goals, revision, changed } = await deleteProjectGoal(projectPath, operation.id, options);
 			return {
 				result: { scope: "project", action: "delete", goals },
 				revision,
@@ -777,7 +890,7 @@ export class WorklistApplicationService {
 			projectPath,
 			operation.id,
 			PROJECT_LIFECYCLE_TARGET_STATUS[action],
-			{ expectedRevision: operation.expectedRevision },
+			options,
 		);
 		return {
 			result: { scope: "project", action, goal, goals },
