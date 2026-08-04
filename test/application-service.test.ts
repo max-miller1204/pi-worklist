@@ -199,10 +199,19 @@ describe("worklist application service", () => {
 			],
 			[{ scope: "project", action: "update", id, title: "New", expectedUpdatedAt: "yesterday" }, "ISO 8601"],
 			[
-				{ scope: "project", action: "add", title: "New", expectedUpdatedAt: "2026-05-04T09:12:31.004Z" },
-				"requires the id",
+				{
+					scope: "project",
+					action: "add",
+					id,
+					title: "New",
+					expectedUpdatedAt: "2026-05-04T09:12:31.004Z",
+				},
+				"only supported for target-goal mutations",
 			],
-			[{ scope: "project", action: "list", id, expectedUpdatedAt: "2026-05-04T09:12:31.004Z" }, "only reads"],
+			[
+				{ scope: "project", action: "list", id, expectedUpdatedAt: "2026-05-04T09:12:31.004Z" },
+				"only supported for target-goal mutations",
+			],
 		];
 		for (const [operation, message] of rejections) {
 			// Each rejection is asserted against the same untouched fixture file.

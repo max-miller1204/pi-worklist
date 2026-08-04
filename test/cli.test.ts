@@ -283,6 +283,7 @@ describe("project goal CLI", () => {
 			["project", "list", "--expect-updated-at", stale],
 			["project", "add", "Nope", "--append", "--", "text"],
 			["project", "update", goal.id, "--append"],
+			["project", "update", goal.id, "--append", "--"],
 			// --append takes no value, so text written as though it did would otherwise
 			// be read as a new title and silently rename the goal.
 			["project", "update", goal.id, "Renamed", "--append", "--", "note"],

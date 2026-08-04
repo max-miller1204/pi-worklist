@@ -430,7 +430,7 @@ async function run(invocation: CliInvocation): Promise<void> {
 			const id = requireId(invocation);
 			const title = invocation.rest.slice(1).join(" ").trim() || undefined;
 			if (invocation.append) {
-				if (invocation.description === undefined) {
+				if (!invocation.description?.trim()) {
 					fail(`project update --append requires the text to append after --\n\n${USAGE}`, 2);
 				}
 				// --append takes no value of its own, so text written as though it did

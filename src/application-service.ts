@@ -259,6 +259,14 @@ function normalizeDescriptionUpdate(operation: WorklistOperation): ProjectGoalUp
 }
 
 const READ_ACTIONS = new Set(["list"]);
+const EXPECTED_UPDATED_AT_ACTIONS = new Set([
+	"update",
+	"set_active",
+	"complete",
+	"reopen",
+	"archive",
+	"delete",
+]);
 
 /**
  * Refuses Project Goal options an action would otherwise accept and ignore.
@@ -274,14 +282,11 @@ function rejectUnsupportedProjectOptions(operation: WorklistOperation): void {
 			resolution: "use-project-update",
 		});
 	}
-	if (operation.expectedUpdatedAt !== undefined && READ_ACTIONS.has(operation.action)) {
-		throw validationError(
-			`expectedUpdatedAt guards a mutation, and project ${operation.action} only reads.`,
-			{
-				fields: ["expectedUpdatedAt"],
-				resolution: "remove-expected-updated-at",
-			},
-		);
+	if (operation.expectedUpdatedAt !== undefined && !EXPECTED_UPDATED_AT_ACTIONS.has(operation.action)) {
+		throw validationError("expectedUpdatedAt is only supported for target-goal mutations.", {
+			fields: ["expectedUpdatedAt"],
+			resolution: "remove-expected-updated-at",
+		});
 	}
 }
 
