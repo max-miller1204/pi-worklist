@@ -37,7 +37,7 @@ Every `--json` result envelope reports the running package version as `meta.cliV
 | Flag | Description |
 | --- | --- |
 | `--json` | Print the deterministic result envelope as JSON (stdout on success, stderr on failure) |
-| `--confirm` | Acknowledge a lifecycle action; pass it only for an explicit user request |
+| `--confirm` | Acknowledge an action that requires confirmation; pass it only for an explicit user request |
 | `--cwd <dir>` | Resolve the git root from this directory instead of the working directory |
 | `--append` | Add the text after -- as a new paragraph instead of replacing the description; cannot be combined with a title change; only for project update |
 | `--expect-updated-at <timestamp>` | Refuse the change as a conflict unless the goal's updatedAt still matches this value; only for project update, set_active, complete, reopen, archive, and delete |

@@ -1,6 +1,6 @@
 ---
 name: worklist
-description: "Manage pi-worklist Project Goals (the shared roadmap in a repo's .pi/worklist.json) from any Claude session. Use when the user asks to add, list, update, activate, complete, reopen, archive, or delete a project goal, or to capture brainstormed ideas or future goals on a project's worklist or roadmap."
+description: "Manage pi-worklist Project Goals (the shared roadmap in a repo's .pi/worklist.json) from any Claude session. Use when the user asks to add, list, find, update, activate, complete, reopen, archive, or delete a project goal; migrate goal IDs; or capture brainstormed ideas or future goals on a project's worklist or roadmap."
 ---
 
 <!-- Generated from src/cli-contract.ts by scripts/generate-docs.ts. Do not edit manually. -->
@@ -43,7 +43,7 @@ help
 Flags:
 
 - `--json` - Print the deterministic result envelope as JSON (stdout on success, stderr on failure).
-- `--confirm` - Acknowledge a lifecycle action; pass it only for an explicit user request.
+- `--confirm` - Acknowledge an action that requires confirmation; pass it only for an explicit user request.
 - `--cwd <dir>` - Resolve the git root from this directory instead of the working directory.
 - `--append` - Add the text after -- as a new paragraph instead of replacing the description; cannot be combined with a title change; only for project update.
 - `--expect-updated-at <timestamp>` - Refuse the change as a conflict unless the goal's updatedAt still matches this value; only for project update, set_active, complete, reopen, archive, and delete.
@@ -87,7 +87,7 @@ The full generated command reference lives in the package's `docs/cli.md`, rende
 ## Guardrails
 
 - `complete`, `reopen`, `archive`, `delete`, and `migrate_ids` are reserved for explicit user intent.
-  Pass `--confirm` only for the exact action, on the exact goal, that the user requested in this conversation.
+  Pass `--confirm` only for the exact action the user requested and, when the action names a goal, only for that exact goal.
   Never pass it because a goal merely looks finished or stale.
 - `migrate_ids` names no goal and rewrites every generated ID in the repository at once, so it needs an explicit request of its own.
   `--dry-run` reports the rewrites it would make without writing them and without `--confirm`; prefer it when you are showing the user what would change.

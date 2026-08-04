@@ -78,6 +78,23 @@ describe("project mutation service", () => {
 		expect(third.goal.id).toBe("support-goal-templates-3");
 	});
 
+	it("mints distinct slug IDs for concurrent adds of the same title", async () => {
+		const path = await tempPath();
+		const additions = await Promise.all([
+			addProjectGoal(path, "Support goal templates"),
+			addProjectGoal(path, "Support goal templates"),
+		]);
+
+		expect(additions.map(({ goal }) => goal.id).sort()).toEqual([
+			"support-goal-templates",
+			"support-goal-templates-2",
+		]);
+		expect((await readProjectGoals(path)).goals.map((goal) => goal.id).sort()).toEqual([
+			"support-goal-templates",
+			"support-goal-templates-2",
+		]);
+	});
+
 	it("keeps legacy-shaped title slugs frozen after a rename", async () => {
 		const path = await tempPath();
 		const added = await addProjectGoal(path, "Goal abc deadbeef");

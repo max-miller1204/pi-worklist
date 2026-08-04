@@ -50,7 +50,7 @@ export const CLI_COMMAND_CONTRACT = {
 	 * assume it was installed alongside this source tree.
 	 */
 	skillDescription:
-		"Manage pi-worklist Project Goals (the shared roadmap in a repo's .pi/worklist.json) from any Claude session. Use when the user asks to add, list, update, activate, complete, reopen, archive, or delete a project goal, or to capture brainstormed ideas or future goals on a project's worklist or roadmap.",
+		"Manage pi-worklist Project Goals (the shared roadmap in a repo's .pi/worklist.json) from any Claude session. Use when the user asks to add, list, find, update, activate, complete, reopen, archive, or delete a project goal; migrate goal IDs; or capture brainstormed ideas or future goals on a project's worklist or roadmap.",
 	runtime: {
 		/** Node floor for the published compiled bin. Asserted against package.json engines.node. */
 		binaryNodeFloor: "20",
@@ -139,7 +139,7 @@ export const CLI_COMMAND_CONTRACT = {
 		{
 			name: "--confirm",
 			usage: "--confirm",
-			summary: "Acknowledge a lifecycle action; pass it only for an explicit user request",
+			summary: "Acknowledge an action that requires confirmation; pass it only for an explicit user request",
 		},
 		{
 			name: "--cwd",
@@ -357,7 +357,7 @@ export function renderSkillMarkdown(): string {
 		"## Guardrails",
 		"",
 		`- ${actionNameList(lifecycleActions)} are reserved for explicit user intent.`,
-		"  Pass `--confirm` only for the exact action, on the exact goal, that the user requested in this conversation.",
+		"  Pass `--confirm` only for the exact action the user requested and, when the action names a goal, only for that exact goal.",
 		"  Never pass it because a goal merely looks finished or stale.",
 		"- `migrate_ids` names no goal and rewrites every generated ID in the repository at once, so it needs an explicit request of its own.",
 		"  `--dry-run` reports the rewrites it would make without writing them and without `--confirm`; prefer it when you are showing the user what would change.",

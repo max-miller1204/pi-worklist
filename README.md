@@ -17,7 +17,7 @@ Project Goals track the larger outcomes shared by every Pi session in a Git repo
 - Session Task array order is a canonical queue that supports stable-ID insertion and movement.
 - A new Pi session starts with an empty Session Task list.
 - Project Goals persist at `<git-root>/.pi/worklist.json` and can be committed with the repository.
-- Goal IDs are readable slugs derived from the title and frozen afterwards, and every command accepts a unique ID prefix or a former ID.
+- Goal IDs are readable slugs derived from the title and frozen afterwards, and every Project Goal ID argument accepts a unique prefix or a former ID.
 - `/tasks` opens an interactive two-section dashboard.
 - A compact widget shows the active Project Goal and up to three unfinished Session Tasks.
 - The `worklist` model tool manages both scopes through one consistent API.
@@ -165,7 +165,7 @@ If a title would produce the old random-ID shape, minting adds a collision suffi
 The slug is frozen once minted.
 Renaming a goal never renames its ID, so a reference recorded anywhere else stays valid, and the ID keeps naming the goal it was written for even after the title has moved on.
 
-Every `<id>` argument, in the CLI and in the model tool, accepts a full ID, a unique prefix of one, or an ID the goal answered to before a migration renamed it.
+Every Project Goal `<id>` argument, in the CLI and in the model tool, accepts a full ID, a unique prefix of one, or an ID the goal answered to before a migration renamed it.
 An exact match always beats a prefix, so `support-goal-templates` still names its own goal once `support-goal-templates-2` exists.
 An ambiguous prefix is refused with the goals it matched rather than resolved by guesswork, because a guess a caller cannot see is a change applied to a goal they did not mean.
 
