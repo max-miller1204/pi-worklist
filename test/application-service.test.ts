@@ -646,6 +646,19 @@ describe("worklist application service", () => {
 			},
 			meta: { changed: false, semanticNoOp: false, changedFields: [] },
 		});
+		await expect(service.readProjectSnapshot("migrate_ids")).resolves.toEqual({
+			ok: false,
+			scope: "project",
+			action: "migrate_ids",
+			error: {
+				code: WORKLIST_ERROR_CODES.PERSISTENCE_FAILED,
+				message:
+					"Malformed project worklist or unsupported schema. Repair .pi/worklist.json before retrying.",
+				retryable: false,
+				details: { resolution: "repair-project-file" },
+			},
+			meta: { changed: false, semanticNoOp: false, changedFields: [] },
+		});
 	});
 
 	it("applies one operation contract for tool, command, dashboard, and CLI callers", async () => {
@@ -809,6 +822,19 @@ describe("worklist application service", () => {
 			"utf8",
 		);
 		const service = new WorklistApplicationService({ projectPath });
+		await expect(service.readProjectSnapshot("migrate_ids")).resolves.toMatchObject({
+			ok: true,
+			action: "migrate_ids",
+			result: {
+				goals: [{ id: "goal-ms6gwxrg-56c1bde6" }],
+				retiredIds: [],
+			},
+			meta: {
+				changed: false,
+				semanticNoOp: false,
+				revisions: { project: "1" },
+			},
+		});
 
 		const refused = await service.execute({ scope: "project", action: "migrate_ids" }, { source: "cli" });
 		expect(refused).toMatchObject({

@@ -11,7 +11,6 @@ import {
 import { CLI_COMMAND_CONTRACT, type CliFlagContract, renderCliUsage } from "./cli-contract.ts";
 import { getWorklistPath, resolveGitRoot } from "./git.ts";
 import { matchesGoalQuery, planGoalIdMigration, resolveGoalSelector } from "./goal-selection.ts";
-import { readProjectWorklist } from "./project-store.ts";
 import { WORKLIST_ERROR_CODES, type WorklistErrorCode, type WorklistResultMeta } from "./result-envelope.ts";
 import { runGoalBoard } from "./tui/goal-board-runtime.ts";
 import type { GoalIdMigration, ProjectGoal, WorklistOperationResult } from "./types.ts";
@@ -281,6 +280,19 @@ async function readGoals(service: WorklistApplicationService): Promise<{
 	return { goals: (envelope.ok ? envelope.result.goals : undefined) ?? [], meta: envelope.meta };
 }
 
+async function readProjectSnapshot(
+	service: WorklistApplicationService,
+	action: string,
+): Promise<{ goals: ProjectGoal[]; retiredIds: string[]; meta: WorklistResultMeta }> {
+	const envelope = await service.readProjectSnapshot(action);
+	if (!envelope.ok) throw new WorklistCliFailure(envelope);
+	return {
+		goals: envelope.result.goals ?? [],
+		retiredIds: envelope.result.retiredIds ?? [],
+		meta: envelope.meta,
+	};
+}
+
 /**
  * The goal a read action's `<id>` argument names.
  *
@@ -364,7 +376,6 @@ async function runLifecycle(
 async function runGoalIdMigration(
 	invocation: CliInvocation,
 	service: WorklistApplicationService,
-	projectPath: string,
 ): Promise<void> {
 	if (invocation.dryRun) {
 		// Both flags at once asks to write and not to write. Refusing beats
@@ -372,16 +383,8 @@ async function runGoalIdMigration(
 		if (invocation.confirm) {
 			fail(`project migrate_ids cannot combine --dry-run with --confirm\n\n${USAGE}`, 2);
 		}
-		const snapshot = await readProjectWorklist(projectPath);
-		if (snapshot.error) throw new Error(snapshot.error);
-		const { goals } = snapshot.data;
-		const migrations = planGoalIdMigration(snapshot.data);
-		const meta: WorklistResultMeta = {
-			changed: false,
-			semanticNoOp: false,
-			changedFields: [],
-			revisions: { project: String(snapshot.data.revision) },
-		};
+		const { goals, retiredIds, meta } = await readProjectSnapshot(service, "migrate_ids");
+		const migrations = planGoalIdMigration({ version: 1, goals, retiredIds });
 		const result = { scope: "project", action: "migrate_ids", goals, migrations } as const;
 		report(
 			invocation,
@@ -488,20 +491,8 @@ async function run(invocation: CliInvocation): Promise<void> {
 		}
 		case "show": {
 			const selector = requireId(invocation);
-			const snapshot = await readProjectWorklist(location.path);
-			if (snapshot.error) throw new Error(snapshot.error);
-			const goal = selectGoal(
-				snapshot.data.goals,
-				selector,
-				"show",
-				snapshot.data.retiredIds ?? [],
-			);
-			const meta: WorklistResultMeta = {
-				changed: false,
-				semanticNoOp: false,
-				changedFields: [],
-				revisions: { project: String(snapshot.data.revision) },
-			};
+			const { goals, retiredIds, meta } = await readProjectSnapshot(service, "show");
+			const goal = selectGoal(goals, selector, "show", retiredIds);
 			const detail = { scope: "project", action: "show", goal } as const;
 			report(invocation, readEnvelope("show", detail, meta), formatGoalDetail(goal));
 			return;
@@ -517,7 +508,7 @@ async function run(invocation: CliInvocation): Promise<void> {
 			return;
 		}
 		case "migrate_ids": {
-			await runGoalIdMigration(invocation, service, location.path);
+			await runGoalIdMigration(invocation, service);
 			return;
 		}
 		case "add": {

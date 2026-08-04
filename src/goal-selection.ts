@@ -67,15 +67,17 @@ export function takenGoalIds(worklist: ProjectWorklist): Set<string> {
  *
  * `taken` must include former and retired IDs as well as current ones, so a
  * freshly minted ID can never shadow a live or stale historical reference.
+ * Legacy-generator-shaped candidates are reserved for migration provenance,
+ * keeping newly minted slugs disjoint from IDs migration may rewrite.
  */
 export function generateGoalId(title: string, taken: ReadonlySet<string>): string {
 	const base = slugifyGoalTitle(title);
-	if (!taken.has(base)) return base;
+	if (!taken.has(base) && !isLegacyGeneratedGoalId(base)) return base;
 	// One more candidate than there are taken IDs, so a free suffix must exist.
 	const limit = taken.size + 2;
 	for (let suffix = 2; suffix <= limit; suffix++) {
 		const candidate = `${base}-${suffix}`;
-		if (!taken.has(candidate)) return candidate;
+		if (!taken.has(candidate) && !isLegacyGeneratedGoalId(candidate)) return candidate;
 	}
 	throw new Error(`Cannot derive a unique goal ID from ${JSON.stringify(title)}`);
 }
@@ -144,6 +146,7 @@ export function matchesGoalQuery(goal: ProjectGoal, query: string): boolean {
 	return (goal.description ?? "").toLowerCase().includes(needle);
 }
 
+/** Whether an ID belongs to the namespace the pre-slug generator exclusively minted. */
 export function isLegacyGeneratedGoalId(id: string): boolean {
 	return LEGACY_GOAL_ID_PATTERN.test(id);
 }
@@ -151,9 +154,9 @@ export function isLegacyGeneratedGoalId(id: string): boolean {
 /**
  * The ID rewrites a migration would apply, in worklist order.
  *
- * Only randomly generated IDs are rewritten. A slug is frozen at creation, so
- * re-deriving every ID from its current title would rename goals that were
- * renamed after they were created, which is exactly what freezing prevents.
+ * Only randomly generated IDs are rewritten. New slug minting reserves the
+ * legacy generator's shape, so shape is stable provenance even after a title
+ * changes and migration never needs to re-derive a frozen ID from that title.
  *
  * Old IDs stay reserved because the migration records them as former IDs, and
  * retired IDs participate in collision handling without becoming resolvable.
@@ -162,7 +165,6 @@ export function planGoalIdMigration(worklist: ProjectWorklist): GoalIdMigration[
 	const taken = takenGoalIds(worklist);
 	const migrations: GoalIdMigration[] = [];
 	for (const goal of worklist.goals) {
-		if (goal.id === slugifyGoalTitle(goal.title)) continue;
 		if (!isLegacyGeneratedGoalId(goal.id)) continue;
 		const to = generateGoalId(goal.title, taken);
 		taken.add(to);

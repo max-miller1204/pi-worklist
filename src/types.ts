@@ -61,6 +61,8 @@ export interface WorklistOperationResult {
 	tasks?: SessionTask[];
 	goal?: ProjectGoal;
 	goals?: ProjectGoal[];
+	/** Goal IDs reserved by deletions and excluded from resolution. */
+	retiredIds?: string[];
 	/** Project Goal ID rewrites, applied or planned, from an ID migration. */
 	migrations?: GoalIdMigration[];
 }

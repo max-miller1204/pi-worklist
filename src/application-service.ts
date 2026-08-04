@@ -632,6 +632,33 @@ export class WorklistApplicationService {
 		}
 	}
 
+	async readProjectSnapshot(action: string): Promise<WorklistApplicationResult> {
+		const operation: WorklistOperation = { scope: "project", action };
+		try {
+			const projectPath = this.requireProjectPath();
+			const { goals, retiredIds, revision } = await readProjectGoals(projectPath);
+			return {
+				ok: true,
+				scope: "project",
+				action,
+				result: { scope: "project", action, goals, retiredIds },
+				meta: { ...cloneEmptyResultMeta(), revisions: { project: revision } },
+			};
+		} catch (error) {
+			const typedError =
+				error instanceof WorklistApplicationError
+					? error.toResultError()
+					: persistenceError(operation, error);
+			return {
+				ok: false,
+				scope: "project",
+				action,
+				error: typedError,
+				meta: cloneEmptyResultMeta(),
+			};
+		}
+	}
+
 	async execute(
 		operation: WorklistOperation,
 		_context: WorklistOperationContext,

@@ -78,6 +78,20 @@ describe("project mutation service", () => {
 		expect(third.goal.id).toBe("support-goal-templates-3");
 	});
 
+	it("keeps legacy-shaped title slugs frozen after a rename", async () => {
+		const path = await tempPath();
+		const added = await addProjectGoal(path, "Goal abc deadbeef");
+		expect(added.goal.id).toBe("goal-abc-deadbeef-2");
+
+		const renamed = await updateProjectGoal(path, added.goal.id, { title: "Something unrelated" });
+		expect(renamed.goal.id).toBe("goal-abc-deadbeef-2");
+
+		const migrated = await migrateProjectGoalIds(path);
+		expect(migrated.changed).toBe(false);
+		expect(migrated.migrations).toEqual([]);
+		expect(migrated.goals[0].id).toBe("goal-abc-deadbeef-2");
+	});
+
 	it("retires every ID of a deleted goal without making it resolvable", async () => {
 		const path = await tempPath();
 		await mkdir(dirname(path), { recursive: true });

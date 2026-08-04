@@ -61,6 +61,10 @@ describe("goal ID derivation", () => {
 		expect(takenGoalIds(worklist(goals, ["deleted-goal"]))).toEqual(
 			new Set(["deleted-goal", "current", "goal-mryb1h5b-f5473d74"]),
 		);
+
+		const legacyShapedSlug = generateGoalId("Goal abc deadbeef", new Set());
+		expect(legacyShapedSlug).toBe("goal-abc-deadbeef-2");
+		expect(isLegacyGeneratedGoalId(legacyShapedSlug)).toBe(false);
 	});
 
 	it("recognizes only randomly generated IDs as migratable", () => {
@@ -122,9 +126,11 @@ describe("goal selector resolution", () => {
 	});
 
 	it("does not reinterpret a retired exact ID as a live goal prefix", () => {
-		expect(resolveGoalSelector([goal("support-goal-templates-2")], "support-goal-templates", [
-			"support-goal-templates",
-		])).toEqual({ kind: "not-found" });
+		expect(
+			resolveGoalSelector([goal("support-goal-templates-2")], "support-goal-templates", [
+				"support-goal-templates",
+			]),
+		).toEqual({ kind: "not-found" });
 		expect(
 			findGoalByStoredId(
 				[goal("support-goal-templates", { previousIds: ["legacy-support"] })],
@@ -156,11 +162,13 @@ describe("goal text search", () => {
 
 describe("goal ID migration planning", () => {
 	it("renames only generated IDs and keeps old names reserved", () => {
-		const plan = planGoalIdMigration(worklist([
-			goal("goal-mse1rzxb-8213cc2a", { title: "Support goal templates" }),
-			goal("goal-mryb1h5b-f5473d74", { title: "Support goal templates" }),
-			goal("future-start-goal", { title: "Already readable" }),
-		]));
+		const plan = planGoalIdMigration(
+			worklist([
+				goal("goal-mse1rzxb-8213cc2a", { title: "Support goal templates" }),
+				goal("goal-mryb1h5b-f5473d74", { title: "Support goal templates" }),
+				goal("future-start-goal", { title: "Already readable" }),
+			]),
+		);
 		expect(plan).toEqual([
 			{
 				from: "goal-mse1rzxb-8213cc2a",
@@ -176,20 +184,22 @@ describe("goal ID migration planning", () => {
 	});
 
 	it("never mints an ID that some goal still answers to", () => {
-		const plan = planGoalIdMigration(worklist([
-			goal("support-goal-templates", { title: "Something else entirely" }),
-			goal("goal-mse1rzxb-8213cc2a", { title: "Support goal templates" }),
-			goal("settled", { title: "Settled", previousIds: ["support-goal-templates-2"] }),
-		], ["support-goal-templates-3"]));
+		const plan = planGoalIdMigration(
+			worklist(
+				[
+					goal("support-goal-templates", { title: "Something else entirely" }),
+					goal("goal-mse1rzxb-8213cc2a", { title: "Support goal templates" }),
+					goal("settled", { title: "Settled", previousIds: ["support-goal-templates-2"] }),
+				],
+				["support-goal-templates-3"],
+			),
+		);
 		expect(plan.map((migration) => migration.to)).toEqual(["support-goal-templates-4"]);
 	});
 
-	it("does not mistake a newly minted slug for a generated legacy ID", () => {
-		expect(
-			planGoalIdMigration(
-				worklist([goal("goal-abc-deadbeef", { title: "Goal abc deadbeef" })]),
-			),
-		).toEqual([]);
+	it("keeps a renamed slug outside the legacy migration namespace", () => {
+		const id = generateGoalId("Goal abc deadbeef", new Set());
+		expect(planGoalIdMigration(worklist([goal(id, { title: "Something unrelated" })]))).toEqual([]);
 	});
 
 	it("plans nothing for a worklist whose IDs are already readable", () => {

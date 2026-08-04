@@ -160,6 +160,7 @@ Session Tasks are intentionally unavailable here because they live inside a Pi s
 
 A Project Goal's ID is derived from its title when the goal is created: lowercase, hyphenated, capped near 40 characters at a word boundary, with `-2` and `-3` suffixes when a slug is already taken.
 `Support goal templates` becomes `support-goal-templates`, so an ID reads as words in a shell, a commit message, or a PR description instead of as `goal-ms6gwxrg-56c1bde6`.
+If a title would produce the old random-ID shape, minting adds a collision suffix so new slugs and legacy IDs remain permanently distinguishable.
 
 The slug is frozen once minted.
 Renaming a goal never renames its ID, so a reference recorded anywhere else stays valid, and the ID keeps naming the goal it was written for even after the title has moved on.
@@ -169,7 +170,7 @@ An exact match always beats a prefix, so `support-goal-templates` still names it
 An ambiguous prefix is refused with the goals it matched rather than resolved by guesswork, because a guess a caller cannot see is a change applied to a goal they did not mean.
 
 `npx -y pi-worklist@latest project migrate_ids --confirm` rewrites the randomly generated IDs in an existing worklist.
-Only generated IDs are rewritten: a slug is frozen at creation, so re-deriving every ID from its current title would rename exactly the goals that freezing protects.
+Only generated IDs are rewritten: new slugs cannot use the legacy generator's shape, so migration can classify IDs without comparing them to a title that may have changed.
 Each rewritten goal records its old ID in `previousIds`, which keeps that ID both resolvable and reserved.
 That is what makes migrating a done or archived goal safe rather than a judgment call: a Session Task's `goalId`, an evidence file, and an old PR description all keep resolving to the same goal, and no later goal can claim a name still in use.
 Deleting a goal retires its current and former IDs permanently.

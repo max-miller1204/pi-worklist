@@ -398,12 +398,7 @@ describe("project goal CLI", () => {
 		expect(staleReference.code).toBe(1);
 		expect(staleReference.stderr).toContain("support-goal-templates was not found");
 
-		const staleMutation = await runCli(root, [
-			"project",
-			"update",
-			"support-goal-templates",
-			"Wrong target",
-		]);
+		const staleMutation = await runCli(root, ["project", "update", "support-goal-templates", "Wrong target"]);
 		expect(staleMutation.code).toBe(1);
 		expect((await readGoals(root))[0].title).toBe("Support goal templates");
 	});
@@ -480,7 +475,8 @@ describe("project goal CLI", () => {
 	it("does not migrate a title-derived slug that resembles a generated ID", async () => {
 		const root = await tempGitRepo();
 		await runCli(root, ["project", "add", "Goal abc deadbeef"]);
-		expect((await readGoals(root))[0].id).toBe("goal-abc-deadbeef");
+		expect((await readGoals(root))[0].id).toBe("goal-abc-deadbeef-2");
+		await runCli(root, ["project", "update", "goal-abc-deadbeef-2", "Something unrelated"]);
 
 		const planned = await runCli(root, ["project", "migrate_ids", "--dry-run"]);
 		expect(planned.code).toBe(0);
@@ -631,6 +627,23 @@ describe("project goal CLI", () => {
 		const result = await runCli(root, ["project", "add", "Another"]);
 		expect(result.code).toBe(1);
 		expect(result.stderr).toContain("Malformed");
+
+		for (const args of [
+			["project", "show", "existing", "--json"],
+			["project", "migrate_ids", "--dry-run", "--json"],
+		]) {
+			const read = await runCli(root, args);
+			expect(read.code, args.join(" ")).toBe(1);
+			expect(read.stdout).toBe("");
+			expect(JSON.parse(read.stderr)).toMatchObject({
+				ok: false,
+				error: {
+					code: "PERSISTENCE_FAILED",
+					retryable: false,
+					details: { resolution: "repair-project-file" },
+				},
+			});
+		}
 		expect(await readFile(path, "utf8")).toBe("not json\n");
 	});
 });
