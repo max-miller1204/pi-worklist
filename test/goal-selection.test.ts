@@ -64,12 +64,27 @@ describe("goal ID derivation", () => {
 		expect(slugifyGoalTitle("archive-browsing: archived goals in the Pi dashboard")).toBe(
 			"archive-browsing-archived-goals",
 		);
+		expect(slugifyGoalTitle("Support cross process locking through all interfaces")).toBe(
+			"support-cross-process-locking",
+		);
+		expect(slugifyGoalTitle("Support cross process locking during all interfaces")).toBe(
+			"support-cross-process-locking",
+		);
+		expect(slugifyGoalTitle("Ensure project mutation guarantees are documented")).toBe(
+			"ensure-project-mutation-guarantees",
+		);
 	});
 
 	it("keeps function words a short title actually ends on", () => {
 		// Nothing was cut, so every word is the author's own and stays.
 		expect(slugifyGoalTitle("What to do")).toBe("what-to-do");
 		expect(slugifyGoalTitle("Decide what to ship and")).toBe("decide-what-to-ship-and");
+	});
+
+	it("keeps a negation left at the truncation boundary", () => {
+		expect(slugifyGoalTitle("Ensure project mutation locks are not circumvented")).toBe(
+			"ensure-project-mutation-locks-are-not",
+		);
 	});
 
 	it("never trims a slug away entirely", () => {
