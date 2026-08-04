@@ -931,6 +931,21 @@ describe("worklist application service", () => {
 				details: { fields: ["afterId", "beforeId", "direction"] },
 			},
 		});
+		await service.execute({ scope: "project", action: "add", title: "First follow-up" }, { source: "cli" });
+		for (const field of ["beforeId", "afterId"] as const) {
+			await expect(
+				service.execute(
+					{ scope: "project", action: "move", id: "third", [field]: "fir" },
+					{ source: "cli" },
+				),
+			).resolves.toMatchObject({
+				ok: false,
+				error: {
+					code: WORKLIST_ERROR_CODES.VALIDATION_FAILED,
+					details: { fields: [field], resolution: "provide-unambiguous-goal-id" },
+				},
+			});
+		}
 		await expect(
 			service.execute({ scope: "project", action: "update", id: "third", group: "X" }, { source: "cli" }),
 		).resolves.toMatchObject({ ok: true, result: { goal: { group: "X" } } });

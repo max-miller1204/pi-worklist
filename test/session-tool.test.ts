@@ -602,11 +602,15 @@ describe("registered model tool", () => {
 	});
 
 	it("exposes the session ordering surface to the model", () => {
-		const parameters = registerExtension().parameters as {
+		const tool = registerExtension();
+		const parameters = tool.parameters as {
 			properties: Record<string, { enum?: string[]; description?: string }>;
 		};
 		expect(parameters.properties.action.enum).toContain("move");
+		expect(parameters.properties.id.description).toContain("for move");
 		expect(parameters.properties.beforeId).toBeDefined();
 		expect(parameters.properties.afterId).toBeDefined();
+		expect(tool.description).toContain("Project move requires exactly one of beforeId or afterId");
+		expect(tool.description).not.toContain("Project Goals cannot be reordered");
 	});
 });

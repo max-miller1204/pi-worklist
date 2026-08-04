@@ -1,4 +1,9 @@
-import { generateGoalId, planGoalIdMigration, takenGoalIds } from "./goal-selection.ts";
+import {
+	findGoalByStoredId,
+	generateGoalId,
+	planGoalIdMigration,
+	takenGoalIds,
+} from "./goal-selection.ts";
 import { mutateProjectWorklist, type ProjectMutationOptions, readProjectWorklist } from "./project-store.ts";
 import type { GoalIdMigration, ProjectGoal, ProjectGoalPlacement, ProjectGoalStatus } from "./types.ts";
 
@@ -203,7 +208,8 @@ export async function updateProjectGoal(
 	const result = await mutateProjectWorklist(
 		path,
 		(worklist) => {
-			const index = worklist.goals.findIndex((goal) => goal.id === id);
+			const target = findGoalByStoredId(worklist.goals, id, worklist.retiredIds ?? []);
+			const index = target ? worklist.goals.indexOf(target) : -1;
 			if (index === -1) return { worklist, result: null, changed: false };
 			const current = worklist.goals[index];
 			const title = updates.title ?? current.title;
@@ -260,7 +266,7 @@ export async function activateProjectGoal(
 			result: ActivationResult;
 			changed?: boolean;
 		} => {
-			const target = worklist.goals.find((goal) => goal.id === id);
+			const target = findGoalByStoredId(worklist.goals, id, worklist.retiredIds ?? []);
 			if (!target) {
 				return { worklist, result: { outcome: null, blocked: false }, changed: false };
 			}
@@ -269,7 +275,7 @@ export async function activateProjectGoal(
 			}
 			const alreadyExclusivelyActive =
 				target.status === "active" &&
-				!worklist.goals.some((goal) => goal.id !== id && goal.status === "active");
+				!worklist.goals.some((goal) => goal.id !== target.id && goal.status === "active");
 			if (alreadyExclusivelyActive) {
 				return {
 					worklist,
@@ -282,7 +288,7 @@ export async function activateProjectGoal(
 			}
 			const changedGoalIds: string[] = [];
 			const goals = worklist.goals.map((goal) => {
-				if (goal.id === id) {
+				if (goal.id === target.id) {
 					changedGoalIds.push(goal.id);
 					return {
 						...goal,
@@ -300,7 +306,7 @@ export async function activateProjectGoal(
 				}
 				return goal;
 			});
-			const activated = goals.find((goal) => goal.id === id);
+			const activated = goals.find((goal) => goal.id === target.id);
 			return {
 				worklist: { ...worklist, goals },
 				result: {
@@ -327,7 +333,8 @@ export async function transitionProjectGoal(
 	const result = await mutateProjectWorklist(
 		path,
 		(worklist) => {
-			const index = worklist.goals.findIndex((goal) => goal.id === id);
+			const target = findGoalByStoredId(worklist.goals, id, worklist.retiredIds ?? []);
+			const index = target ? worklist.goals.indexOf(target) : -1;
 			if (index === -1) return { worklist, result: null, changed: false };
 			const current = worklist.goals[index];
 			if (current.status === status) {
@@ -366,6 +373,7 @@ function reorderGoals(
 	goals: readonly ProjectGoal[],
 	sourceIndex: number,
 	placement: ProjectGoalPlacement,
+	retiredIds: readonly string[] = [],
 ): { goals?: ProjectGoal[]; missingAnchorId?: string } {
 	const goal = goals[sourceIndex];
 	const remaining = [...goals.slice(0, sourceIndex), ...goals.slice(sourceIndex + 1)];
@@ -375,8 +383,9 @@ function reorderGoals(
 		if (insertionIndex < 0 || insertionIndex > remaining.length) return {};
 	} else {
 		const anchorId = placement.beforeId ?? placement.afterId;
-		if (anchorId === goal.id) return {};
-		const anchorIndex = remaining.findIndex((candidate) => candidate.id === anchorId);
+		const anchor = findGoalByStoredId(goals, anchorId, retiredIds);
+		if (anchor?.id === goal.id) return {};
+		const anchorIndex = anchor ? remaining.findIndex((candidate) => candidate.id === anchor.id) : -1;
 		if (anchorIndex === -1) return { missingAnchorId: anchorId };
 		insertionIndex = placement.beforeId !== undefined ? anchorIndex : anchorIndex + 1;
 	}
@@ -407,10 +416,12 @@ export async function moveProjectGoal(
 	const result = await mutateProjectWorklist(
 		path,
 		(worklist): { worklist: typeof worklist; result: MoveResult; changed?: boolean } => {
-			const sourceIndex = worklist.goals.findIndex((goal) => goal.id === id);
+			const retiredIds = worklist.retiredIds ?? [];
+			const source = findGoalByStoredId(worklist.goals, id, retiredIds);
+			const sourceIndex = source ? worklist.goals.indexOf(source) : -1;
 			if (sourceIndex === -1) return { worklist, result: { outcome: null }, changed: false };
 			const goal = worklist.goals[sourceIndex];
-			const reordered = reorderGoals(worklist.goals, sourceIndex, placement);
+			const reordered = reorderGoals(worklist.goals, sourceIndex, placement, retiredIds);
 			if (reordered.missingAnchorId !== undefined) {
 				return {
 					worklist,
@@ -442,18 +453,20 @@ export async function deleteProjectGoal(
 	path: string,
 	id: string,
 	options?: ProjectMutationOptions,
-): Promise<{ goals: ProjectGoal[]; revision: string; changed: boolean }> {
+): Promise<{ goalId: string; goals: ProjectGoal[]; revision: string; changed: boolean }> {
 	const result = await mutateProjectWorklist(
 		path,
 		(worklist) => {
-			const removed = worklist.goals.find((goal) => goal.id === id);
-			const goals = removed ? worklist.goals.filter((goal) => goal.id !== id) : worklist.goals;
+			const removed = findGoalByStoredId(worklist.goals, id, worklist.retiredIds ?? []);
+			const goals = removed
+				? worklist.goals.filter((goal) => goal.id !== removed.id)
+				: worklist.goals;
 			const retiredIds = removed
 				? [...new Set([...(worklist.retiredIds ?? []), removed.id, ...(removed.previousIds ?? [])])]
 				: worklist.retiredIds;
 			return {
 				worklist: removed ? { ...worklist, goals, retiredIds } : worklist,
-				result: removed ? { goals } : null,
+				result: removed ? { goalId: removed.id, goals } : null,
 				changed: removed !== undefined,
 			};
 		},

@@ -420,15 +420,19 @@ describe("goal board reordering", () => {
 		expect(board.selectedGoal?.id).toBe("g-open-1");
 		expect(press(board, "J")).toEqual([
 			{
-				kind: "operation",
-				operation: { scope: "project", action: "move", id: "g-open-1", afterId: "g-open-2" },
+				kind: "reorder",
+				goalId: "g-open-1",
+				delta: 1,
+				visibleGoalIds: ["g-active", "g-open-1", "g-open-2"],
 				success: expect.stringContaining("down"),
 			},
 		]);
 		expect(press(board, "K")).toEqual([
 			{
-				kind: "operation",
-				operation: { scope: "project", action: "move", id: "g-open-1", beforeId: "g-active" },
+				kind: "reorder",
+				goalId: "g-open-1",
+				delta: -1,
+				visibleGoalIds: ["g-active", "g-open-1", "g-open-2"],
 				success: expect.stringContaining("up"),
 			},
 		]);
@@ -437,13 +441,13 @@ describe("goal board reordering", () => {
 	it("accepts shift+arrows for the terminals that report them", () => {
 		const board = createBoard();
 		expect(press(board, `${ESC}[1;2B`)).toMatchObject([
-			{ operation: { action: "move", id: "g-active", afterId: "g-open-1" } },
+			{ kind: "reorder", goalId: "g-active", delta: 1 },
 		]);
 		// A plain arrow is still navigation, not a reorder.
 		expect(press(board, `${ESC}[B`)).toEqual([]);
 		expect(board.selectedGoal?.id).toBe("g-open-1");
 		expect(press(board, `${ESC}[1;2A`)).toMatchObject([
-			{ operation: { action: "move", id: "g-open-1", beforeId: "g-active" } },
+			{ kind: "reorder", goalId: "g-open-1", delta: -1 },
 		]);
 	});
 
@@ -468,7 +472,7 @@ describe("goal board reordering", () => {
 		expect(press(board, "J")).toEqual([]);
 		expect(plainFrame(board).at(-2)).toContain("Reorder in file order only");
 		press(board, "oo");
-		expect(press(board, "J")).toMatchObject([{ operation: { action: "move" } }]);
+		expect(press(board, "J")).toMatchObject([{ kind: "reorder" }]);
 	});
 });
 

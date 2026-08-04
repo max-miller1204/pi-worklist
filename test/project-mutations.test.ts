@@ -275,6 +275,33 @@ describe("project mutation service", () => {
 		expect((await readProjectGoals(path)).revision).toBe("1");
 	});
 
+	it("resolves former goal IDs at the locked mutation boundary", async () => {
+		const path = await tempPath();
+		const first = await addProjectGoal(path, "First");
+		const second = await addProjectGoal(path, "Second");
+		const current = await readProjectWorklist(path);
+		if (current.error) throw new Error(current.error);
+		await writeFile(
+			path,
+			`${JSON.stringify({
+				...current.data,
+				goals: current.data.goals.map((goal) => ({
+					...goal,
+					previousIds: [`former-${goal.id}`],
+				})),
+			})}\n`,
+			"utf8",
+		);
+
+		const moved = await moveProjectGoal(path, `former-${second.goal.id}`, {
+			beforeId: `former-${first.goal.id}`,
+		});
+		expect(moved.goals.map((goal) => goal.id)).toEqual([second.goal.id, first.goal.id]);
+		await expect(
+			updateProjectGoal(path, `former-${second.goal.id}`, { title: "Still reachable" }),
+		).resolves.toMatchObject({ goal: { id: second.goal.id, title: "Still reachable" } });
+	});
+
 	it("stamps a completion, clears it on reopen, and keeps it through archival", async () => {
 		const path = await tempPath();
 		const { goal } = await addProjectGoal(path, "Finish the migration");

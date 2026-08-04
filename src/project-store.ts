@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import lockfile from "proper-lockfile";
+import { findGoalByStoredId } from "./goal-selection.ts";
 import type { ProjectWorklist, RevisionedProjectWorklist } from "./types.ts";
 import { PROJECT_WORKLIST_VERSION } from "./types.ts";
 
@@ -83,9 +84,9 @@ function assertGoalPrecondition(
 	precondition: ProjectGoalPrecondition | undefined,
 ): void {
 	if (!precondition) return;
-	const target = worklist.goals.find((goal) => goal.id === precondition.id);
+	const target = findGoalByStoredId(worklist.goals, precondition.id, worklist.retiredIds ?? []);
 	if (!target || isSameInstant(precondition.updatedAt, target.updatedAt)) return;
-	throw new ProjectGoalConflictError(precondition.id, precondition.updatedAt, target.updatedAt);
+	throw new ProjectGoalConflictError(target.id, precondition.updatedAt, target.updatedAt);
 }
 
 function isStringArray(value: unknown): value is string[] {

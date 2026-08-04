@@ -100,6 +100,13 @@ export interface BoardMessage {
 export type BoardIntent =
 	| { kind: "quit" }
 	| { kind: "reload" }
+	| {
+			kind: "reorder";
+			goalId: string;
+			delta: -1 | 1;
+			visibleGoalIds: string[];
+			success: string;
+	  }
 	| { kind: "operation"; operation: WorklistOperation; success: string }
 	| { kind: "edit-description"; goal: ProjectGoal };
 
@@ -270,6 +277,28 @@ export class GoalBoard {
 
 	setMessage(text: string, tone: MessageTone): void {
 		this.message = { text, tone };
+	}
+
+	resolveReorder(intent: Extract<BoardIntent, { kind: "reorder" }>): WorklistOperation | undefined {
+		const visibleIds = new Set(intent.visibleGoalIds);
+		const visible = this.goals.filter((goal) => visibleIds.has(goal.id));
+		const sourceIndex = visible.findIndex((goal) => goal.id === intent.goalId);
+		if (sourceIndex === -1) {
+			return {
+				scope: "project",
+				action: "move",
+				id: intent.goalId,
+				direction: intent.delta < 0 ? "up" : "down",
+			};
+		}
+		const anchor = visible[sourceIndex + intent.delta];
+		if (!anchor) return undefined;
+		return {
+			scope: "project",
+			action: "move",
+			id: intent.goalId,
+			...(intent.delta < 0 ? { beforeId: anchor.id } : { afterId: anchor.id }),
+		};
 	}
 
 	get selectedGoal(): ProjectGoal | undefined {
@@ -631,19 +660,17 @@ export class GoalBoard {
 			this.message = { text: `Reorder in file order only. Press o until ${SORT_LABELS.file}.`, tone: "info" };
 			return undefined;
 		}
-		const anchor = this.visibleGoals()[this.selectedIndex() + delta];
+		const visible = this.visibleGoals();
+		const anchor = visible[this.selectedIndex() + delta];
 		if (!anchor) {
 			this.message = { text: delta < 0 ? "Already first." : "Already last.", tone: "info" };
 			return undefined;
 		}
 		return {
-			kind: "operation",
-			operation: {
-				scope: "project",
-				action: "move",
-				id: goal.id,
-				...(delta < 0 ? { beforeId: anchor.id } : { afterId: anchor.id }),
-			},
+			kind: "reorder",
+			goalId: goal.id,
+			delta,
+			visibleGoalIds: visible.map((candidate) => candidate.id),
 			success: `Moved ${quoteTitle(goal.title)} ${delta < 0 ? "up" : "down"}`,
 		};
 	}

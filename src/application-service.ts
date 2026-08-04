@@ -166,6 +166,7 @@ function notFoundError(entity: MissingEntity, id: string) {
 export function projectGoalSelectionError(
 	selector: string,
 	resolution: UnresolvedGoalSelector,
+	field: "id" | "beforeId" | "afterId" = "id",
 ): WorklistApplicationError {
 	if (resolution.kind === "not-found") return notFoundError("project-goal", selector);
 	const reported = resolution.candidates.slice(0, MAX_REPORTED_GOAL_CANDIDATES);
@@ -174,7 +175,7 @@ export function projectGoalSelectionError(
 	return validationError(
 		`Goal ID ${selector} matches ${resolution.candidates.length} goals: ${listed}${remainder > 0 ? `, and ${remainder} more` : ""}. Use a longer prefix or the full ID.`,
 		{
-			fields: ["id"],
+			fields: [field],
 			resolution: "provide-unambiguous-goal-id",
 			candidateCount: resolution.candidates.length,
 			candidates: reported.map((goal) => ({ id: goal.id, title: goal.title })),
@@ -934,7 +935,7 @@ export class WorklistApplicationService {
 					result: { scope: "project", action: "update", goal, goals },
 					revision,
 					changed,
-					changedGoalIds: [operation.id],
+					changedGoalIds: [goal.id],
 				};
 			}
 			case "set_status":
@@ -999,17 +1000,26 @@ export class WorklistApplicationService {
 			return operation;
 		}
 		const { goals, retiredIds } = await readProjectGoals(projectPath);
-		const resolve = (selector: string | undefined): string | undefined => {
+		const resolve = (
+			selector: string | undefined,
+			field: "id" | "beforeId" | "afterId",
+		): string | undefined => {
 			if (selector === undefined) return undefined;
 			const resolution = resolveGoalSelector(goals, selector, retiredIds);
-			if (resolution.kind === "ambiguous") throw projectGoalSelectionError(selector, resolution);
+			if (resolution.kind === "ambiguous") {
+				throw projectGoalSelectionError(selector, resolution, field);
+			}
 			return resolution.kind === "found" ? resolution.goal.id : selector;
 		};
 		return {
 			...operation,
-			...(operation.id ? { id: resolve(operation.id) } : {}),
-			...(operation.beforeId !== undefined ? { beforeId: resolve(operation.beforeId) } : {}),
-			...(operation.afterId !== undefined ? { afterId: resolve(operation.afterId) } : {}),
+			...(operation.id ? { id: resolve(operation.id, "id") } : {}),
+			...(operation.beforeId !== undefined
+				? { beforeId: resolve(operation.beforeId, "beforeId") }
+				: {}),
+			...(operation.afterId !== undefined
+				? { afterId: resolve(operation.afterId, "afterId") }
+				: {}),
 		};
 	}
 
@@ -1037,7 +1047,7 @@ export class WorklistApplicationService {
 			result: { scope: "project", action: "move", goal, goals },
 			revision,
 			changed,
-			changedGoalIds: [id],
+			changedGoalIds: [goal.id],
 		};
 	}
 
@@ -1093,12 +1103,16 @@ export class WorklistApplicationService {
 		}
 		requireConfirmation(operation);
 		if (operation.action === "delete") {
-			const { goals, revision, changed } = await deleteProjectGoal(projectPath, operation.id, options);
+			const { goalId, goals, revision, changed } = await deleteProjectGoal(
+				projectPath,
+				operation.id,
+				options,
+			);
 			return {
 				result: { scope: "project", action: "delete", goals },
 				revision,
 				changed,
-				changedGoalIds: [operation.id],
+				changedGoalIds: [goalId],
 			};
 		}
 		if (!isProjectLifecycleAction(operation.action)) {
@@ -1118,7 +1132,7 @@ export class WorklistApplicationService {
 			result: { scope: "project", action, goal, goals },
 			revision,
 			changed,
-			changedGoalIds: [operation.id],
+			changedGoalIds: [goal.id],
 		};
 	}
 

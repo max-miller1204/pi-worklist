@@ -166,6 +166,17 @@ describe("goal board runtime", () => {
 		expect((await board.goals()).map((goal) => goal.id)).toEqual(["second", "third", "first"]);
 	});
 
+	it("resolves rapid reorder keys against each preceding queued move", async () => {
+		const root = await tempGitRepo();
+		for (const title of ["First", "Second", "Third"]) await seed(root, ["add", title]);
+
+		const board = await openBoard(root);
+		board.send("JJq");
+		await board.done;
+
+		expect((await board.goals()).map((goal) => goal.id)).toEqual(["second", "third", "first"]);
+	});
+
 	it("deletes only after an explicit yes", async () => {
 		const root = await tempGitRepo();
 		await seed(root, ["add", "Throwaway"]);
