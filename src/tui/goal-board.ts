@@ -1,5 +1,5 @@
 import type { WorklistOperation } from "../application-service.ts";
-import { matchesGoalQuery } from "../goal-selection.ts";
+import { findGoalByStoredId, matchesGoalQuery } from "../goal-selection.ts";
 import type { ProjectGoal, ProjectGoalStatus } from "../types.ts";
 import type { KeyEvent } from "./keys.ts";
 import { isInterrupt } from "./keys.ts";
@@ -280,10 +280,15 @@ export class GoalBoard {
 	}
 
 	resolveReorder(intent: Extract<BoardIntent, { kind: "reorder" }>): WorklistOperation | undefined {
-		const visibleIds = new Set(intent.visibleGoalIds);
+		const visibleIds = new Set(
+			intent.visibleGoalIds.flatMap((id) => {
+				const goal = findGoalByStoredId(this.goals, id);
+				return goal ? [goal.id] : [];
+			}),
+		);
 		const visible = this.goals.filter((goal) => visibleIds.has(goal.id));
-		const sourceIndex = visible.findIndex((goal) => goal.id === intent.goalId);
-		if (sourceIndex === -1) {
+		const source = findGoalByStoredId(this.goals, intent.goalId);
+		if (!source) {
 			return {
 				scope: "project",
 				action: "move",
@@ -291,12 +296,13 @@ export class GoalBoard {
 				direction: intent.delta < 0 ? "up" : "down",
 			};
 		}
+		const sourceIndex = visible.findIndex((goal) => goal.id === source.id);
 		const anchor = visible[sourceIndex + intent.delta];
 		if (!anchor) return undefined;
 		return {
 			scope: "project",
 			action: "move",
-			id: intent.goalId,
+			id: source.id,
 			...(intent.delta < 0 ? { beforeId: anchor.id } : { afterId: anchor.id }),
 		};
 	}

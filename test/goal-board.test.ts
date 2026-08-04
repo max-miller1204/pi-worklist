@@ -466,6 +466,30 @@ describe("goal board reordering", () => {
 		expect(plainFrame(filtered).at(-2)).toContain("Already last.");
 	});
 
+	it("keeps queued filtered reorder references valid across ID migration", () => {
+		const original = [
+			goal({ id: "old-a", title: "A" }),
+			goal({ id: "hidden", title: "Hidden", status: "done" }),
+			goal({ id: "old-b", title: "B" }),
+		];
+		const board = createBoard(original);
+		const [intent] = press(board, "J");
+		if (intent?.kind !== "reorder") throw new Error("Expected reorder intent");
+
+		board.setGoals([
+			{ ...original[0], id: "new-a", previousIds: ["old-a"] },
+			original[1],
+			{ ...original[2], id: "new-b", previousIds: ["old-b"] },
+		]);
+
+		expect(board.resolveReorder(intent)).toEqual({
+			scope: "project",
+			action: "move",
+			id: "new-a",
+			afterId: "new-b",
+		});
+	});
+
 	it("reorders only in file order, since the other views are not the file", () => {
 		const board = createBoard();
 		press(board, "o");
