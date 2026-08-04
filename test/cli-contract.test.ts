@@ -187,6 +187,7 @@ describe("single CLI command contract", () => {
 			"ui",
 			"add",
 			"update",
+			"move",
 			"set_active",
 			"complete",
 			"reopen",

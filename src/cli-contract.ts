@@ -90,6 +90,11 @@ export const CLI_COMMAND_CONTRACT = {
 			summary: 'Edit a goal; "-- " alone clears the description',
 		},
 		{
+			name: "move",
+			usage: "move <id> up|down|before <id>|after <id>",
+			summary: "Reorder a goal in the roadmap's canonical file order",
+		},
+		{
 			name: "set_active",
 			usage: "set_active <id>",
 			summary: "Make a goal the single active goal",
@@ -154,6 +159,12 @@ export const CLI_COMMAND_CONTRACT = {
 			actions: ["update"],
 		},
 		{
+			name: "--group",
+			usage: "--group <name>",
+			summary: "Put the goal in a free-form section, such as Foundation; an empty name clears it",
+			actions: ["add", "update"],
+		},
+		{
 			name: "--expect-updated-at",
 			usage: "--expect-updated-at <timestamp>",
 			summary: "Refuse the change as a conflict unless the goal's updatedAt still matches this value",
@@ -188,6 +199,19 @@ export const CLI_COMMAND_CONTRACT = {
 		"Deleting a goal permanently retires its current and former IDs: they stop resolving, but no later goal can claim them and inherit stale references.",
 		"`find <text>` searches titles and descriptions, so locating a goal never needs `list --json` plus client-side filtering.",
 	],
+	/**
+	 * How the roadmap is ordered, and what that order does and does not mean.
+	 *
+	 * Stated everywhere because a caller who assumes the list is sorted for them
+	 * will read `move` as cosmetic and re-sort the file to "fix" an order someone
+	 * arranged deliberately.
+	 */
+	orderRules: [
+		"Goals are stored and listed in one canonical order: `add` appends to the end, and `move` is the only action that rearranges them.",
+		"`move <id> up` and `move <id> down` step one place, while `move <id> before <anchor>` and `move <id> after <anchor>` land the goal beside a named one.",
+		"A move changes the roadmap's order without touching the moved goal's `updatedAt`, so rearranging the list never reads as editing the goals on it.",
+		"Reordering needs no confirmation, because it names no new state for a goal, only a new position among the others.",
+	],
 	exitCodes: [
 		{ code: 0, meaning: "success" },
 		{ code: 1, meaning: "error" },
@@ -206,6 +230,7 @@ export const CLI_COMMAND_CONTRACT = {
 		"Pass a full ID or a prefix long enough to be unique; an ambiguous prefix is refused with candidates rather than resolved by guesswork.",
 		"Run migrate_ids only when the user explicitly asks for it; it rewrites stored IDs, though every old ID keeps resolving afterwards.",
 		"Add a note with --append instead of resending a description you did not write, so nothing in the existing text can be lost in transcription.",
+		"Group related goals with --group <name> on add or update, and leave the file order alone unless the user asked for a different sequence.",
 		"Pass --expect-updated-at with the updatedAt from your own read whenever you change a goal, so your mutation conflicts if the goal changed in the meantime.",
 		"Broad outcomes belong in Project Goals; do not mirror your internal step-by-step plan into them.",
 	],
@@ -224,12 +249,14 @@ function exitCodeMeaning(code: number): string {
 	return match.meaning;
 }
 
-/** Render `a`, `b`, and `c`. */
+/** Render `a`, `a and b`, or `a`, `b`, and `c`. */
 function joinWithAnd(items: readonly string[]): string {
-	if (items.length < 2) {
-		return items.join("");
-	}
-	return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
+	if (items.length < 2) return items.join("");
+	const last = items[items.length - 1];
+	const leading = items.slice(0, -1);
+	// A two-item list takes no serial comma, so a flag scoped to two actions
+	// reads as a sentence rather than as a truncated longer list.
+	return leading.length === 1 ? `${leading[0]} and ${last}` : `${leading.join(", ")}, and ${last}`;
 }
 
 /** Render `a`, `b`, and `c` from a set of actions. */
@@ -285,6 +312,8 @@ export function renderSkillMarkdown(): string {
 	// A title-derived ID in the shape `add` actually mints, so the examples show
 	// what `list` and `find` hand back rather than a placeholder.
 	const exampleId = "support-goal-templates";
+	// A second real-looking ID, so the anchor form of `move` reads unambiguously.
+	const anchorExampleId = "retire-the-legacy-importer";
 	// An `updatedAt` in the stored ISO 8601 shape, as `show` reports it.
 	const exampleUpdatedAt = "2026-05-04T09:12:31.004Z";
 	const examples = [
@@ -296,6 +325,9 @@ export function renderSkillMarkdown(): string {
 		`update ${exampleId} Support shared goal templates`,
 		`update ${exampleId} --append -- Blocked on the template schema until it lands`,
 		`update ${exampleId} --expect-updated-at ${exampleUpdatedAt} --append -- Reviewed and still current`,
+		`update ${exampleId} --group Foundation`,
+		`move ${exampleId} up`,
+		`move ${exampleId} before ${anchorExampleId}`,
 		`set_active ${exampleId}`,
 	];
 	return [
@@ -353,6 +385,11 @@ export function renderSkillMarkdown(): string {
 		"## Goal IDs",
 		"",
 		...contract.idRules.map((rule) => `- ${rule}`),
+		"",
+		"## Goal order and grouping",
+		"",
+		...contract.orderRules.map((rule) => `- ${rule}`),
+		"- `--group <name>` on `add` and `update` files a goal under a free-form section; a group exists exactly when some goal names it, and `--group ''` clears the field.",
 		"",
 		"## Guardrails",
 		"",
@@ -432,6 +469,11 @@ export function renderCliGuide(): string {
 		"## Goal IDs",
 		"",
 		...contract.idRules.map((rule) => `- ${rule}`),
+		"",
+		"## Goal order and grouping",
+		"",
+		...contract.orderRules.map((rule) => `- ${rule}`),
+		"- `--group <name>` on `add` and `update` files a goal under a free-form section; a group exists exactly when some goal names it, and `--group ''` clears the field.",
 		"",
 		"## Exit codes",
 		"",

@@ -41,7 +41,7 @@ export type DashboardAction =
 	| { kind: "view"; scope: "session" | "project"; id: string }
 	| { kind: "add"; scope: "session" | "project" }
 	| { kind: "insert"; scope: "session"; beforeId: string }
-	| ({ kind: "move"; scope: "session"; id: string } & SessionTaskPlacement)
+	| ({ kind: "move"; scope: "session" | "project"; id: string } & SessionTaskPlacement)
 	| { kind: "edit"; scope: "session" | "project"; id: string }
 	| { kind: "advance"; scope: "session" | "project"; id: string }
 	| { kind: "delete"; scope: "session" | "project"; id: string };
@@ -85,19 +85,26 @@ export class Dashboard {
 		});
 	}
 
-	private handleSessionMove(data: string, items: Array<{ id: string }>): boolean {
+	/**
+	 * Reorder the selected item within the list it is shown in.
+	 *
+	 * The anchor is the neighboring row rather than a stored index, so a move
+	 * lands where the user watched it land even when the list is a filtered view
+	 * of a longer one.
+	 */
+	private handleMove(data: string, items: Array<{ id: string }>): boolean {
 		const item = items[this.selected];
 		if (matchesKey(data, Key.shift("up"))) {
 			const anchor = items[this.selected - 1];
 			if (item && anchor) {
-				this.finish({ kind: "move", scope: "session", id: item.id, beforeId: anchor.id });
+				this.finish({ kind: "move", scope: this.scope, id: item.id, beforeId: anchor.id });
 			}
 			return true;
 		}
 		if (matchesKey(data, Key.shift("down"))) {
 			const anchor = items[this.selected + 1];
 			if (item && anchor) {
-				this.finish({ kind: "move", scope: "session", id: item.id, afterId: anchor.id });
+				this.finish({ kind: "move", scope: this.scope, id: item.id, afterId: anchor.id });
 			}
 			return true;
 		}
@@ -115,7 +122,7 @@ export class Dashboard {
 			this.selected = 0;
 			return;
 		}
-		if (this.scope === "session" && this.handleSessionMove(data, items)) return;
+		if (this.handleMove(data, items)) return;
 		if (matchesKey(data, Key.up)) this.selected = Math.max(0, this.selected - 1);
 		if (matchesKey(data, Key.down))
 			this.selected = Math.min(Math.max(0, items.length - 1), this.selected + 1);
@@ -158,7 +165,7 @@ export class Dashboard {
 		const help =
 			this.scope === "session"
 				? "tab switch  ↑↓ navigate  enter view  space advance  a append  i insert  shift+↑↓ move  e edit  d delete  esc close"
-				: "tab switch  ↑↓ navigate  enter view  space advance  a add  e edit  d delete  esc close";
+				: "tab switch  ↑↓ navigate  enter view  space advance  a add  shift+↑↓ move  e edit  d delete  esc close";
 		lines.push("", th.fg("dim", help));
 		return lines.map((line) => truncateToWidth(line, width));
 	}

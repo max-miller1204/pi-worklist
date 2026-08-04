@@ -123,14 +123,28 @@ describe("goal board layout", () => {
 });
 
 describe("goal board presentation", () => {
-	it("shows active goals first, then open, then settled work", () => {
+	it("shows the file's own order first, and groups by status on request", () => {
 		const board = createBoard();
 		press(board, "fff");
-		expect(listedRows(board)[0]).toContain("Replace legacy authentication");
-		expect(listedRows(board).at(-1)).toContain("Old idea");
+		expect(listedRows(board).map((row) => row.slice(2))).toEqual([
+			"Replace legacy authentication",
+			"Add focus mode",
+			"日本語のタイトルです",
+			"Ship the CLI",
+			"Old idea",
+		]);
+
+		// A settled goal sitting early in the file stays there until the status
+		// order is asked for, which is the whole point of a canonical file order.
+		const settledFirst = createBoard([GOALS[3], GOALS[1], GOALS[0]]);
+		press(settledFirst, "fff");
+		expect(listedRows(settledFirst)[0]).toContain("Ship the CLI");
+		press(settledFirst, "o");
+		expect(listedRows(settledFirst)[0]).toContain("Replace legacy authentication");
+		expect(listedRows(settledFirst).at(-1)).toContain("Ship the CLI");
 	});
 
-	it("pins the active goal above every other row whatever its age", () => {
+	it("lifts the active goal above every other row in the derived orders", () => {
 		const newest = goal({
 			id: "g-late",
 			title: "Started last",
@@ -139,12 +153,36 @@ describe("goal board presentation", () => {
 		});
 		const board = createBoard([...GOALS.slice(1), newest]);
 		press(board, "fff");
-		const rows = listedRows(board);
-		// The pin also carries its own marker, so it reads as the odd row out with
-		// no color at all.
-		expect(rows[0]).toContain("Started last");
-		expect(rows[0]?.startsWith("◆")).toBe(true);
-		expect(rows.slice(1).some((row) => row.startsWith("◆"))).toBe(false);
+		// File order shows the goal where the file puts it: last.
+		expect(listedRows(board).at(-1)).toContain("Started last");
+		for (const sort of ["o", "o"]) {
+			press(board, sort);
+			const rows = listedRows(board);
+			// The lifted row also carries its own marker, so it reads as the odd row
+			// out with no color at all.
+			expect(rows[0]).toContain("Started last");
+			expect(rows[0]?.startsWith("◆")).toBe(true);
+			expect(rows.slice(1).some((row) => row.startsWith("◆"))).toBe(false);
+		}
+	});
+
+	it("cycles the order through file, status, and recent, keeping file order as the tiebreak", () => {
+		const board = createBoard();
+		const header = () => plainFrame(board)[0] ?? "";
+		expect(header()).toContain("⇅ File");
+		press(board, "o");
+		expect(header()).toContain("⇅ Status");
+		press(board, "o");
+		expect(header()).toContain("⇅ Recent");
+		// Recent puts the most recently touched open goal first, behind the active one.
+		const touched = GOALS.map((entry) =>
+			entry.id === "g-open-2" ? goal({ ...entry, updatedAt: "2026-01-05T00:00:00.000Z" }) : entry,
+		);
+		board.setGoals(touched);
+		expect(listedRows(board)[1]).toContain("日本語");
+		press(board, "o");
+		expect(header()).toContain("⇅ File");
+		expect(listedRows(board)[1]).toContain("Add focus mode");
 	});
 
 	it("counts every status in the header, where a message cannot cover them", () => {
@@ -156,7 +194,7 @@ describe("goal board presentation", () => {
 
 	it("drops the header counts before the filter when the header runs out of room", () => {
 		const header = plainFrame(createBoard(), 50, 20)[0] ?? "";
-		expect(header).toContain("Open · 3 of 5");
+		expect(header).toContain("Open · ⇅ File · 3 of 5");
 		expect(header).not.toContain("◆ 1");
 	});
 
@@ -224,6 +262,29 @@ describe("goal board presentation", () => {
 		expect(frame).toContain("Migrate every supported client");
 	});
 
+	it("spells out the optional fields a goal carries, and omits the ones it does not", () => {
+		const bare = plainFrame(createBoard()).join("\n");
+		for (const label of ["GROUP", "BRANCH", "DONE", "LINKS"]) expect(bare).not.toContain(label);
+
+		const detailed = createBoard([
+			goal({
+				id: "g-full",
+				title: "Retire the legacy importer",
+				status: "done",
+				group: "Foundation",
+				branch: "feat/retire-importer",
+				completedAt: "2026-01-05T09:30:00.000Z",
+				links: ["https://example.test/pull/12"],
+			}),
+		]);
+		press(detailed, "f");
+		const frame = plainFrame(detailed, 120, 24).join("\n");
+		expect(frame).toContain("GROUP     Foundation");
+		expect(frame).toContain("BRANCH    feat/retire-importer");
+		expect(frame).toContain("DONE      2026-01-05");
+		expect(frame).toContain("LINKS     https://example.test/pull/12");
+	});
+
 	it("offers the right way out of each empty list", () => {
 		const empty = createBoard([]);
 		expect(plainFrame(empty).join("\n")).toContain("Press a to add one.");
@@ -244,6 +305,28 @@ describe("goal board presentation", () => {
 		expect(frame).toContain("Delete permanently (asks first)");
 		press(board, ESC);
 		expect(plainFrame(board, 100, 30).join("\n")).not.toContain("Delete permanently");
+	});
+
+	it("scrolls the key map so a short terminal cannot hide the way out of it", () => {
+		const board = createBoard();
+		press(board, "?");
+		const short = () => plainFrame(board, 100, 16).join("\n");
+		expect(short()).toContain("0 above");
+		expect(short()).not.toContain("q / esc");
+
+		press(board, "G");
+		expect(short()).toContain("q / esc");
+		expect(short()).toContain("Press esc to return");
+		expect(short()).toContain("0 below");
+
+		press(board, "g");
+		expect(short()).not.toContain("q / esc");
+		// Scrolling is not a way out, and reopening starts at the top again.
+		expect(plainFrame(board, 100, 16).at(-1)).toContain("esc close");
+		press(board, ESC);
+		expect(short()).not.toContain("Move the selection");
+		press(board, "?");
+		expect(short()).toContain("0 above");
 	});
 });
 
@@ -282,15 +365,15 @@ describe("goal board navigation", () => {
 	it("cycles the filter through open, done, archived, and all", () => {
 		const board = createBoard();
 		const label = () => plainFrame(board)[0];
-		expect(label()).toContain("Open · 3 of 5");
+		expect(label()).toContain("Open · ⇅ File · 3 of 5");
 		press(board, "f");
-		expect(label()).toContain("Done · 1 of 5");
+		expect(label()).toContain("Done · ⇅ File · 1 of 5");
 		press(board, "f");
-		expect(label()).toContain("Archived · 1 of 5");
+		expect(label()).toContain("Archived · ⇅ File · 1 of 5");
 		press(board, "f");
-		expect(label()).toContain("All · 5 of 5");
+		expect(label()).toContain("All · ⇅ File · 5 of 5");
 		press(board, "f");
-		expect(label()).toContain("Open · 3 of 5");
+		expect(label()).toContain("Open · ⇅ File · 3 of 5");
 	});
 
 	it("narrows the list while typing a search and restores it on escape", () => {
@@ -301,7 +384,7 @@ describe("goal board navigation", () => {
 		press(board, "\r");
 		expect(plainFrame(board)[0]).toContain("/focus");
 		press(board, ESC);
-		expect(plainFrame(board)[0]).toContain("Open · 3 of 5");
+		expect(plainFrame(board)[0]).toContain("Open · ⇅ File · 3 of 5");
 	});
 
 	it("reopens a search prefilled so the query can be refined", () => {
@@ -327,6 +410,65 @@ describe("goal board navigation", () => {
 		press(board, ESC);
 		expect(plainFrame(board)[0]).toContain("/focus");
 		expect(plainFrame(board)[0]).toContain("1 of 5");
+	});
+});
+
+describe("goal board reordering", () => {
+	it("moves the selected goal against its neighbouring row", () => {
+		const board = createBoard();
+		press(board, `${ESC}[B`);
+		expect(board.selectedGoal?.id).toBe("g-open-1");
+		expect(press(board, "J")).toEqual([
+			{
+				kind: "operation",
+				operation: { scope: "project", action: "move", id: "g-open-1", afterId: "g-open-2" },
+				success: expect.stringContaining("down"),
+			},
+		]);
+		expect(press(board, "K")).toEqual([
+			{
+				kind: "operation",
+				operation: { scope: "project", action: "move", id: "g-open-1", beforeId: "g-active" },
+				success: expect.stringContaining("up"),
+			},
+		]);
+	});
+
+	it("accepts shift+arrows for the terminals that report them", () => {
+		const board = createBoard();
+		expect(press(board, `${ESC}[1;2B`)).toMatchObject([
+			{ operation: { action: "move", id: "g-active", afterId: "g-open-1" } },
+		]);
+		// A plain arrow is still navigation, not a reorder.
+		expect(press(board, `${ESC}[B`)).toEqual([]);
+		expect(board.selectedGoal?.id).toBe("g-open-1");
+		expect(press(board, `${ESC}[1;2A`)).toMatchObject([
+			{ operation: { action: "move", id: "g-open-1", beforeId: "g-active" } },
+		]);
+	});
+
+	it("anchors on the visible neighbour, skipping the rows a filter hides", () => {
+		const board = createBoard();
+		press(board, "/日\r");
+		// The search leaves one row, so there is nothing to move against.
+		expect(press(board, "K")).toEqual([]);
+		expect(plainFrame(board).at(-2)).toContain("Already first.");
+
+		const filtered = createBoard();
+		press(filtered, `${ESC}[B${ESC}[B`);
+		expect(filtered.selectedGoal?.id).toBe("g-open-2");
+		// The done and archived goals are hidden, so down is already the end.
+		expect(press(filtered, "J")).toEqual([]);
+		expect(plainFrame(filtered).at(-2)).toContain("Already last.");
+	});
+
+	it("reorders only in file order, since the other views are not the file", () => {
+		const board = createBoard();
+		press(board, "o");
+		expect(press(board, "J")).toEqual([]);
+		expect(plainFrame(board).at(-2)).toContain("Reorder in file order only");
+		press(board, "oo");
+		expect(press(board, "J")).toMatchObject([{ operation: { action: "move" } }]);
 	});
 });
 

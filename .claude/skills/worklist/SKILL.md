@@ -31,6 +31,7 @@ find <text...>
 ui
 add <title...> [-- <description...>]
 update <id> [title...] [-- <description...>]
+move <id> up|down|before <id>|after <id>
 set_active <id>
 complete <id> --confirm
 reopen <id> --confirm
@@ -46,6 +47,7 @@ Flags:
 - `--confirm` - Acknowledge an action that requires confirmation; pass it only for an explicit user request.
 - `--cwd <dir>` - Resolve the git root from this directory instead of the working directory.
 - `--append` - Add the text after -- as a new paragraph instead of replacing the description; cannot be combined with a title change; only for project update.
+- `--group <name>` - Put the goal in a free-form section, such as Foundation; an empty name clears it; only for project add and update.
 - `--expect-updated-at <timestamp>` - Refuse the change as a conflict unless the goal's updatedAt still matches this value; only for project update, set_active, complete, reopen, archive, and delete.
 - `--dry-run` - Report the ID rewrites without writing them, and without needing --confirm; only for project migrate_ids.
 
@@ -69,6 +71,9 @@ npx -y pi-worklist@latest project update support-goal-templates -- Replace only 
 npx -y pi-worklist@latest project update support-goal-templates Support shared goal templates
 npx -y pi-worklist@latest project update support-goal-templates --append -- Blocked on the template schema until it lands
 npx -y pi-worklist@latest project update support-goal-templates --expect-updated-at 2026-05-04T09:12:31.004Z --append -- Reviewed and still current
+npx -y pi-worklist@latest project update support-goal-templates --group Foundation
+npx -y pi-worklist@latest project move support-goal-templates up
+npx -y pi-worklist@latest project move support-goal-templates before retire-the-legacy-importer
 npx -y pi-worklist@latest project set_active support-goal-templates
 ```
 
@@ -84,6 +89,14 @@ The full generated command reference lives in the package's `docs/cli.md`, rende
 - Deleting a goal permanently retires its current and former IDs: they stop resolving, but no later goal can claim them and inherit stale references.
 - `find <text>` searches titles and descriptions, so locating a goal never needs `list --json` plus client-side filtering.
 
+## Goal order and grouping
+
+- Goals are stored and listed in one canonical order: `add` appends to the end, and `move` is the only action that rearranges them.
+- `move <id> up` and `move <id> down` step one place, while `move <id> before <anchor>` and `move <id> after <anchor>` land the goal beside a named one.
+- A move changes the roadmap's order without touching the moved goal's `updatedAt`, so rearranging the list never reads as editing the goals on it.
+- Reordering needs no confirmation, because it names no new state for a goal, only a new position among the others.
+- `--group <name>` on `add` and `update` files a goal under a free-form section; a group exists exactly when some goal names it, and `--group ''` clears the field.
+
 ## Guardrails
 
 - `complete`, `reopen`, `archive`, `delete`, and `migrate_ids` are reserved for explicit user intent.
@@ -94,7 +107,7 @@ The full generated command reference lives in the package's `docs/cli.md`, rende
 - Exit code 3 (confirmation required) means the command needs `--confirm`; stop and ask the user instead of retrying with the flag.
 - Exit code 4 (conflict) means a concurrent change conflicted with yours; re-read current state with `list` or `show` before retrying.
   A conflicting change wrote nothing at all, so rebuild it against the goal you just re-read and pass that goal's new `updatedAt`.
-- `list`, `show`, `find`, `add`, `update`, and `set_active` are safe to run whenever they serve the user's request.
+- `list`, `show`, `find`, `add`, `update`, `move`, and `set_active` are safe to run whenever they serve the user's request.
 - `ui` opens a full-screen board for the human at the keyboard, not for you.
   Never run it: it holds the terminal until the user quits, and it exits with an error when stdin or stdout is not a terminal.
   Suggest `npx -y pi-worklist@latest project ui` when the user wants to browse or edit goals themselves; read state with `list` and `show` instead.

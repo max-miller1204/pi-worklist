@@ -31,7 +31,7 @@ const ActionSchema: TUnsafe<
 	] as const,
 	{
 		description:
-			"Action to perform. 'move' is Session Task only. 'complete', 'reopen', 'archive', and 'delete' on project goals require confirm=true.",
+			"Action to perform. 'move' reorders a Session Task in its queue or a Project Goal in the roadmap. 'complete', 'reopen', 'archive', and 'delete' on project goals require confirm=true.",
 	},
 );
 
@@ -71,6 +71,12 @@ export const WorklistParamsSchema = Type.Object({
 			description: "Description for project goal add/update. Session tasks do not support descriptions.",
 		}),
 	),
+	group: Type.Optional(
+		Type.String({
+			description:
+				"Free-form section for project goal add/update, such as Foundation or Later. Pass an empty string to clear it. Session tasks do not support groups.",
+		}),
+	),
 	status: Type.Optional(StatusSchema),
 	goalId: Type.Optional(
 		Type.String({
@@ -79,12 +85,14 @@ export const WorklistParamsSchema = Type.Object({
 	),
 	beforeId: Type.Optional(
 		Type.String({
-			description: "Insert or move a Session Task immediately before this stable task ID.",
+			description:
+				"Insert or move a Session Task immediately before this stable task ID, or move a Project Goal immediately before this goal ID.",
 		}),
 	),
 	afterId: Type.Optional(
 		Type.String({
-			description: "Insert or move a Session Task immediately after this stable task ID.",
+			description:
+				"Insert or move a Session Task immediately after this stable task ID, or move a Project Goal immediately after this goal ID.",
 		}),
 	),
 	confirm: Type.Optional(

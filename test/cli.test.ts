@@ -618,6 +618,93 @@ describe("project goal CLI", () => {
 		expect(result.stderr).toBe("");
 	});
 
+	it("reorders goals through every documented move form", async () => {
+		const root = await tempGitRepo();
+		for (const title of ["First", "Second", "Third"]) await runCli(root, ["project", "add", title]);
+		const ids = async () => (await readGoals(root)).map((goal) => goal.id);
+		expect(await ids()).toEqual(["first", "second", "third"]);
+
+		expect((await runCli(root, ["project", "move", "third", "up"])).code).toBe(0);
+		expect(await ids()).toEqual(["first", "third", "second"]);
+
+		expect((await runCli(root, ["project", "move", "first", "down"])).code).toBe(0);
+		expect(await ids()).toEqual(["third", "first", "second"]);
+
+		// The anchor resolves through the same selector as the target, so a prefix
+		// names a goal here exactly as it does everywhere else.
+		expect((await runCli(root, ["project", "move", "sec", "before", "thi"])).code).toBe(0);
+		expect(await ids()).toEqual(["second", "third", "first"]);
+
+		expect((await runCli(root, ["project", "move", "second", "after", "first"])).code).toBe(0);
+		expect(await ids()).toEqual(["third", "first", "second"]);
+
+		const settled = await runCli(root, ["project", "move", "second", "down", "--json"]);
+		expect(settled.code).toBe(0);
+		expect(JSON.parse(settled.stdout)).toMatchObject({
+			ok: true,
+			action: "move",
+			meta: { changed: false, semanticNoOp: true },
+		});
+		expect(await ids()).toEqual(["third", "first", "second"]);
+	});
+
+	it("refuses a move it cannot place and leaves the order alone", async () => {
+		const root = await tempGitRepo();
+		for (const title of ["First", "Second"]) await runCli(root, ["project", "add", title]);
+
+		const usageErrors: Array<[string[], string]> = [
+			[["project", "move"], "requires a goal id"],
+			[["project", "move", "first"], "project move <id> up|down|before"],
+			[["project", "move", "first", "sideways"], "project move <id> up|down|before"],
+			[["project", "move", "first", "before"], "requires an anchor goal id"],
+			[["project", "move", "first", "up", "second"], "takes no anchor"],
+			[["project", "move", "first", "before", "second", "third"], "takes one placement"],
+		];
+		for (const [args, message] of usageErrors) {
+			const result = await runCli(root, args);
+			expect(result.code, args.join(" ")).toBe(2);
+			expect(result.stderr, args.join(" ")).toContain(message);
+		}
+
+		const missingAnchor = await runCli(root, ["project", "move", "first", "before", "nowhere"]);
+		expect(missingAnchor.code).toBe(1);
+		expect(missingAnchor.stderr).toContain("Project goal anchor nowhere was not found.");
+		expect((await readGoals(root)).map((goal) => goal.id)).toEqual(["first", "second"]);
+	});
+
+	it("files goals under a group and shows the fields a lifecycle change stamps", async () => {
+		const root = await tempGitRepo();
+		const added = await runCli(root, ["project", "add", "Ship", "it", "--group", "Foundation"]);
+		expect(added.code).toBe(0);
+		expect((await readGoals(root))[0].group).toBe("Foundation");
+
+		const shown = await runCli(root, ["project", "show", "ship-it"]);
+		expect(shown.stdout).toContain("group: Foundation");
+		expect(shown.stdout).not.toContain("completed:");
+
+		await runCli(root, ["project", "complete", "ship-it", "--confirm"]);
+		const completed = await runCli(root, ["project", "show", "ship-it"]);
+		expect(completed.stdout).toContain(`completed: ${(await readGoals(root))[0].updatedAt}`);
+
+		const regrouped = await runCli(root, ["project", "update", "ship-it", "--group", "Later"]);
+		expect(regrouped.code).toBe(0);
+		expect((await readGoals(root))[0].group).toBe("Later");
+
+		const cleared = await runCli(root, ["project", "update", "ship-it", "--group", ""]);
+		expect(cleared.code).toBe(0);
+		expect((await readGoals(root))[0]).not.toHaveProperty("group");
+
+		// A group is a section name, so omitting it is a usage error rather than a
+		// silent way to clear the field.
+		const missingValue = await runCli(root, ["project", "update", "ship-it", "--group"]);
+		expect(missingValue.code).toBe(2);
+		expect(missingValue.stderr).toContain("--group requires a section name");
+
+		const wrongAction = await runCli(root, ["project", "find", "ship", "--group", "Later"]);
+		expect(wrongAction.code).toBe(2);
+		expect(wrongAction.stderr).toContain("--group is only supported by project add, update");
+	});
+
 	it("reports malformed files without overwriting them", async () => {
 		const root = await tempGitRepo();
 		await runCli(root, ["project", "add", "Existing"]);

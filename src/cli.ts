@@ -13,7 +13,7 @@ import { getWorklistPath, resolveGitRoot } from "./git.ts";
 import { matchesGoalQuery, planGoalIdMigration, resolveGoalSelector } from "./goal-selection.ts";
 import { WORKLIST_ERROR_CODES, type WorklistErrorCode, type WorklistResultMeta } from "./result-envelope.ts";
 import { runGoalBoard } from "./tui/goal-board-runtime.ts";
-import type { GoalIdMigration, ProjectGoal, WorklistOperationResult } from "./types.ts";
+import type { GoalIdMigration, ProjectGoal, ProjectGoalPlacement, WorklistOperationResult } from "./types.ts";
 
 /**
  * Pi-free command line for Project Goals, so external agents and scripts can
@@ -39,6 +39,8 @@ interface CliInvocation {
 	description?: string;
 	/** Treat the text after `--` as an addition to the description rather than a replacement. */
 	append: boolean;
+	/** Free-form section name; the empty string clears the goal's group. */
+	group?: string;
 	expectedUpdatedAt?: string;
 	/** Report what a mutation would do without writing it. */
 	dryRun: boolean;
@@ -132,6 +134,23 @@ function readFlagValue(head: readonly string[], index: number, flag: string, exp
 	return value;
 }
 
+/**
+ * A flag value that may be empty, which is how a caller clears the field.
+ *
+ * A missing value is still a usage error: `--group` with nothing after it is a
+ * caller who meant to name a section, not one who meant to remove it.
+ */
+function readClearableFlagValue(
+	head: readonly string[],
+	index: number,
+	flag: string,
+	expected: string,
+): string {
+	const value = head[index + 1];
+	if (value === undefined || value.startsWith("--")) fail(`${flag} requires ${expected}\n\n${USAGE}`, 2);
+	return value;
+}
+
 function parseArgs(argv: string[]): CliInvocation {
 	const separator = argv.indexOf("--");
 	const head = separator === -1 ? argv : argv.slice(0, separator);
@@ -145,6 +164,7 @@ function parseArgs(argv: string[]): CliInvocation {
 	let confirm = false;
 	let append = false;
 	let dryRun = false;
+	let group: string | undefined;
 	let expectedUpdatedAt: string | undefined;
 	let cwd = process.cwd();
 	for (let index = 0; index < head.length; index++) {
@@ -161,6 +181,9 @@ function parseArgs(argv: string[]): CliInvocation {
 		else if (part === "--cwd") {
 			cwd = readFlagValue(head, index, part, "a directory");
 			index++;
+		} else if (part === "--group") {
+			group = readClearableFlagValue(head, index, part, "a section name, or '' to clear it");
+			index++;
 		} else if (part === "--expect-updated-at") {
 			expectedUpdatedAt = readFlagValue(head, index, part, "a timestamp");
 			index++;
@@ -176,6 +199,7 @@ function parseArgs(argv: string[]): CliInvocation {
 		description,
 		append,
 		dryRun,
+		group,
 		expectedUpdatedAt,
 		json,
 		confirm,
@@ -236,14 +260,43 @@ function formatGoalList(goals: ProjectGoal[]): string {
 /** Explicit full-detail read: every stored field, including the complete description. */
 function formatGoalDetail(goal: ProjectGoal): string {
 	const previousIds = goal.previousIds ?? [];
+	const links = goal.links ?? [];
 	return [
 		`${goal.id}: ${goal.title}`,
 		`status: ${goal.status}`,
+		...(goal.group !== undefined ? [`group: ${goal.group}`] : []),
+		...(goal.branch !== undefined ? [`branch: ${goal.branch}`] : []),
 		`created: ${goal.createdAt}`,
 		`updated: ${goal.updatedAt}`,
+		...(goal.completedAt !== undefined ? [`completed: ${goal.completedAt}`] : []),
 		...(previousIds.length > 0 ? [`former ids: ${previousIds.join(", ")}`] : []),
+		...(links.length > 0 ? ["links:", ...links.map((link) => `  ${link}`)] : []),
 		...(goal.description !== undefined ? ["description:", goal.description] : []),
 	].join("\n");
+}
+
+/** Sub-argument forms of `move`, each naming exactly one canonical placement. */
+const MOVE_USAGE = "project move <id> up|down|before <anchor-id>|after <anchor-id>";
+
+/**
+ * The placement a `move` invocation names.
+ *
+ * `up` and `down` take no anchor and are resolved under the lock, while
+ * `before` and `after` require one, so a mistyped form is a usage error rather
+ * than a move to a position the caller never named.
+ */
+function readMovePlacement(invocation: CliInvocation): ProjectGoalPlacement {
+	const [mode, anchor, ...extra] = invocation.rest.slice(1);
+	if (extra.length > 0) fail(`${MOVE_USAGE} takes one placement\n\n${USAGE}`, 2);
+	if (mode === "up" || mode === "down") {
+		if (anchor !== undefined) fail(`${MOVE_USAGE}: ${mode} takes no anchor\n\n${USAGE}`, 2);
+		return { direction: mode };
+	}
+	if (mode === "before" || mode === "after") {
+		if (!anchor) fail(`${MOVE_USAGE}: ${mode} requires an anchor goal id\n\n${USAGE}`, 2);
+		return mode === "before" ? { beforeId: anchor } : { afterId: anchor };
+	}
+	fail(`${MOVE_USAGE}\n\n${USAGE}`, 2);
 }
 
 function formatMigrations(migrations: readonly GoalIdMigration[], headline: string): string {
@@ -520,10 +573,28 @@ async function run(invocation: CliInvocation): Promise<void> {
 				action: "add",
 				title,
 				description,
+				group: invocation.group,
 			});
 			const goal = envelope.ok ? envelope.result.goal : undefined;
 			if (!goal) throw new Error("Added Project Goal was not returned");
 			report(invocation, envelope, `Added project goal ${goal.id}: ${goal.title}`);
+			return;
+		}
+		case "move": {
+			const id = requireId(invocation);
+			const placement = readMovePlacement(invocation);
+			const envelope = await executeCliOperation(service, {
+				scope: "project",
+				action: "move",
+				id,
+				...placement,
+			});
+			const goal = envelope.ok ? envelope.result.goal : undefined;
+			if (!goal) throw new Error(`Moved Project Goal ${id} was not returned`);
+			const message = envelope.meta.changed
+				? `Moved project goal ${goal.id}`
+				: `Project goal ${goal.id} is already there`;
+			report(invocation, envelope, message);
 			return;
 		}
 		case "update": {
@@ -540,14 +611,15 @@ async function run(invocation: CliInvocation): Promise<void> {
 					fail(`project update cannot change the title while appending to the description\n\n${USAGE}`, 2);
 				}
 			}
-			if (title === undefined && invocation.description === undefined) {
-				fail(`project update requires a new title, a -- description, or both\n\n${USAGE}`, 2);
+			if (title === undefined && invocation.description === undefined && invocation.group === undefined) {
+				fail(`project update requires a new title, a -- description, or --group\n\n${USAGE}`, 2);
 			}
 			const envelope = await executeCliOperation(service, {
 				scope: "project",
 				action: "update",
 				id,
 				title,
+				group: invocation.group,
 				...(invocation.append
 					? { appendDescription: invocation.description }
 					: { description: invocation.description }),

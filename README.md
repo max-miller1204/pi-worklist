@@ -18,6 +18,8 @@ Project Goals track the larger outcomes shared by every Pi session in a Git repo
 - A new Pi session starts with an empty Session Task list.
 - Project Goals persist at `<git-root>/.pi/worklist.json` and can be committed with the repository.
 - Goal IDs are readable slugs derived from the title and frozen afterwards, and every Project Goal ID argument accepts a unique prefix or a former ID.
+- Project Goal file order is canonical: goals are appended and rearranged only by an explicit move, so a roadmap reads in the sequence someone chose for it.
+- Project Goals carry optional `group`, `completedAt`, `links`, and `branch` fields alongside the description.
 - `/tasks` opens an interactive two-section dashboard.
 - A compact widget shows the active Project Goal and up to three unfinished Session Tasks.
 - The `worklist` model tool manages both scopes through one consistent API.
@@ -54,7 +56,7 @@ pi -e ./src/extension.ts
 Run `/tasks` with no arguments to open the dashboard.
 Use Tab to switch lists and arrow keys to navigate.
 In Session Tasks, `a` appends, `i` inserts before the selected task, and Shift+Up or Shift+Down moves the selected task.
-Project Goals support `a` to add but do not support insertion or reordering.
+Project Goals support `a` to add and the same Shift+Up and Shift+Down to reorder, but not insertion at a position.
 In either scope, press Enter to open a detail window, Space to advance status, `e` to edit, `d` to delete, and Escape to close.
 The detail window wraps complete descriptions and metadata instead of truncating them.
 Use Up and Down or `j` and `k` to scroll long details, with Page Up and Page Down for larger jumps, then Enter or Escape to return to the dashboard.
@@ -77,6 +79,7 @@ Direct commands are useful in RPC mode and scripts:
 /tasks project list
 /tasks project add Replace legacy authentication -- Migrate every supported client
 /tasks project update <id> -- Replace the goal description
+/tasks project move <goal-id> --before <anchor-id>
 /tasks project set_active <id>
 /tasks project complete <id>
 ```
@@ -86,7 +89,7 @@ Session Tasks do not support descriptions.
 Session Task `add` accepts either `--before <anchor-id>` or `--after <anchor-id>` and appends when neither is supplied.
 Session Task `move` requires exactly one of those stable-ID anchors.
 An anchor flag and its ID may lead the arguments or trail them, but only one anchor flag is accepted per command.
-Project Goals do not accept placement or movement.
+Project Goal `move` takes the same anchors; Project Goals are appended on `add` and never accept a placement there.
 Typing a Project Goal lifecycle command is explicit user intent.
 The model-facing tool instead requires `confirm=true`, and its prompt rules prohibit setting that flag without an explicit request.
 
@@ -101,6 +104,10 @@ Completed tasks remain in canonical queue order.
 Only the active goal and an intentionally bounded list of incomplete task titles and statuses are added to the current turn's system prompt, preserving their relative queue order.
 
 Project Goals use a schema-versioned JSON file at `.pi/worklist.json` in the canonical Git root.
+The goal array order is canonical rather than incidental: `add` appends, `move` is the only action that rearranges it, and every reader displays that order unless it was explicitly asked for another one.
+A move rewrites the order without touching any goal's `updatedAt`, so rearranging the roadmap never reads as editing the goals on it and never invalidates a baseline nobody's edit conflicts with.
+Beyond the description, a goal may carry an optional free-form `group`, a `completedAt` stamped by `complete` and cleared by `reopen`, an informational `links` array, and a `branch` naming where the work is happening.
+Every one of those fields is optional and additive, so the schema version stays at 1 and older files keep loading unchanged; a goal completed before `completedAt` existed simply has none, because that moment is genuinely unknown.
 The file carries a monotonic numeric revision, while application callers receive that revision as an opaque string.
 Legacy files without a revision remain readable at revision `0` and gain revision `1` on their next mutation.
 Optional expected-revision checks run under the same cross-process lock as persistence and return a typed conflict without rewriting stale state.
@@ -116,6 +123,7 @@ Project Goal operations are unavailable outside a Git repository, while Session 
 
 The `worklist` tool accepts `scope=session|project` and actions including `list`, `add`, `move`, `update`, `set_status`, `set_active`, `complete`, `reopen`, `archive`, and `delete`.
 For Session Tasks, `add` optionally accepts exactly one of `beforeId` or `afterId`, while `move` requires exactly one.
+Project Goal `move` takes the same anchors and reorders the roadmap; `add` and `update` also accept a `group`, where an empty string clears it.
 Moves preserve the task ID, title, status, and Project Goal association.
 Self-placement, already-satisfied placement, identical Session Task updates, and repeated status changes succeed without writing another session snapshot.
 Session Tasks use concise, self-contained titles without descriptions.
@@ -137,6 +145,9 @@ npx -y pi-worklist@latest project add Support goal templates -- Let teams share 
 npx -y pi-worklist@latest project update <id> Replace the title -- Replace the description
 npx -y pi-worklist@latest project update <id> --append -- Add a note as a new paragraph
 npx -y pi-worklist@latest project update <id> --expect-updated-at <updatedAt> --append -- Add it only if nobody edited first
+npx -y pi-worklist@latest project update <id> --group Foundation
+npx -y pi-worklist@latest project move <id> up
+npx -y pi-worklist@latest project move <id> before <anchor-id>
 npx -y pi-worklist@latest project set_active <id>
 npx -y pi-worklist@latest project complete <id> --confirm
 ```
@@ -144,6 +155,8 @@ npx -y pi-worklist@latest project complete <id> --confirm
 The CLI routes every mutation through the same service, cross-process lock, and atomic replacement as a live Pi session, so physical writes are serialized and atomic.
 `list` output is deliberately compact without descriptions; `show <id>` prints one goal in full detail.
 `find <text>` lists the goals whose title or description contains the text, so locating one never needs `list --json` plus a client-side filter.
+`move <id> up|down` steps one place and `move <id> before|after <anchor-id>` lands beside a named goal; both resolve their arguments through the same selector as every other command, and a move that would change nothing succeeds without writing.
+`--group <name>` on `add` and `update` files a goal under a free-form section, and `--group ''` clears it; a group exists exactly when some goal names it, so there is no separate list to keep in step.
 Lifecycle actions (`complete`, `reopen`, `archive`, `delete`) require `--confirm`, mirroring the model tool's explicit-intent rule; an omitted flag exits with code 3 and changes nothing.
 `--append` adds the text after `--` as a new paragraph instead of replacing the description, so recording a note never re-sends, and never risks losing, prose the caller did not write.
 `--expect-updated-at <timestamp>` carries the goal's `updatedAt` from the caller's own read, and applies to `update`, `set_active`, and the lifecycle actions.
@@ -188,10 +201,15 @@ npx -y pi-worklist@latest project ui
 ```
 
 The board is a split view: the goal list on the left, the selected goal's status, timestamps, identifier, and complete description on the right.
+The detail pane also spells out a goal's group, branch, completion time, and links whenever it carries them, and omits each row entirely when it does not.
 Below about 76 columns the two panes stack instead, and the layout stays aligned for titles containing wide or combined characters.
 
-The active goal is pinned above every other row and carries a marker of its own, so the work in flight is the first thing the list says.
-The status line names it in full, which keeps it readable while the list is filtered to something else or scrolled past it.
+`o` cycles the order through file, status, and recent, and the header names the current one.
+File order is the default and is the roadmap's canonical order, so the board shows exactly what the file says and `K` and `J`, or Shift+Up and Shift+Down, rearrange it against the neighbouring visible row.
+Reordering is refused outside file order, where the rows are not where the file puts them and a move would edit an arrangement the screen is not showing.
+Status and recent are views over that same order, which stays their tiebreak, so an arrangement survives a trip through them.
+Those two views lift the active goal above every other row and give it a marker of its own, so the work in flight is the first thing the list says.
+The status line names the active goal in full in every order, which keeps it readable while the list is filtered to something else or scrolled past it.
 In the all view, done and archived rows recede so live work stays legible beside them, and the selected row always keeps full contrast.
 A goal still in play that has gone untouched for 30 days or more carries its age at the right edge of its row when at least 12 cells remain for the title, and the detail pane spells that age out under `UPDATED`.
 Settled goals are never aged: a done or archived goal is finished rather than neglected.
@@ -207,8 +225,12 @@ The header shows per-status totals across the whole roadmap, so a filtered list 
 | `a`, `e` | Add a goal, or rename the selected one |
 | `E` | Edit the selected goal's description in `$VISUAL` or `$EDITOR` |
 | `c` `r` `x` `d` | Complete, reopen, archive, or delete the selected goal |
-| `f`, `/` | Cycle the status filter, or search titles and descriptions |
+| `f`, `o` | Cycle the status filter, or the order: file, status, recent |
+| `K` `J` or Shift+Up, Shift+Down | Move the selected goal up or down, in file order only |
+| `/` | Search titles and descriptions |
 | `R`, `?`, `q` | Reload from disk, show the key map, or quit |
+
+The key map scrolls, so a short terminal cannot hide the binding that closes it; any other key returns to the board.
 
 Every change routes through the same application service, cross-process lock, and atomic replacement as `/tasks` and the rest of the CLI, so a Pi session may be open on the same repository at the same time.
 The board reloads automatically when another process writes the file.

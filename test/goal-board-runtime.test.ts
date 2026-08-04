@@ -142,6 +142,30 @@ describe("goal board runtime", () => {
 		expect((await accepted.goals())[0].status).toBe("done");
 	});
 
+	it("reorders the roadmap on disk, and says so when there is nowhere to go", async () => {
+		const root = await tempGitRepo();
+		for (const title of ["First", "Second", "Third"]) await seed(root, ["add", title]);
+
+		const board = await openBoard(root);
+		board.send("J");
+		await waitFor(
+			async () => (await board.goals()).map((goal) => goal.id).join() === "second,first,third",
+			"the moved goal to land in the file",
+		);
+		// The selection follows the goal, so a second press keeps moving the same one.
+		board.send("J");
+		await waitFor(
+			async () => (await board.goals()).map((goal) => goal.id).join() === "second,third,first",
+			"the second move to land",
+		);
+		board.send("J");
+		await waitFor(() => board.output.text.includes("Already last."), "the end-of-list message");
+		board.send("q");
+		await board.done;
+
+		expect((await board.goals()).map((goal) => goal.id)).toEqual(["second", "third", "first"]);
+	});
+
 	it("deletes only after an explicit yes", async () => {
 		const root = await tempGitRepo();
 		await seed(root, ["add", "Throwaway"]);

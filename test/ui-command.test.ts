@@ -67,11 +67,12 @@ function dashboardInput(
 	data: string,
 	initialState?: DashboardState,
 	taskItems: SessionTask[] = tasks,
+	goalItems: ProjectGoal[] = goals,
 ): DashboardResult | undefined {
 	let result: DashboardResult | undefined;
 	const dashboard = new Dashboard(
 		taskItems,
-		goals,
+		goalItems,
 		{} as Theme,
 		(value) => {
 			result = value;
@@ -93,6 +94,28 @@ describe("dashboard ordering controls", () => {
 			action: { kind: "advance", scope: "project", id: "g1" },
 			state,
 		});
+	});
+
+	it("moves the selected Project Goal with the same keys as a Session Task", () => {
+		const roadmap: ProjectGoal[] = ["g1", "g2", "g3"].map((id) => ({
+			...goals[0],
+			id,
+			title: `Goal ${id}`,
+			status: "open",
+		}));
+		const state: DashboardState = { scope: "project", selectedId: "g2" };
+		expect(dashboardInput("\u001b[1;2A", state, tasks, roadmap)).toEqual({
+			action: { kind: "move", scope: "project", id: "g2", beforeId: "g1" },
+			state,
+		});
+		expect(dashboardInput("\u001b[1;2B", state, tasks, roadmap)).toEqual({
+			action: { kind: "move", scope: "project", id: "g2", afterId: "g3" },
+			state,
+		});
+
+		// The ends of the list have no neighbour to anchor against, so nothing moves.
+		const first: DashboardState = { scope: "project", selectedId: "g1" };
+		expect(dashboardInput("\u001b[1;2A", first, tasks, roadmap)).toBeUndefined();
 	});
 
 	it("inserts before the selected Session Task and appends separately", () => {

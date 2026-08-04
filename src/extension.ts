@@ -255,7 +255,7 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 		if (action.kind === "move") {
 			await execute(
 				{
-					scope: "session",
+					scope: action.scope,
 					action: "move",
 					id: action.id,
 					...(action.beforeId !== undefined ? { beforeId: action.beforeId } : {}),

@@ -9,8 +9,10 @@ import {
 	deleteProjectGoal,
 	listProjectGoals,
 	migrateProjectGoalIds,
+	moveProjectGoal,
 	PROJECT_LIFECYCLE_TARGET_STATUS,
 	ProjectGoalActivationBlockedError,
+	ProjectGoalAnchorNotFoundError,
 	ProjectGoalNotFoundError,
 	type ProjectGoalUpdate,
 	readProjectGoals,
@@ -33,6 +35,8 @@ import {
 import type { SessionStore } from "./session-store.ts";
 import type {
 	ProjectGoal,
+	ProjectGoalDirection,
+	ProjectGoalPlacement,
 	ProjectGoalStatus,
 	SessionTask,
 	SessionTaskPlacement,
@@ -54,10 +58,14 @@ export interface WorklistOperation {
 	description?: string;
 	/** Project Goal only: append a paragraph instead of replacing the description. */
 	appendDescription?: string;
+	/** Project Goal only: the section it belongs to. The empty string clears it. */
+	group?: string;
 	status?: SessionTaskStatus | ProjectGoalStatus;
 	goalId?: string;
 	beforeId?: string;
 	afterId?: string;
+	/** Project move only: step one place through canonical file order. */
+	direction?: ProjectGoalDirection;
 	confirm?: boolean;
 	expectedRevision?: string;
 	/** Project Goal only: the target goal's `updatedAt` as the caller last read it. */
@@ -133,10 +141,13 @@ function validationError(message: string, details?: Record<string, unknown>): Wo
 	return createApplicationError(WORKLIST_ERROR_CODES.VALIDATION_FAILED, message, details);
 }
 
-function notFoundError(entity: "session-task" | "project-goal" | "session-task-anchor", id: string) {
+type MissingEntity = "session-task" | "session-task-anchor" | "project-goal" | "project-goal-anchor";
+
+function notFoundError(entity: MissingEntity, id: string) {
 	let message = `Session task anchor ${id} not found.`;
 	if (entity === "session-task") message = `Session task ${id} was not found.`;
 	else if (entity === "project-goal") message = `Project goal ${id} was not found.`;
+	else if (entity === "project-goal-anchor") message = `Project goal anchor ${id} was not found.`;
 	return createApplicationError(WORKLIST_ERROR_CODES.NOT_FOUND, message, {
 		entity,
 		id,
@@ -184,9 +195,12 @@ function requireConfirmation(operation: WorklistOperation): void {
 	);
 }
 
-function readPlacement(operation: WorklistOperation): SessionTaskPlacement | undefined {
+const MOVE_DIRECTIONS: ReadonlySet<string> = new Set(["down", "up"]);
+
+function readPlacement(operation: WorklistOperation): ProjectGoalPlacement | undefined {
 	if (operation.beforeId !== undefined) return { beforeId: operation.beforeId.trim() };
 	if (operation.afterId !== undefined) return { afterId: operation.afterId.trim() };
+	if (operation.direction !== undefined) return { direction: operation.direction };
 	return undefined;
 }
 
@@ -205,6 +219,24 @@ function validatePlacementValue(operation: WorklistOperation): void {
 		);
 	}
 	const anchor = operation.beforeId ?? operation.afterId;
+	if (operation.direction !== undefined) {
+		if (anchor !== undefined) {
+			throw validationError(
+				"direction and placement anchors are mutually exclusive; step by one or name an anchor.",
+				{
+					fields: [placementField(operation), "direction"],
+					resolution: "provide-one-placement",
+				},
+			);
+		}
+		if (!MOVE_DIRECTIONS.has(operation.direction)) {
+			throw validationError("direction must be up or down.", {
+				fields: ["direction"],
+				resolution: "provide-supported-direction",
+				supportedDirections: [...MOVE_DIRECTIONS],
+			});
+		}
+	}
 	if (anchor !== undefined && !anchor.trim()) {
 		throw validationError("Placement anchor must not be blank.", {
 			fields: [placementField(operation)],
@@ -215,15 +247,22 @@ function validatePlacementValue(operation: WorklistOperation): void {
 
 function validatePlacementSupport(
 	operation: WorklistOperation,
-	placement: SessionTaskPlacement | undefined,
+	placement: ProjectGoalPlacement | undefined,
 ): void {
 	if (operation.scope === "project") {
-		if (operation.action === "move" || placement) {
-			throw validationError("Project Goal reordering is not supported.", {
+		if (placement && operation.action !== "move") {
+			throw validationError("beforeId, afterId, and direction are only supported for project move.", {
+				fields: [operation.direction !== undefined ? "direction" : placementField(operation)],
 				resolution: "remove-placement-fields",
 			});
 		}
 		return;
+	}
+	if (operation.direction !== undefined) {
+		throw validationError("direction is only supported for project move.", {
+			fields: ["direction"],
+			resolution: "remove-placement-fields",
+		});
 	}
 	if (placement && operation.action !== "add" && operation.action !== "move") {
 		throw validationError("beforeId and afterId are only supported for session add and move.", {
@@ -233,17 +272,32 @@ function validatePlacementSupport(
 	}
 }
 
-function normalizePlacement(operation: WorklistOperation): SessionTaskPlacement | undefined {
+function normalizePlacement(operation: WorklistOperation): ProjectGoalPlacement | undefined {
 	validatePlacementValue(operation);
 	const placement = readPlacement(operation);
 	validatePlacementSupport(operation, placement);
 	return placement;
 }
 
+/**
+ * The same placement, narrowed to what a Session Task queue can express.
+ *
+ * `validatePlacementSupport` has already refused a direction outside project
+ * move, so this only carries that guarantee into the type system.
+ */
+function asSessionPlacement(placement: ProjectGoalPlacement | undefined): SessionTaskPlacement | undefined {
+	if (placement === undefined || placement.direction === undefined) return placement;
+	throw validationError("direction is only supported for project move.", {
+		fields: ["direction"],
+		resolution: "remove-placement-fields",
+	});
+}
+
 /** Fields describing a Project Goal's prose or baseline, which a Session Task has no counterpart for. */
 const PROJECT_ONLY_FIELDS = [
 	{ field: "description", resolution: "remove-description" },
 	{ field: "appendDescription", resolution: "remove-append-description" },
+	{ field: "group", resolution: "remove-group" },
 	{ field: "expectedUpdatedAt", resolution: "remove-expected-updated-at" },
 ] as const;
 
@@ -314,8 +368,11 @@ const EXPECTED_UPDATED_AT_ACTIONS = new Set([
 	"delete",
 ]);
 
+/** Project actions that accept a section name. */
+const GROUP_ACTIONS = new Set(["add", "update"]);
+
 /** Project actions whose `id` is a caller-supplied selector rather than a stored ID. */
-const GOAL_SELECTOR_ACTIONS = new Set([...EXPECTED_UPDATED_AT_ACTIONS, "set_status"]);
+const GOAL_SELECTOR_ACTIONS = new Set([...EXPECTED_UPDATED_AT_ACTIONS, "move", "set_status"]);
 
 /**
  * Refuses Project Goal options an action would otherwise accept and ignore.
@@ -335,6 +392,12 @@ function rejectUnsupportedProjectOptions(operation: WorklistOperation): void {
 		throw validationError("expectedUpdatedAt is only supported for target-goal mutations.", {
 			fields: ["expectedUpdatedAt"],
 			resolution: "remove-expected-updated-at",
+		});
+	}
+	if (operation.group !== undefined && !GROUP_ACTIONS.has(operation.action)) {
+		throw validationError("group is only supported for project add and update.", {
+			fields: ["group"],
+			resolution: "use-project-add-or-update",
 		});
 	}
 }
@@ -712,6 +775,8 @@ export class WorklistApplicationService {
 			if (error instanceof WorklistApplicationError) typedError = error.toResultError();
 			else if (error instanceof ProjectGoalNotFoundError) {
 				typedError = notFoundError("project-goal", error.goalId).toResultError();
+			} else if (error instanceof ProjectGoalAnchorNotFoundError) {
+				typedError = notFoundError("project-goal-anchor", error.anchorId).toResultError();
 			} else if (error instanceof ProjectRevisionConflictError) {
 				typedError = {
 					code: WORKLIST_ERROR_CODES.CONFLICT,
@@ -777,10 +842,11 @@ export class WorklistApplicationService {
 
 	private async executeSession(
 		operation: WorklistOperation,
-		placement: SessionTaskPlacement | undefined,
+		rawPlacement: ProjectGoalPlacement | undefined,
 	): Promise<SessionExecutionResult> {
 		const sessionStore = this.requireSessionStore();
 		rejectProjectOnlyFields(operation);
+		const placement = asSessionPlacement(rawPlacement);
 
 		switch (operation.action) {
 			case "list":
@@ -813,6 +879,8 @@ export class WorklistApplicationService {
 	private async executeProject(rawOperation: WorklistOperation): Promise<ProjectExecutionResult> {
 		const projectPath = this.requireProjectPath();
 		rejectUnsupportedProjectOptions(rawOperation);
+		// Selectors resolve before the placement is read, so `move x before y`
+		// anchors on the goal `y` names rather than on the caller's shorthand.
 		const operation = await this.withResolvedGoalId(projectPath, rawOperation);
 		const options: ProjectMutationOptions = {
 			expectedRevision: operation.expectedRevision,
@@ -833,7 +901,7 @@ export class WorklistApplicationService {
 				const { goal, goals, revision, changed } = await addProjectGoal(
 					projectPath,
 					operation.title,
-					operation.description,
+					{ description: operation.description, group: operation.group },
 					options,
 				);
 				return {
@@ -843,6 +911,8 @@ export class WorklistApplicationService {
 					changedGoalIds: [goal.id],
 				};
 			}
+			case "move":
+				return this.moveProjectGoal(projectPath, operation, readPlacement(operation), options);
 			case "update": {
 				if (!operation.id) {
 					throw validationError("id is required for project update.", {
@@ -853,7 +923,11 @@ export class WorklistApplicationService {
 				const { goal, goals, revision, changed } = await updateProjectGoal(
 					projectPath,
 					operation.id,
-					{ title: operation.title, ...normalizeDescriptionUpdate(operation) },
+					{
+						title: operation.title,
+						group: operation.group,
+						...normalizeDescriptionUpdate(operation),
+					},
 					options,
 				);
 				return {
@@ -895,6 +969,7 @@ export class WorklistApplicationService {
 							"delete",
 							"list",
 							"migrate_ids",
+							"move",
 							"reopen",
 							"set_active",
 							"set_status",
@@ -919,12 +994,51 @@ export class WorklistApplicationService {
 		projectPath: string,
 		operation: WorklistOperation,
 	): Promise<WorklistOperation> {
-		if (!operation.id || !GOAL_SELECTOR_ACTIONS.has(operation.action)) return operation;
+		if (!GOAL_SELECTOR_ACTIONS.has(operation.action)) return operation;
+		if (!operation.id && operation.beforeId === undefined && operation.afterId === undefined) {
+			return operation;
+		}
 		const { goals, retiredIds } = await readProjectGoals(projectPath);
-		const resolution = resolveGoalSelector(goals, operation.id, retiredIds);
-		if (resolution.kind === "ambiguous") throw projectGoalSelectionError(operation.id, resolution);
-		if (resolution.kind === "not-found") return operation;
-		return { ...operation, id: resolution.goal.id };
+		const resolve = (selector: string | undefined): string | undefined => {
+			if (selector === undefined) return undefined;
+			const resolution = resolveGoalSelector(goals, selector, retiredIds);
+			if (resolution.kind === "ambiguous") throw projectGoalSelectionError(selector, resolution);
+			return resolution.kind === "found" ? resolution.goal.id : selector;
+		};
+		return {
+			...operation,
+			...(operation.id ? { id: resolve(operation.id) } : {}),
+			...(operation.beforeId !== undefined ? { beforeId: resolve(operation.beforeId) } : {}),
+			...(operation.afterId !== undefined ? { afterId: resolve(operation.afterId) } : {}),
+		};
+	}
+
+	/**
+	 * Reorders one goal in canonical file order.
+	 *
+	 * A move names no new state, only a new position, so it needs no confirmation
+	 * and leaves the moved goal's own fields, including its baseline, untouched.
+	 */
+	private async moveProjectGoal(
+		projectPath: string,
+		operation: WorklistOperation,
+		placement: ProjectGoalPlacement | undefined,
+		options: ProjectMutationOptions,
+	): Promise<ProjectExecutionResult> {
+		const id = requireOperationId(operation, "project-goal");
+		if (!placement) {
+			throw validationError("Project move requires exactly one of beforeId, afterId, or direction.", {
+				fields: ["afterId", "beforeId", "direction"],
+				resolution: "provide-one-placement",
+			});
+		}
+		const { goal, goals, revision, changed } = await moveProjectGoal(projectPath, id, placement, options);
+		return {
+			result: { scope: "project", action: "move", goal, goals },
+			revision,
+			changed,
+			changedGoalIds: [id],
+		};
 	}
 
 	private async runGoalIdMigration(

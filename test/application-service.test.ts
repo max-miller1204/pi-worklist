@@ -879,6 +879,69 @@ describe("worklist application service", () => {
 		});
 	});
 
+	it("reorders Project Goals without confirmation and reports the move as one change", async () => {
+		const projectPath = join(
+			await mkdtemp(join(tmpdir(), "pi-worklist-application-move-")),
+			".pi",
+			"worklist.json",
+		);
+		const service = new WorklistApplicationService({ projectPath });
+		for (const title of ["First", "Second", "Third"]) {
+			// Each add depends on the goals the previous one left behind.
+			await service.execute({ scope: "project", action: "add", title }, { source: "cli" });
+		}
+
+		const moved = await service.execute(
+			{ scope: "project", action: "move", id: "third", direction: "up" },
+			{ source: "tool" },
+		);
+		expect(moved).toMatchObject({
+			ok: true,
+			action: "move",
+			meta: {
+				changed: true,
+				semanticNoOp: false,
+				changedFields: ["/goals"],
+				changedEntities: { projectGoalIds: ["third"], sessionTaskIds: [] },
+				revisions: { project: "4" },
+			},
+		});
+		expect(unwrapWorklistApplicationResult(moved).goals?.map((goal) => goal.id)).toEqual([
+			"first",
+			"third",
+			"second",
+		]);
+
+		// A move names only a position, so it is never gated behind confirmation and
+		// never leaves the moved goal looking edited.
+		const before = (await service.getProjectGoals()).find((goal) => goal.id === "third");
+		const again = await service.execute(
+			{ scope: "project", action: "move", id: "third", beforeId: "second" },
+			{ source: "dashboard" },
+		);
+		expect(again).toMatchObject({ ok: true, meta: { changed: false, semanticNoOp: true } });
+		expect((await service.getProjectGoals()).find((goal) => goal.id === "third")).toEqual(before);
+
+		await expect(
+			service.execute({ scope: "project", action: "move", id: "third" }, { source: "cli" }),
+		).resolves.toMatchObject({
+			ok: false,
+			error: {
+				code: WORKLIST_ERROR_CODES.VALIDATION_FAILED,
+				details: { fields: ["afterId", "beforeId", "direction"] },
+			},
+		});
+		await expect(
+			service.execute({ scope: "project", action: "update", id: "third", group: "X" }, { source: "cli" }),
+		).resolves.toMatchObject({ ok: true, result: { goal: { group: "X" } } });
+		await expect(
+			service.execute({ scope: "project", action: "set_active", id: "third", group: "X" }, { source: "cli" }),
+		).resolves.toMatchObject({
+			ok: false,
+			error: { code: WORKLIST_ERROR_CODES.VALIDATION_FAILED, details: { fields: ["group"] } },
+		});
+	});
+
 	it("enforces shared validation and explicit confirmation regardless of caller", async () => {
 		const projectPath = join(
 			await mkdtemp(join(tmpdir(), "pi-worklist-application-validation-")),

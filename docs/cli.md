@@ -24,6 +24,7 @@ Every `--json` result envelope reports the running package version as `meta.cliV
 | `npx -y pi-worklist@latest project ui` | Open the interactive goal board for a human at the keyboard. Requires a terminal; not for scripts or agents |
 | `npx -y pi-worklist@latest project add <title...> [-- <description...>]` | Add an open goal |
 | `npx -y pi-worklist@latest project update <id> [title...] [-- <description...>]` | Edit a goal; "-- " alone clears the description |
+| `npx -y pi-worklist@latest project move <id> up|down|before <id>|after <id>` | Reorder a goal in the roadmap's canonical file order |
 | `npx -y pi-worklist@latest project set_active <id>` | Make a goal the single active goal |
 | `npx -y pi-worklist@latest project complete <id> --confirm` | Mark a goal done. Requires explicit user confirmation |
 | `npx -y pi-worklist@latest project reopen <id> --confirm` | Reopen a done or archived goal. Requires explicit user confirmation |
@@ -40,6 +41,7 @@ Every `--json` result envelope reports the running package version as `meta.cliV
 | `--confirm` | Acknowledge an action that requires confirmation; pass it only for an explicit user request |
 | `--cwd <dir>` | Resolve the git root from this directory instead of the working directory |
 | `--append` | Add the text after -- as a new paragraph instead of replacing the description; cannot be combined with a title change; only for project update |
+| `--group <name>` | Put the goal in a free-form section, such as Foundation; an empty name clears it; only for project add and update |
 | `--expect-updated-at <timestamp>` | Refuse the change as a conflict unless the goal's updatedAt still matches this value; only for project update, set_active, complete, reopen, archive, and delete |
 | `--dry-run` | Report the ID rewrites without writing them, and without needing --confirm; only for project migrate_ids |
 
@@ -54,6 +56,14 @@ Put every flag before `--`, because each token after it is description text. A k
 - An ambiguous prefix is refused with the goals it matched instead of resolved by guesswork, so widen the prefix rather than retrying it.
 - Deleting a goal permanently retires its current and former IDs: they stop resolving, but no later goal can claim them and inherit stale references.
 - `find <text>` searches titles and descriptions, so locating a goal never needs `list --json` plus client-side filtering.
+
+## Goal order and grouping
+
+- Goals are stored and listed in one canonical order: `add` appends to the end, and `move` is the only action that rearranges them.
+- `move <id> up` and `move <id> down` step one place, while `move <id> before <anchor>` and `move <id> after <anchor>` land the goal beside a named one.
+- A move changes the roadmap's order without touching the moved goal's `updatedAt`, so rearranging the list never reads as editing the goals on it.
+- Reordering needs no confirmation, because it names no new state for a goal, only a new position among the others.
+- `--group <name>` on `add` and `update` files a goal under a free-form section; a group exists exactly when some goal names it, and `--group ''` clears the field.
 
 ## Exit codes
 
@@ -77,5 +87,6 @@ Put every flag before `--`, because each token after it is description text. A k
 - Pass a full ID or a prefix long enough to be unique; an ambiguous prefix is refused with candidates rather than resolved by guesswork.
 - Run migrate_ids only when the user explicitly asks for it; it rewrites stored IDs, though every old ID keeps resolving afterwards.
 - Add a note with --append instead of resending a description you did not write, so nothing in the existing text can be lost in transcription.
+- Group related goals with --group <name> on add or update, and leave the file order alone unless the user asked for a different sequence.
 - Pass --expect-updated-at with the updatedAt from your own read whenever you change a goal, so your mutation conflicts if the goal changed in the meantime.
 - Broad outcomes belong in Project Goals; do not mirror your internal step-by-step plan into them.
