@@ -51,7 +51,7 @@ const STATUS_RANK: Readonly<Record<ProjectGoalStatus, number>> = {
 	archived: 3,
 };
 
-/** Order the status counts and the summary always read in. */
+/** Order the status counts always read in. */
 const STATUS_ORDER: readonly ProjectGoalStatus[] = ["active", "open", "done", "archived"];
 
 /** A goal still in play and untouched for this long is worth pointing at. */
@@ -70,7 +70,7 @@ const DETAIL_LABEL_WIDTH = 10;
 const PAGE_STEP = 8;
 const MESSAGE_TITLE_LIMIT = 48;
 
-/** Divider between hints in the header, key bar, and status summary. */
+/** Divider between compact facts in the header, detail pane, and key bar. */
 const SEPARATOR = " · ";
 
 export type MessageTone = "info" | "success" | "error";
@@ -935,7 +935,7 @@ export class GoalBoard {
 	/**
 	 * What the board says when nothing else needs the line.
 	 *
-	 * Roadmap counts moved to the header, where nothing can cover them, so this
+	 * Roadmap counts moved to the header, where messages cannot cover them, so this
 	 * line answers what the header cannot: which goal is in flight, named in full
 	 * even while the list is filtered or scrolled away from the pinned row.
 	 */
