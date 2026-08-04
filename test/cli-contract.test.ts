@@ -45,6 +45,28 @@ describe("single CLI command contract", () => {
 		);
 	});
 
+	it("scopes action-limited flags to documented actions and states the limit everywhere", () => {
+		const actionNames = CLI_COMMAND_CONTRACT.actions.map((action) => action.name);
+		const scoped = CLI_COMMAND_CONTRACT.flags.filter((flag) => flag.actions !== undefined);
+		expect(scoped.length, "no flag declares the actions it applies to").toBeGreaterThan(0);
+		const surfaces = [renderCliUsage(), renderCliGuide(), renderSkillMarkdown()];
+		for (const flag of scoped) {
+			const actions = flag.actions ?? [];
+			expect(actions.length, `${flag.name} scopes to no action at all`).toBeGreaterThan(0);
+			for (const action of actions) {
+				expect(actionNames, `${flag.name} names undocumented action ${action}`).toContain(action);
+			}
+			// A reader who misses the limit would expect the flag to work everywhere,
+			// so every rendered surface has to carry it, not just the help output.
+			for (const surface of surfaces) {
+				expect(surface, `a surface omits the action limit for ${flag.name}`).toContain(`${flag.usage}`);
+				expect(surface, `a surface omits the action limit for ${flag.name}`).toContain(
+					`only for ${CLI_COMMAND_CONTRACT.scope} ${actions[0]}`,
+				);
+			}
+		}
+	});
+
 	it("keeps the committed worklist skill byte-identical to the contract render", async () => {
 		const skill = await readFile(resolve(SKILL_PATH), "utf8");
 		expect(skill, `${SKILL_PATH} is stale; run \`npm run docs\` to regenerate it`).toBe(

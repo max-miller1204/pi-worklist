@@ -52,6 +52,8 @@ export interface ProjectGoalsSnapshot {
 export interface ProjectGoalUpdate {
 	title?: string;
 	description?: string;
+	/** Additive alternative to `description`, so a note never rewrites the whole blob. */
+	appendDescription?: string;
 }
 
 export async function readProjectGoals(path: string): Promise<ProjectGoalsSnapshot> {
@@ -69,6 +71,21 @@ function nextGoalUpdatedAt(previous: string): string {
 	const previousTime = Date.parse(previous);
 	const nextTime = Number.isNaN(previousTime) ? Date.now() : Math.max(Date.now(), previousTime + 1);
 	return new Date(nextTime).toISOString();
+}
+
+/**
+ * The description a goal ends up with, resolved under the lock against whatever
+ * is stored right now.
+ *
+ * Appending reads the current description here rather than in the caller, so an
+ * additive note composes with a concurrent edit instead of replaying a baseline
+ * the caller captured earlier. Appended text becomes its own paragraph, which
+ * keeps a note distinct from the sentence it follows in every Markdown reader.
+ */
+function resolveDescription(current: string | undefined, updates: ProjectGoalUpdate): string | undefined {
+	if (updates.appendDescription === undefined) return updates.description ?? current;
+	const existing = current?.trimEnd();
+	return existing ? `${existing}\n\n${updates.appendDescription}` : updates.appendDescription;
 }
 
 function mutationOutcome(result: {
@@ -121,7 +138,7 @@ export async function updateProjectGoal(
 			if (index === -1) return { worklist, result: null, changed: false };
 			const current = worklist.goals[index];
 			const title = updates.title ?? current.title;
-			const description = updates.description ?? current.description;
+			const description = resolveDescription(current.description, updates);
 			if (title === current.title && description === current.description) {
 				return {
 					worklist,

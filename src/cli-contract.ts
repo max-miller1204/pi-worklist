@@ -21,6 +21,8 @@ export interface CliFlagContract {
 	name: string;
 	usage: string;
 	summary: string;
+	/** Actions the flag applies to. Absent means every action accepts it. */
+	actions?: readonly string[];
 }
 
 export interface CliExitCodeContract {
@@ -133,13 +135,25 @@ export const CLI_COMMAND_CONTRACT = {
 			usage: "--cwd <dir>",
 			summary: "Resolve the git root from this directory instead of the working directory",
 		},
+		{
+			name: "--append",
+			usage: "--append",
+			summary: "Add the text after -- as a new paragraph instead of replacing the description",
+			actions: ["update"],
+		},
+		{
+			name: "--expect-updated-at",
+			usage: "--expect-updated-at <timestamp>",
+			summary: "Refuse the change as a conflict unless the goal's updatedAt still matches this value",
+			actions: ["update", "set_active", "complete", "reopen", "archive", "delete"],
+		},
 	] satisfies CliFlagContract[],
 	/**
 	 * A rule that is easy to violate silently, so every generated surface
 	 * states it rather than leaving it implied by the separator's definition.
 	 */
 	separatorRule:
-		"Put every flag before `--`, because each token after it is description text. A known global flag there remains in the description and triggers a warning: stderr for human output, or the JSON envelope's `warnings` array if `--json` was already enabled. A trailing `--json` therefore does not select JSON output; the command prints human output and still exits 0.",
+		"Put every flag before `--`, because each token after it is description text. A known flag there remains in the description and triggers a warning: stderr for human output, or the JSON envelope's `warnings` array if `--json` was already enabled. A trailing `--json` therefore does not select JSON output; the command prints human output and still exits 0.",
 	exitCodes: [
 		{ code: 0, meaning: "success" },
 		{ code: 1, meaning: "error" },
@@ -155,6 +169,8 @@ export const CLI_COMMAND_CONTRACT = {
 		"Treat exit code 3 as a request for explicit user confirmation, not as a retryable failure.",
 		"Treat exit code 4 as a concurrent-change conflict: re-read current state before retrying.",
 		"Use list for orientation and show <id> when you need a goal's complete description.",
+		"Add a note with --append instead of resending a description you did not write, so nothing in the existing text can be lost in transcription.",
+		"Pass --expect-updated-at with the updatedAt from your own read whenever you change a goal, so a concurrent edit conflicts instead of being silently overwritten.",
 		"Broad outcomes belong in Project Goals; do not mirror your internal step-by-step plan into them.",
 	],
 } as const;
@@ -172,19 +188,35 @@ function exitCodeMeaning(code: number): string {
 	return match.meaning;
 }
 
+/** Render `a`, `b`, and `c`. */
+function joinWithAnd(items: readonly string[]): string {
+	if (items.length < 2) {
+		return items.join("");
+	}
+	return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
+}
+
 /** Render `a`, `b`, and `c` from a set of actions. */
 function actionNameList(actions: readonly CliActionContract[]): string {
-	const names = actions.map((action) => `\`${action.name}\``);
-	if (names.length < 2) {
-		return names.join("");
-	}
-	return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+	return joinWithAnd(actions.map((action) => `\`${action.name}\``));
+}
+
+/**
+ * A flag's summary, stating which actions accept it.
+ *
+ * The applicable actions are rendered from the same list the CLI enforces, so
+ * no surface can promise a flag the command line rejects.
+ */
+function flagSummary(flag: CliFlagContract): string {
+	if (!flag.actions) return flag.summary;
+	return `${flag.summary}; only for ${CLI_COMMAND_CONTRACT.scope} ${joinWithAnd(flag.actions)}`;
 }
 
 export function renderCliUsage(): string {
 	const contract = CLI_COMMAND_CONTRACT;
+	const flagColumn = Math.max(...contract.flags.map((flag) => flag.usage.length)) + 2;
 	const actionLines = contract.actions.map((action) => `  ${padUsage(action.usage)}${action.summary}`);
-	const flagLines = contract.flags.map((flag) => `  ${flag.usage.padEnd(15)}${flag.summary}`);
+	const flagLines = contract.flags.map((flag) => `  ${flag.usage.padEnd(flagColumn)}${flagSummary(flag)}`);
 	const exitCodes = contract.exitCodes.map((exitCode) => `${exitCode.code} ${exitCode.meaning}`).join(", ");
 	return [
 		`Usage: ${contract.binary} ${contract.scope} <action> [arguments] [flags]`,
@@ -217,12 +249,16 @@ export function renderSkillMarkdown(): string {
 	// A generated ID in the real `goal-<base36 time>-<8 hex>` shape, so the examples
 	// show what `list` and `add` actually hand back rather than a placeholder.
 	const exampleId = "goal-ms6gwxrg-56c1bde6";
+	// An `updatedAt` in the stored ISO 8601 shape, as `show` reports it.
+	const exampleUpdatedAt = "2026-05-04T09:12:31.004Z";
 	const examples = [
 		"list --json",
 		"add Support goal templates -- Let teams share reusable goal outlines",
 		`show ${exampleId} --json`,
 		`update ${exampleId} -- Replace only the description`,
 		`update ${exampleId} Support shared goal templates`,
+		`update ${exampleId} --append -- Blocked on the template schema until it lands`,
+		`update ${exampleId} --expect-updated-at ${exampleUpdatedAt} --append -- Reviewed and still current`,
 		`set_active ${exampleId}`,
 	];
 	return [
@@ -258,13 +294,16 @@ export function renderSkillMarkdown(): string {
 		"",
 		"Flags:",
 		"",
-		...contract.flags.map((flag) => `- \`${flag.usage}\` - ${flag.summary}.`),
+		...contract.flags.map((flag) => `- \`${flag.usage}\` - ${flagSummary(flag)}.`),
 		"",
 		"Prefer `--json` whenever you need to read IDs, statuses, or errors back rather than parsing human output.",
 		"`list` output is compact and omits descriptions; use `show <id>` when you need a goal's complete description.",
 		"Text after `--` becomes the goal description.",
 		contract.separatorRule,
 		"`update <id> --` with nothing after the separator clears the description.",
+		"`update <id> --append -- <text>` adds that text as a new paragraph instead, so recording a note never rewrites, and never risks losing, prose you did not author.",
+		"`--expect-updated-at <updatedAt>`, copied from your own `show` of that goal, refuses the change when someone edited the goal after you read it.",
+		"Pass it on every change you make to a goal you did not just create: without it, a concurrent edit is silently overwritten rather than reported.",
 		"",
 		"Examples:",
 		"",
@@ -282,6 +321,7 @@ export function renderSkillMarkdown(): string {
 		"  Never pass it because a goal merely looks finished or stale.",
 		`- Exit code 3 (${exitCodeMeaning(3)}) means the command needs \`--confirm\`; stop and ask the user instead of retrying with the flag.`,
 		`- Exit code 4 (${exitCodeMeaning(4)}) means a concurrent change conflicted with yours; re-read current state with \`list\` or \`show\` before retrying.`,
+		"  A conflicting change wrote nothing at all, so rebuild it against the goal you just re-read and pass that goal's new `updatedAt`.",
 		`- ${actionNameList(safeActions)} are safe to run whenever they serve the user's request.`,
 		`- ${actionNameList(interactiveActions)} opens a full-screen board for the human at the keyboard, not for you.`,
 		"  Never run it: it holds the terminal until the user quits, and it exits with an error when stdin or stdout is not a terminal.",
@@ -313,7 +353,7 @@ export function renderCliGuide(): string {
 		].join("");
 		return `| \`npx -y ${publishedBinary} ${contract.scope} ${action.usage}\` | ${action.summary}${notes} |`;
 	});
-	const flagRows = contract.flags.map((flag) => `| \`${flag.usage}\` | ${flag.summary} |`);
+	const flagRows = contract.flags.map((flag) => `| \`${flag.usage}\` | ${flagSummary(flag)} |`);
 	const exitCodeRows = contract.exitCodes.map((exitCode) => `| \`${exitCode.code}\` | ${exitCode.meaning} |`);
 	const guidelineLines = contract.agentGuidelines.map((guideline) => `- ${guideline}`);
 	return [

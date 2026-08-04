@@ -103,6 +103,8 @@ Project Goals use a schema-versioned JSON file at `.pi/worklist.json` in the can
 The file carries a monotonic numeric revision, while application callers receive that revision as an opaque string.
 Legacy files without a revision remain readable at revision `0` and gain revision `1` on their next mutation.
 Optional expected-revision checks run under the same cross-process lock as persistence and return a typed conflict without rewriting stale state.
+A Project Goal mutation can also carry the target goal's `updatedAt` as a precondition, checked under that same lock, which guards exactly one goal where the file-wide revision would reject every unrelated concurrent change instead.
+Appending to a description resolves against the stored text under the lock, so an added note composes with a concurrent edit rather than replaying the caller's baseline over it.
 Session Task expected-revision checks run inside the serialized mutation queue and return the active branch token in conflicts.
 A semantic no-op preserves the Project Worklist file bytes, Project Goal timestamps, Project Worklist revision, Session Task snapshot count, and Session Task branch token.
 The file is human-readable and suitable for version control.
@@ -131,6 +133,8 @@ npx -y pi-worklist@latest project list
 npx -y pi-worklist@latest project show <id>
 npx -y pi-worklist@latest project add Support goal templates -- Let teams share reusable goal outlines
 npx -y pi-worklist@latest project update <id> Replace the title -- Replace the description
+npx -y pi-worklist@latest project update <id> --append -- Add a note as a new paragraph
+npx -y pi-worklist@latest project update <id> --expect-updated-at <updatedAt> --append -- Add it only if nobody edited first
 npx -y pi-worklist@latest project set_active <id>
 npx -y pi-worklist@latest project complete <id> --confirm
 ```
@@ -138,7 +142,10 @@ npx -y pi-worklist@latest project complete <id> --confirm
 The CLI routes every mutation through the same service, cross-process lock, and atomic replacement as a live Pi session, so concurrent use is safe.
 `list` output is deliberately compact without descriptions; `show <id>` prints one goal in full detail.
 Lifecycle actions (`complete`, `reopen`, `archive`, `delete`) require `--confirm`, mirroring the model tool's explicit-intent rule; an omitted flag exits with code 3 and changes nothing.
-Exit code 4 reports a concurrent-change conflict; re-read current state before retrying.
+`--append` adds the text after `--` as a new paragraph instead of replacing the description, so recording a note never re-sends, and never risks losing, prose the caller did not write.
+`--expect-updated-at <timestamp>` carries the goal's `updatedAt` from the caller's own read, and applies to `update`, `set_active`, and the lifecycle actions.
+Without it, two callers that both read and then write silently overwrite each other, because the cross-process lock serializes writes without noticing that the second caller's baseline went stale.
+Exit code 4 reports a concurrent-change conflict, whether the file-wide revision or a single goal moved; nothing is written, so re-read current state, rebuild the change on it, and retry.
 The explicit `@latest` package specifier prevents a stale local npx cache from selecting an older CLI build.
 `--json` prints a deterministic CLI result envelope, preserving the full application result while adding the running package version in `meta.cliVersion`, on stdout for success and stderr for failure; `--cwd <dir>` resolves the Git root from another directory.
 The complete command reference in [docs/cli.md](docs/cli.md) is generated from `src/cli-contract.ts`, the same contract that renders the CLI help and agent guidance.

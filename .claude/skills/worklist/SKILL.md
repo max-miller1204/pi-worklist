@@ -43,12 +43,17 @@ Flags:
 - `--json` - Print the deterministic result envelope as JSON (stdout on success, stderr on failure).
 - `--confirm` - Acknowledge a lifecycle action; pass it only for an explicit user request.
 - `--cwd <dir>` - Resolve the git root from this directory instead of the working directory.
+- `--append` - Add the text after -- as a new paragraph instead of replacing the description; only for project update.
+- `--expect-updated-at <timestamp>` - Refuse the change as a conflict unless the goal's updatedAt still matches this value; only for project update, set_active, complete, reopen, archive, and delete.
 
 Prefer `--json` whenever you need to read IDs, statuses, or errors back rather than parsing human output.
 `list` output is compact and omits descriptions; use `show <id>` when you need a goal's complete description.
 Text after `--` becomes the goal description.
-Put every flag before `--`, because each token after it is description text. A known global flag there remains in the description and triggers a warning: stderr for human output, or the JSON envelope's `warnings` array if `--json` was already enabled. A trailing `--json` therefore does not select JSON output; the command prints human output and still exits 0.
+Put every flag before `--`, because each token after it is description text. A known flag there remains in the description and triggers a warning: stderr for human output, or the JSON envelope's `warnings` array if `--json` was already enabled. A trailing `--json` therefore does not select JSON output; the command prints human output and still exits 0.
 `update <id> --` with nothing after the separator clears the description.
+`update <id> --append -- <text>` adds that text as a new paragraph instead, so recording a note never rewrites, and never risks losing, prose you did not author.
+`--expect-updated-at <updatedAt>`, copied from your own `show` of that goal, refuses the change when someone edited the goal after you read it.
+Pass it on every change you make to a goal you did not just create: without it, a concurrent edit is silently overwritten rather than reported.
 
 Examples:
 
@@ -58,6 +63,8 @@ npx -y pi-worklist@latest project add Support goal templates -- Let teams share 
 npx -y pi-worklist@latest project show goal-ms6gwxrg-56c1bde6 --json
 npx -y pi-worklist@latest project update goal-ms6gwxrg-56c1bde6 -- Replace only the description
 npx -y pi-worklist@latest project update goal-ms6gwxrg-56c1bde6 Support shared goal templates
+npx -y pi-worklist@latest project update goal-ms6gwxrg-56c1bde6 --append -- Blocked on the template schema until it lands
+npx -y pi-worklist@latest project update goal-ms6gwxrg-56c1bde6 --expect-updated-at 2026-05-04T09:12:31.004Z --append -- Reviewed and still current
 npx -y pi-worklist@latest project set_active goal-ms6gwxrg-56c1bde6
 ```
 
@@ -71,6 +78,7 @@ The full generated command reference lives in the package's `docs/cli.md`, rende
   Never pass it because a goal merely looks finished or stale.
 - Exit code 3 (confirmation required) means the command needs `--confirm`; stop and ask the user instead of retrying with the flag.
 - Exit code 4 (conflict) means a concurrent change conflicted with yours; re-read current state with `list` or `show` before retrying.
+  A conflicting change wrote nothing at all, so rebuild it against the goal you just re-read and pass that goal's new `updatedAt`.
 - `list`, `show`, `add`, `update`, and `set_active` are safe to run whenever they serve the user's request.
 - `ui` opens a full-screen board for the human at the keyboard, not for you.
   Never run it: it holds the terminal until the user quits, and it exits with an error when stdin or stdout is not a terminal.

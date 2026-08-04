@@ -30,6 +30,26 @@ describe("project mutation service", () => {
 		expect(second.goal.description).toBe("With description");
 	});
 
+	it("appends a paragraph without replaying the stored description", async () => {
+		const path = await tempPath();
+		const { goal } = await addProjectGoal(path, "Stage E", "First paragraph.");
+
+		const noted = await updateProjectGoal(path, goal.id, {
+			appendDescription: "Stale as of 2026-08-03.",
+		});
+		expect(noted.goal.description).toBe("First paragraph.\n\nStale as of 2026-08-03.");
+		expect(noted.goal.title).toBe("Stage E");
+
+		const twice = await updateProjectGoal(path, goal.id, { appendDescription: "Soft-depends on goal-x." });
+		expect(twice.goal.description).toBe(
+			"First paragraph.\n\nStale as of 2026-08-03.\n\nSoft-depends on goal-x.",
+		);
+
+		const bare = await addProjectGoal(path, "No description yet");
+		const first = await updateProjectGoal(path, bare.goal.id, { appendDescription: "The only note." });
+		expect(first.goal.description).toBe("The only note.");
+	});
+
 	it("throws typed errors for missing goals", async () => {
 		const path = await tempPath();
 		await expect(updateProjectGoal(path, "missing", { title: "x" })).rejects.toThrow(
