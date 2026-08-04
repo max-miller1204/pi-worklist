@@ -190,6 +190,13 @@ npx -y pi-worklist@latest project ui
 The board is a split view: the goal list on the left, the selected goal's status, timestamps, identifier, and complete description on the right.
 Below about 76 columns the two panes stack instead, and the layout stays aligned for titles containing wide or combined characters.
 
+The active goal is pinned above every other row and carries a marker of its own, so the work in flight is the first thing the list says.
+The status line names it in full, which keeps it readable while the list is filtered to something else or scrolled past it.
+In the all view, done and archived rows recede so live work stays legible beside them, and the selected row always keeps full contrast.
+A goal still in play that has gone untouched for 30 days or more carries its age at the right edge of its row when at least 12 cells remain for the title, and the detail pane spells that age out under `UPDATED`.
+Settled goals are never aged: a done or archived goal is finished rather than neglected.
+The header shows per-status totals across the whole roadmap, so a filtered list still reports its overall shape; on narrow terminals, those counts yield first to the filter and shown-of-total labels.
+
 | Key | Action |
 | --- | --- |
 | `↑` `↓` or `j` `k` | Move the selection, or scroll the detail pane once it has focus |

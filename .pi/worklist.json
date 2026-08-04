@@ -178,9 +178,9 @@
       "id": "tui-polish-quick-readability-wins-in",
       "title": "tui-polish: quick readability wins in the goal board",
       "description": "Group: TUI. Depends on: none. Pin the active goal to the top with a distinct marker, dim done and archived rows in the all view, add staleness markers for goals untouched for 30+ days, and show per-status counts in the header. Sorting is deliberately out of scope: the sort cycle moved into schema-fields so it is built once on canonical file order instead of shipping on createdAt and being reworked one goal later.",
-      "status": "open",
+      "status": "done",
       "createdAt": "2026-08-04T02:37:07.968Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-04T18:51:58.708Z",
       "previousIds": [
         "goal-mse1s000-0b246515"
       ]
@@ -373,5 +373,5 @@
       ]
     }
   ],
-  "revision": 83
+  "revision": 84
 }

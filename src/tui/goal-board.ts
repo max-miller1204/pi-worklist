@@ -30,8 +30,14 @@ const FILTER_LABELS: Readonly<Record<GoalFilter, string>> = {
 	all: "All",
 };
 
+/**
+ * One glyph per status.
+ *
+ * The active goal gets a diamond rather than a fourth circle so the pinned row
+ * still reads as the odd one out on a terminal with no color at all.
+ */
 const STATUS_MARKERS: Readonly<Record<ProjectGoalStatus, string>> = {
-	active: "●",
+	active: "◆",
 	open: "○",
 	done: "✓",
 	archived: "◌",
@@ -45,6 +51,16 @@ const STATUS_RANK: Readonly<Record<ProjectGoalStatus, number>> = {
 	archived: 3,
 };
 
+/** Order the status counts always read in. */
+const STATUS_ORDER: readonly ProjectGoalStatus[] = ["active", "open", "done", "archived"];
+
+/** A goal still in play and untouched for this long is worth pointing at. */
+const STALE_AFTER_DAYS = 30;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Narrower than this and a row drops its staleness badge rather than its title. */
+const MIN_BADGED_TITLE_WIDTH = 12;
+
 /** Below this width the two panes stack instead of sitting side by side. */
 const MIN_SPLIT_WIDTH = 76;
 const MIN_LIST_WIDTH = 24;
@@ -54,7 +70,7 @@ const DETAIL_LABEL_WIDTH = 10;
 const PAGE_STEP = 8;
 const MESSAGE_TITLE_LIMIT = 48;
 
-/** Divider between hints in the header, key bar, and status summary. */
+/** Divider between compact facts in the header, detail pane, and key bar. */
 const SEPARATOR = " · ";
 
 export type MessageTone = "info" | "success" | "error";
@@ -103,6 +119,14 @@ export interface GoalBoardOptions {
 	/** Shown in the header so a board opened with `--cwd` names its repository. */
 	repositoryLabel: string;
 	goals?: ProjectGoal[];
+	/**
+	 * Current time in epoch milliseconds, read only to age goals.
+	 *
+	 * It is injectable so a frame stays a pure function of state plus size in
+	 * tests, which is the one thing keeping the board testable without a
+	 * pseudo-terminal.
+	 */
+	now?: () => number;
 }
 
 interface HelpEntry {
@@ -137,12 +161,34 @@ function matchesFilter(goal: ProjectGoal, filter: GoalFilter): boolean {
 	return goal.status === "archived";
 }
 
+/** The one goal in flight, pinned above every other row whatever orders the rest. */
+function isPinned(goal: ProjectGoal): boolean {
+	return goal.status === "active";
+}
+
 function compareGoals(left: ProjectGoal, right: ProjectGoal): number {
+	// The pin is deliberately its own comparison rather than a consequence of the
+	// status rank, so a later ordering change cannot quietly unpin the active goal.
+	if (isPinned(left) !== isPinned(right)) return isPinned(left) ? -1 : 1;
 	const rank = STATUS_RANK[left.status] - STATUS_RANK[right.status];
 	if (rank !== 0) return rank;
 	const created = Date.parse(left.createdAt) - Date.parse(right.createdAt);
 	if (Number.isFinite(created) && created !== 0) return created;
 	return left.id.localeCompare(right.id);
+}
+
+/**
+ * Whole days since a goal was last touched, once that crosses the threshold.
+ *
+ * Only work still in play can go stale: a done or archived goal is finished
+ * rather than neglected, so its age says nothing the board should nag about.
+ */
+function stalenessDays(goal: ProjectGoal, now: number): number | undefined {
+	if (goal.status !== "open" && goal.status !== "active") return undefined;
+	const updated = Date.parse(goal.updatedAt);
+	if (!Number.isFinite(updated)) return undefined;
+	const days = Math.floor((now - updated) / DAY_MS);
+	return days >= STALE_AFTER_DAYS ? days : undefined;
 }
 
 /** Render an ISO timestamp as local `YYYY-MM-DD HH:MM`, or pass it through unchanged. */
@@ -167,6 +213,7 @@ function toCellArray(value: string): string[] {
 export class GoalBoard {
 	private readonly palette: Palette;
 	private readonly repositoryLabel: string;
+	private readonly now: () => number;
 	private goals: ProjectGoal[];
 	private filter: GoalFilter = "open";
 	private query = "";
@@ -182,6 +229,7 @@ export class GoalBoard {
 	constructor(options: GoalBoardOptions) {
 		this.palette = options.palette;
 		this.repositoryLabel = options.repositoryLabel;
+		this.now = options.now ?? (() => Date.now());
 		this.goals = options.goals ? [...options.goals] : [];
 		this.selectedId = this.visibleGoals()[0]?.id;
 	}
@@ -603,9 +651,33 @@ export class GoalBoard {
 		const shown = this.visibleGoals().length;
 		const left = ` ${accent(bold("Project Goals"))} ${dim("·")} ${muted(this.repositoryLabel)}`;
 		const search = this.query === "" ? "" : ` ${dim("·")} ${accent(`/${singleLine(this.query)}`)}`;
-		const right = `${muted(FILTER_LABELS[this.filter])} ${dim("·")} ${muted(`${shown} of ${total}`)} `;
+		const view = `${muted(FILTER_LABELS[this.filter])} ${dim("·")} ${muted(`${shown} of ${total}`)} `;
+		const counts = this.renderStatusCounts();
+		const chips = counts === "" ? "" : `${counts}${dim(SEPARATOR)}`;
+		// Counts are the first thing dropped when the header runs out of room:
+		// which goals are on screen right now outranks the shape of the roadmap.
+		const used = visibleWidth(left) + visibleWidth(search) + visibleWidth(view);
+		const right = used + visibleWidth(chips) < width ? `${chips}${view}` : view;
 		const gap = Math.max(1, width - visibleWidth(left) - visibleWidth(search) - visibleWidth(right));
 		return truncateToWidth(`${left}${search}${" ".repeat(gap)}${right}`, width);
+	}
+
+	/**
+	 * Per-status counts across the whole roadmap.
+	 *
+	 * They live in the header rather than the status line because the list is
+	 * filtered and the status line is not always free: a message or an open
+	 * prompt would otherwise take the roadmap's shape off the screen with it.
+	 */
+	private renderStatusCounts(): string {
+		const { dim } = this.palette;
+		return STATUS_ORDER.map((status) => ({
+			status,
+			count: this.goals.filter((goal) => goal.status === status).length,
+		}))
+			.filter((entry) => entry.count > 0)
+			.map((entry) => this.statusStyle(entry.status)(`${STATUS_MARKERS[entry.status]} ${entry.count}`))
+			.join(dim(SEPARATOR));
 	}
 
 	private renderPanes(width: number, bodyRows: number): string[] {
@@ -700,7 +772,7 @@ export class GoalBoard {
 	}
 
 	private renderListContent(width: number, height: number): { lines: string[]; hint: string } {
-		const { accent, muted, dim, bold } = this.palette;
+		const { dim } = this.palette;
 		const goals = this.visibleGoals();
 		const available = Math.max(1, width - 2);
 
@@ -734,12 +806,7 @@ export class GoalBoard {
 				lines.push(fitToWidth("", width));
 				continue;
 			}
-			const isSelected = index === selected;
-			const pointer = isSelected ? (this.focus === "list" ? accent("❯") : muted("❯")) : " ";
-			const marker = this.statusStyle(goal.status)(STATUS_MARKERS[goal.status]);
-			const title = truncateToWidth(singleLine(goal.title), Math.max(1, available - 4));
-			const label = isSelected && this.focus === "list" ? bold(title) : title;
-			lines.push(fitToWidth(` ${pointer} ${marker} ${label}`, width));
+			lines.push(this.renderGoalRow(goal, width, available, index === selected));
 		}
 
 		const hidden = goals.length - this.listScroll - height;
@@ -747,8 +814,42 @@ export class GoalBoard {
 		return { lines, hint };
 	}
 
+	/**
+	 * One list row: pointer, status marker, title, and a staleness badge pushed to
+	 * the right edge. The row always fills exactly `width` cells so the pane
+	 * borders stay aligned whatever the title and the badge turn out to be.
+	 */
+	private renderGoalRow(goal: ProjectGoal, width: number, available: number, isSelected: boolean): string {
+		const { accent, muted, dim, bold, warning } = this.palette;
+		const stale = stalenessDays(goal, this.now());
+		const badge = stale === undefined ? "" : `${stale}d`;
+		// A space on each side keeps the badge off both the title and the border.
+		// It is a nudge, though, so a list too narrow to carry one goes without.
+		const slot = badge === "" ? 0 : visibleWidth(badge) + 2;
+		const badgeSlot = available - 4 - slot >= MIN_BADGED_TITLE_WIDTH ? slot : 0;
+		const pointer = isSelected ? (this.focus === "list" ? accent("❯") : muted("❯")) : " ";
+		const marker = this.statusStyle(goal.status)(STATUS_MARKERS[goal.status]);
+		const title = truncateToWidth(singleLine(goal.title), Math.max(1, available - 4 - badgeSlot));
+		// Settled work recedes only where it sits alongside live work, and the
+		// selected row always keeps full contrast so the cursor is never the dim one.
+		const emphasized = isSelected && this.focus === "list";
+		const settled = goal.status === "done" || goal.status === "archived";
+		const dimmed = this.filter === "all" && settled && !isSelected;
+		const label = isPinned(goal)
+			? accent(emphasized ? bold(title) : title)
+			: emphasized
+				? bold(title)
+				: dimmed
+					? dim(title)
+					: title;
+		const row = ` ${pointer} ${marker} ${label}`;
+		if (badgeSlot === 0) return fitToWidth(row, width);
+		const pad = " ".repeat(badgeSlot - visibleWidth(badge) - 1);
+		return `${fitToWidth(row, width - badgeSlot)}${pad}${warning(badge)} `;
+	}
+
 	private buildDetailLines(width: number): string[] {
-		const { accent, bold, muted, dim } = this.palette;
+		const { accent, bold, muted, dim, warning } = this.palette;
 		const goal = this.selectedGoal;
 		if (!goal) return [dim("No goal selected.")];
 
@@ -759,7 +860,10 @@ export class GoalBoard {
 		const field = (label: string, value: string, style: Style) =>
 			`${muted(label.padEnd(DETAIL_LABEL_WIDTH))}${style(value)}`;
 		lines.push(field("STATUS", goal.status.toUpperCase(), this.statusStyle(goal.status)));
-		lines.push(field("UPDATED", formatTimestamp(goal.updatedAt), dim));
+		// The badge in the list is only a number; spell out what it means here.
+		const stale = stalenessDays(goal, this.now());
+		const note = stale === undefined ? "" : `${SEPARATOR}${stale}d untouched`;
+		lines.push(field("UPDATED", formatTimestamp(goal.updatedAt), dim) + warning(note));
 		lines.push(field("CREATED", formatTimestamp(goal.createdAt), dim));
 		// The ID is what every CLI command takes, so it must be readable in full.
 		for (const [index, chunk] of wrapText(goal.id, Math.max(1, width - DETAIL_LABEL_WIDTH)).entries()) {
@@ -825,23 +929,21 @@ export class GoalBoard {
 				this.message.tone === "error" ? danger : this.message.tone === "success" ? success : muted;
 			return { line: ` ${style(truncateToWidth(this.message.text, Math.max(1, width - 2)))}` };
 		}
-		return { line: ` ${dim(truncateToWidth(this.statusSummary(), Math.max(1, width - 2)))}` };
+		return { line: ` ${dim(truncateToWidth(this.idleSummary(), Math.max(1, width - 2)))}` };
 	}
 
 	/**
-	 * Roadmap shape at a glance.
+	 * What the board says when nothing else needs the line.
 	 *
-	 * The list is filtered, so counts across every status are the one thing the
-	 * board cannot otherwise show without changing the filter.
+	 * Roadmap counts moved to the header, where messages cannot cover them, so this
+	 * line answers what the header cannot: which goal is in flight, named in full
+	 * even while the list is filtered or scrolled away from the pinned row.
 	 */
-	private statusSummary(): string {
+	private idleSummary(): string {
 		if (this.goals.length === 0) return "No project goals yet. Press a to add one.";
-		const order: ProjectGoalStatus[] = ["active", "open", "done", "archived"];
-		const parts = order
-			.map((status) => ({ status, count: this.goals.filter((goal) => goal.status === status).length }))
-			.filter((entry) => entry.count > 0)
-			.map((entry) => `${entry.count} ${entry.status}`);
-		return parts.join(SEPARATOR);
+		const active = this.goals.find(isPinned);
+		if (!active) return "No active goal. Press s to make one active.";
+		return `Active: ${singleLine(active.title)}`;
 	}
 
 	/**

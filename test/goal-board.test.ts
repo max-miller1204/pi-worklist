@@ -31,8 +31,16 @@ const GOALS: ProjectGoal[] = [
 	goal({ id: "g-archived", title: "Old idea", status: "archived", createdAt: "2026-01-05T00:00:00.000Z" }),
 ];
 
-function createBoard(goals: ProjectGoal[] = GOALS, color = false): GoalBoard {
-	return new GoalBoard({ palette: createPalette(color), repositoryLabel: "demo", goals });
+/** Fixed clock, a few days after the fixture timestamps, so nothing reads as stale by default. */
+const NOW = Date.parse("2026-01-06T00:00:00.000Z");
+
+function createBoard(goals: ProjectGoal[] = GOALS, color = false, now = NOW): GoalBoard {
+	return new GoalBoard({
+		palette: createPalette(color),
+		repositoryLabel: "demo",
+		goals,
+		now: () => now,
+	});
 }
 
 /** Feed raw terminal input and collect every intent the board produced. */
@@ -52,6 +60,17 @@ function plainFrame(board: GoalBoard, width = 100, rows = 20): string[] {
 }
 
 const BORDER_CHARACTERS = ["│", "╭", "╰", "├", "┤", "╮", "╯", "┬", "┴"];
+
+const MARKERS = /[◆○✓◌]/;
+const DIM = "\u001b[2m";
+
+/** Every goal row of the list pane, reduced to `<marker> <title>` and any badge. */
+function listedRows(board: GoalBoard, width = 100, rows = 20): string[] {
+	return plainFrame(board, width, rows)
+		.map((line) => line.split("│")[1] ?? "")
+		.filter((cell) => MARKERS.test(cell))
+		.map((cell) => cell.replace(/^[^◆○✓◌]*([◆○✓◌])\s*/, "$1 ").trimEnd());
+}
 
 describe("goal board layout", () => {
 	const sizes: Array<[number, number]> = [
@@ -107,16 +126,86 @@ describe("goal board presentation", () => {
 	it("shows active goals first, then open, then settled work", () => {
 		const board = createBoard();
 		press(board, "fff");
-		const listed = plainFrame(board)
-			.filter((line) => /[●○✓◌]/.test(line))
-			.map((line) => line.replace(/^[^●○✓◌]*([●○✓◌])\s*/, "$1 ").trim());
-		expect(listed[0]).toContain("Replace legacy authentication");
-		expect(listed.at(-1)).toContain("Old idea");
+		expect(listedRows(board)[0]).toContain("Replace legacy authentication");
+		expect(listedRows(board).at(-1)).toContain("Old idea");
 	});
 
-	it("summarizes every status even though the list is filtered", () => {
-		const frame = plainFrame(createBoard());
-		expect(frame.at(-2)?.trim()).toBe("1 active · 2 open · 1 done · 1 archived");
+	it("pins the active goal above every other row whatever its age", () => {
+		const newest = goal({
+			id: "g-late",
+			title: "Started last",
+			status: "active",
+			createdAt: "2026-01-09T00:00:00.000Z",
+		});
+		const board = createBoard([...GOALS.slice(1), newest]);
+		press(board, "fff");
+		const rows = listedRows(board);
+		// The pin also carries its own marker, so it reads as the odd row out with
+		// no color at all.
+		expect(rows[0]).toContain("Started last");
+		expect(rows[0]?.startsWith("◆")).toBe(true);
+		expect(rows.slice(1).some((row) => row.startsWith("◆"))).toBe(false);
+	});
+
+	it("counts every status in the header, where a message cannot cover them", () => {
+		const board = createBoard();
+		expect(plainFrame(board)[0]).toContain("◆ 1 · ○ 2 · ✓ 1 · ◌ 1");
+		board.setMessage("Something happened.", "info");
+		expect(plainFrame(board)[0]).toContain("◆ 1 · ○ 2 · ✓ 1 · ◌ 1");
+	});
+
+	it("drops the header counts before the filter when the header runs out of room", () => {
+		const header = plainFrame(createBoard(), 50, 20)[0] ?? "";
+		expect(header).toContain("Open · 3 of 5");
+		expect(header).not.toContain("◆ 1");
+	});
+
+	it("names the goal in flight on the status line, and how to pick one when none is", () => {
+		const statusLine = (goals: ProjectGoal[]) => plainFrame(createBoard(goals)).at(-2)?.trim();
+		const nothingActive = GOALS.map((entry) =>
+			entry.status === "active" ? goal({ ...entry, status: "open" }) : entry,
+		);
+		expect(statusLine(GOALS)).toBe("Active: Replace legacy authentication");
+		expect(statusLine(nothingActive)).toBe("No active goal. Press s to make one active.");
+		expect(statusLine([])).toBe("No project goals yet. Press a to add one.");
+	});
+
+	it("dims settled rows only where they sit alongside live work", () => {
+		const board = createBoard(GOALS, true);
+		press(board, "fff");
+		const dimmedTitle = (frame: string[], title: string) =>
+			frame.some((line) => line.includes(`${DIM}${title}`));
+		expect(dimmedTitle(board.render(100, 20).lines, "Ship the CLI")).toBe(true);
+		expect(dimmedTitle(board.render(100, 20).lines, "Add focus mode")).toBe(false);
+		press(board, "gjjj\r");
+		expect(board.selectedGoal?.id).toBe("g-done");
+		expect(dimmedTitle(board.render(100, 20).lines, "Ship the CLI")).toBe(false);
+
+		// A list of nothing but done goals has no live work to recede behind.
+		const done = createBoard(GOALS, true);
+		press(done, "f");
+		expect(dimmedTitle(done.render(100, 20).lines, "Ship the CLI")).toBe(false);
+	});
+
+	it("ages goals still in play, and leaves settled ones alone", () => {
+		const later = Date.parse("2026-03-01T00:00:00.000Z");
+		const board = createBoard(GOALS, false, later);
+		press(board, "fff");
+		const rows = listedRows(board);
+		expect(rows[0]).toMatch(/Replace legacy authentication\s+58d$/);
+		expect(rows.find((row) => row.includes("Ship the CLI"))).not.toMatch(/\d+d$/);
+		// The detail pane spells out what the badge on the selected row means.
+		press(board, "g");
+		expect(plainFrame(board).join("\n")).toContain("58d untouched");
+		press(board, "G");
+		expect(plainFrame(board).join("\n")).not.toContain("untouched");
+	});
+
+	it("keeps a staleness badge off a list too narrow to carry one", () => {
+		const later = Date.parse("2026-03-01T00:00:00.000Z");
+		const board = createBoard(GOALS, false, later);
+		expect(plainFrame(board, 30, 12).join("\n")).toContain("58d");
+		expect(plainFrame(board, 20, 8).join("\n")).not.toContain("58d");
 	});
 
 	it("always keeps the help and quit hints in the key bar", () => {
