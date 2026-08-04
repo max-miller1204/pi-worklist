@@ -220,11 +220,11 @@ function rejectProjectOnlyFields(operation: WorklistOperation): void {
  */
 function normalizeExpectedGoal(operation: WorklistOperation): ProjectGoalPrecondition | undefined {
 	if (operation.expectedUpdatedAt === undefined) return undefined;
-	const updatedAt = operation.expectedUpdatedAt.trim();
-	if (!updatedAt || Number.isNaN(Date.parse(updatedAt))) {
-		throw validationError("expectedUpdatedAt must be the ISO 8601 updatedAt timestamp read from the goal.", {
+	const updatedAt = operation.expectedUpdatedAt;
+	if (!updatedAt.trim()) {
+		throw validationError("expectedUpdatedAt must not be blank.", {
 			fields: ["expectedUpdatedAt"],
-			resolution: "provide-goal-updated-at",
+			resolution: "provide-non-blank-expected-updated-at",
 		});
 	}
 	if (!operation.id) {

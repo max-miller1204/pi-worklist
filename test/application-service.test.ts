@@ -172,6 +172,76 @@ describe("worklist application service", () => {
 		});
 	});
 
+	it("guards readable legacy timestamps by exact value", async () => {
+		const projectPath = join(
+			await mkdtemp(join(tmpdir(), "pi-worklist-application-legacy-baseline-")),
+			".pi",
+			"worklist.json",
+		);
+		await mkdir(join(projectPath, ".."), { recursive: true });
+		await writeFile(
+			projectPath,
+			`${JSON.stringify(
+				{
+					version: 1,
+					revision: 1,
+					goals: [
+						{
+							id: "goal-legacy",
+							title: "Legacy baseline",
+							status: "open",
+							createdAt: "2026-05-04T09:12:31.004Z",
+							updatedAt: " legacy ",
+						},
+					],
+				},
+				null,
+				2,
+			)}\n`,
+		);
+		const service = new WorklistApplicationService({ projectPath });
+		const beforeConflict = await readFile(projectPath, "utf8");
+
+		const conflict = await service.execute(
+			{
+				scope: "project",
+				action: "update",
+				id: "goal-legacy",
+				title: "Stale rewrite",
+				expectedUpdatedAt: "yesterday",
+			},
+			{ source: "cli" },
+		);
+		expect(conflict).toMatchObject({
+			ok: false,
+			error: {
+				code: WORKLIST_ERROR_CODES.CONFLICT,
+				conflict: {
+					type: "goal-updated-at",
+					expectedUpdatedAt: "yesterday",
+					actualUpdatedAt: " legacy ",
+				},
+			},
+		});
+		expect(await readFile(projectPath, "utf8")).toBe(beforeConflict);
+
+		const updated = await service.execute(
+			{
+				scope: "project",
+				action: "update",
+				id: "goal-legacy",
+				title: "Guarded rewrite",
+				expectedUpdatedAt: " legacy ",
+			},
+			{ source: "cli" },
+		);
+		expect(updated).toMatchObject({
+			ok: true,
+			result: { goal: { id: "goal-legacy", title: "Guarded rewrite" } },
+			meta: { changed: true, revisions: { project: "2" } },
+		});
+	});
+
 	it("rejects description and baseline options that would lose or ignore stored text", async () => {
 		const projectPath = join(
 			await mkdtemp(join(tmpdir(), "pi-worklist-application-goal-options-")),
@@ -197,7 +267,7 @@ describe("worklist application service", () => {
 				{ scope: "project", action: "add", title: "New", appendDescription: "Add" },
 				"only supported for project update",
 			],
-			[{ scope: "project", action: "update", id, title: "New", expectedUpdatedAt: "yesterday" }, "ISO 8601"],
+			[{ scope: "project", action: "update", id, title: "New", expectedUpdatedAt: "   " }, "must not be blank"],
 			[
 				{
 					scope: "project",
