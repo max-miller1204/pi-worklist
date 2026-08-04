@@ -71,6 +71,23 @@
 		"@earendil-works/pi-tui": "*",
 		"typebox": "*"
 	},
+	"peerDependenciesMeta": {
+		"@earendil-works/pi-ai": {
+			"optional": true
+		},
+		"@earendil-works/pi-agent-core": {
+			"optional": true
+		},
+		"@earendil-works/pi-coding-agent": {
+			"optional": true
+		},
+		"@earendil-works/pi-tui": {
+			"optional": true
+		},
+		"typebox": {
+			"optional": true
+		}
+	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.2.4",
 		"@types/node": "^24.0.0",

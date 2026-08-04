@@ -52,6 +52,32 @@ describe("goal ID derivation", () => {
 		expect(slugifyGoalTitle("")).toBe("goal");
 	});
 
+	it("drops function words left dangling by the cap", () => {
+		// The cut lands where the character budget runs out, not where the phrase
+		// does, so without this the tail reads as a fragment.
+		expect(slugifyGoalTitle("Add pi-orchestrator compatibility and cross-extension E2E tests")).toBe(
+			"add-pi-orchestrator-compatibility",
+		);
+		expect(slugifyGoalTitle("apply-plan: atomic batch import of a JSON plan document")).toBe(
+			"apply-plan-atomic-batch-import",
+		);
+		expect(slugifyGoalTitle("archive-browsing: archived goals in the Pi dashboard")).toBe(
+			"archive-browsing-archived-goals",
+		);
+	});
+
+	it("keeps function words a short title actually ends on", () => {
+		// Nothing was cut, so every word is the author's own and stays.
+		expect(slugifyGoalTitle("What to do")).toBe("what-to-do");
+		expect(slugifyGoalTitle("Decide what to ship and")).toBe("decide-what-to-ship-and");
+	});
+
+	it("never trims a slug away entirely", () => {
+		const allStopwords = slugifyGoalTitle(`of the and to ${"in and of the to ".repeat(6)}`);
+		expect(allStopwords.length).toBeGreaterThan(0);
+		expect(allStopwords.split("-").length).toBeGreaterThanOrEqual(1);
+	});
+
 	it("suffixes colliding slugs and never reuses a former ID", () => {
 		const taken = new Set(["support-goal-templates", "support-goal-templates-2"]);
 		expect(generateGoalId("Support goal templates", taken)).toBe("support-goal-templates-3");
