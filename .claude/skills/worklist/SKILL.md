@@ -80,6 +80,7 @@ The full generated command reference lives in the package's `docs/cli.md`, rende
 - Read an ID back from `list`, `find`, or `add` instead of deriving it from a title yourself: truncation and collision suffixes make a guessed slug unreliable.
 - Every `<id>` argument also accepts a unique prefix of an ID, or an ID the goal answered to before `migrate_ids` renamed it.
 - An ambiguous prefix is refused with the goals it matched instead of resolved by guesswork, so widen the prefix rather than retrying it.
+- Deleting a goal permanently retires its current and former IDs: they stop resolving, but no later goal can claim them and inherit stale references.
 - `find <text>` searches titles and descriptions, so locating a goal never needs `list --json` plus client-side filtering.
 
 ## Guardrails

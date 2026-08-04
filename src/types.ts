@@ -46,6 +46,8 @@ export interface ProjectWorklist {
 	/** Absent only in legacy version 1 files, which readers normalize to revision 0. */
 	revision?: number;
 	goals: ProjectGoal[];
+	/** IDs formerly owned by deleted goals. Reserved permanently, but not resolvable. */
+	retiredIds?: string[];
 }
 
 export interface RevisionedProjectWorklist extends ProjectWorklist {

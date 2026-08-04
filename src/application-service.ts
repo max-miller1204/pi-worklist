@@ -893,8 +893,8 @@ export class WorklistApplicationService {
 		operation: WorklistOperation,
 	): Promise<WorklistOperation> {
 		if (!operation.id || !GOAL_SELECTOR_ACTIONS.has(operation.action)) return operation;
-		const { goals } = await readProjectGoals(projectPath);
-		const resolution = resolveGoalSelector(goals, operation.id);
+		const { goals, retiredIds } = await readProjectGoals(projectPath);
+		const resolution = resolveGoalSelector(goals, operation.id, retiredIds);
 		if (resolution.kind === "ambiguous") throw projectGoalSelectionError(operation.id, resolution);
 		if (resolution.kind === "not-found") return operation;
 		return { ...operation, id: resolution.goal.id };

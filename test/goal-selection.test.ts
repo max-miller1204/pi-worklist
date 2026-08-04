@@ -10,7 +10,7 @@ import {
 	slugifyGoalTitle,
 	takenGoalIds,
 } from "../src/goal-selection.ts";
-import type { ProjectGoal } from "../src/types.ts";
+import type { ProjectGoal, ProjectWorklist } from "../src/types.ts";
 
 function goal(id: string, overrides: Partial<ProjectGoal> = {}): ProjectGoal {
 	return {
@@ -21,6 +21,10 @@ function goal(id: string, overrides: Partial<ProjectGoal> = {}): ProjectGoal {
 		updatedAt: "2026-08-04T00:00:00.000Z",
 		...overrides,
 	};
+}
+
+function worklist(goals: ProjectGoal[], retiredIds?: string[]): ProjectWorklist {
+	return { version: 1, goals, ...(retiredIds ? { retiredIds } : {}) };
 }
 
 describe("goal ID derivation", () => {
@@ -54,7 +58,9 @@ describe("goal ID derivation", () => {
 		expect(generateGoalId("Support goal templates", new Set())).toBe("support-goal-templates");
 
 		const goals = [goal("current", { previousIds: ["goal-mryb1h5b-f5473d74"] })];
-		expect(takenGoalIds(goals)).toEqual(new Set(["current", "goal-mryb1h5b-f5473d74"]));
+		expect(takenGoalIds(worklist(goals, ["deleted-goal"]))).toEqual(
+			new Set(["deleted-goal", "current", "goal-mryb1h5b-f5473d74"]),
+		);
 	});
 
 	it("recognizes only randomly generated IDs as migratable", () => {
@@ -115,6 +121,19 @@ describe("goal selector resolution", () => {
 		expect(resolveGoalSelector(goals, "  ")).toEqual({ kind: "not-found" });
 	});
 
+	it("does not reinterpret a retired exact ID as a live goal prefix", () => {
+		expect(resolveGoalSelector([goal("support-goal-templates-2")], "support-goal-templates", [
+			"support-goal-templates",
+		])).toEqual({ kind: "not-found" });
+		expect(
+			findGoalByStoredId(
+				[goal("support-goal-templates", { previousIds: ["legacy-support"] })],
+				"support-goal-templates",
+				["support-goal-templates"],
+			),
+		).toBeUndefined();
+	});
+
 	it("resolves a stored reference by full ID only, never by prefix", () => {
 		expect(findGoalByStoredId(goals, "goal-ms6gwxrg-56c1bde6")?.id).toBe("support-templates");
 		expect(findGoalByStoredId(goals, "supp")).toBeUndefined();
@@ -137,11 +156,11 @@ describe("goal text search", () => {
 
 describe("goal ID migration planning", () => {
 	it("renames only generated IDs and keeps old names reserved", () => {
-		const plan = planGoalIdMigration([
+		const plan = planGoalIdMigration(worklist([
 			goal("goal-mse1rzxb-8213cc2a", { title: "Support goal templates" }),
 			goal("goal-mryb1h5b-f5473d74", { title: "Support goal templates" }),
 			goal("future-start-goal", { title: "Already readable" }),
-		]);
+		]));
 		expect(plan).toEqual([
 			{
 				from: "goal-mse1rzxb-8213cc2a",
@@ -157,17 +176,25 @@ describe("goal ID migration planning", () => {
 	});
 
 	it("never mints an ID that some goal still answers to", () => {
-		const plan = planGoalIdMigration([
+		const plan = planGoalIdMigration(worklist([
 			goal("support-goal-templates", { title: "Something else entirely" }),
 			goal("goal-mse1rzxb-8213cc2a", { title: "Support goal templates" }),
 			goal("settled", { title: "Settled", previousIds: ["support-goal-templates-2"] }),
-		]);
-		expect(plan.map((migration) => migration.to)).toEqual(["support-goal-templates-3"]);
+		], ["support-goal-templates-3"]));
+		expect(plan.map((migration) => migration.to)).toEqual(["support-goal-templates-4"]);
+	});
+
+	it("does not mistake a newly minted slug for a generated legacy ID", () => {
+		expect(
+			planGoalIdMigration(
+				worklist([goal("goal-abc-deadbeef", { title: "Goal abc deadbeef" })]),
+			),
+		).toEqual([]);
 	});
 
 	it("plans nothing for a worklist whose IDs are already readable", () => {
 		expect(
-			planGoalIdMigration([goal("support-goal-templates", { title: "Support goal templates" })]),
+			planGoalIdMigration(worklist([goal("support-goal-templates", { title: "Support goal templates" })])),
 		).toEqual([]);
 	});
 });

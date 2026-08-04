@@ -13,6 +13,7 @@ import {
 	transitionProjectGoal,
 	updateProjectGoal,
 } from "../src/project-mutations.ts";
+import { readProjectWorklist } from "../src/project-store.ts";
 
 async function tempPath() {
 	const root = await mkdtemp(join(tmpdir(), "pi-worklist-mutations-"));
@@ -75,6 +76,54 @@ describe("project mutation service", () => {
 		// The freed-looking slug is still taken, because the renamed goal keeps it.
 		const third = await addProjectGoal(path, "Support goal templates");
 		expect(third.goal.id).toBe("support-goal-templates-3");
+	});
+
+	it("retires every ID of a deleted goal without making it resolvable", async () => {
+		const path = await tempPath();
+		await mkdir(dirname(path), { recursive: true });
+		await writeFile(
+			path,
+			`${JSON.stringify({
+				version: 1,
+				revision: 0,
+				goals: [
+					{
+						id: "older-goal",
+						title: "Older goal",
+						status: "open",
+						createdAt: "2026-08-03T00:00:00.000Z",
+						updatedAt: "2026-08-03T00:00:00.000Z",
+					},
+					{
+						id: "goal-mse1rzxb-8213cc2a",
+						title: "Support goal templates",
+						status: "open",
+						createdAt: "2026-08-04T00:00:00.000Z",
+						updatedAt: "2026-08-04T00:00:00.000Z",
+					},
+				],
+			})}\n`,
+			"utf8",
+		);
+
+		await deleteProjectGoal(path, "older-goal");
+		const migrated = await migrateProjectGoalIds(path);
+		await deleteProjectGoal(path, migrated.goals[0].id);
+		const afterDelete = await readProjectWorklist(path);
+		expect(afterDelete.data.retiredIds).toEqual([
+			"older-goal",
+			"support-goal-templates",
+			"goal-mse1rzxb-8213cc2a",
+		]);
+		expect(afterDelete.data.goals).toEqual([]);
+
+		const replacement = await addProjectGoal(path, "Support goal templates");
+		expect(replacement.goal.id).toBe("support-goal-templates-2");
+		expect((await readProjectWorklist(path)).data.retiredIds).toEqual([
+			"older-goal",
+			"support-goal-templates",
+			"goal-mse1rzxb-8213cc2a",
+		]);
 	});
 
 	it("migrates generated IDs once, records them, and leaves readable IDs alone", async () => {

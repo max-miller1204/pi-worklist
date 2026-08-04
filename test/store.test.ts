@@ -68,6 +68,11 @@ describe("project store", () => {
 		expect(JSON.parse(await readFile(path, "utf8"))).toEqual({ ...worklist, revision: 8 });
 	});
 
+	it("validates retired goal IDs when present", () => {
+		expect(isProjectWorklist({ version: 1, goals: [], retiredIds: ["deleted-goal"] })).toBe(true);
+		expect(isProjectWorklist({ version: 1, goals: [], retiredIds: ["deleted-goal", 1] })).toBe(false);
+	});
+
 	it("refuses a mutation whose target goal moved after the caller read it", async () => {
 		const path = await tempPath();
 		await mkdir(join(path, ".."), { recursive: true });

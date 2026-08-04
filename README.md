@@ -172,6 +172,8 @@ An ambiguous prefix is refused with the goals it matched rather than resolved by
 Only generated IDs are rewritten: a slug is frozen at creation, so re-deriving every ID from its current title would rename exactly the goals that freezing protects.
 Each rewritten goal records its old ID in `previousIds`, which keeps that ID both resolvable and reserved.
 That is what makes migrating a done or archived goal safe rather than a judgment call: a Session Task's `goalId`, an evidence file, and an old PR description all keep resolving to the same goal, and no later goal can claim a name still in use.
+Deleting a goal retires its current and former IDs permanently.
+Those IDs no longer resolve, but a later goal cannot claim one and silently inherit a stale reference intended for the deleted goal.
 `--dry-run` reports the rewrites without writing them and without `--confirm`.
 
 ## Terminal goal board

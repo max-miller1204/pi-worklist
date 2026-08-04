@@ -1,4 +1,4 @@
-import type { GoalIdMigration, ProjectGoal } from "./types.ts";
+import type { GoalIdMigration, ProjectGoal, ProjectWorklist } from "./types.ts";
 
 /**
  * How a Project Goal is named, found, and referred to.
@@ -52,10 +52,10 @@ export function slugifyGoalTitle(title: string): string {
 	return capped.replace(/-+$/, "");
 }
 
-/** Every ID a goal answers to, current and former, across the whole worklist. */
-export function takenGoalIds(goals: readonly ProjectGoal[]): Set<string> {
-	const taken = new Set<string>();
-	for (const goal of goals) {
+/** Every live or retired ID reserved across the whole worklist. */
+export function takenGoalIds(worklist: ProjectWorklist): Set<string> {
+	const taken = new Set(worklist.retiredIds ?? []);
+	for (const goal of worklist.goals) {
 		taken.add(goal.id);
 		for (const previous of goal.previousIds ?? []) taken.add(previous);
 	}
@@ -65,8 +65,8 @@ export function takenGoalIds(goals: readonly ProjectGoal[]): Set<string> {
 /**
  * A unique ID for a new goal with `title`.
  *
- * `taken` must include former IDs as well as current ones, so a freshly minted
- * ID can never shadow a reference that still resolves somewhere else.
+ * `taken` must include former and retired IDs as well as current ones, so a
+ * freshly minted ID can never shadow a live or stale historical reference.
  */
 export function generateGoalId(title: string, taken: ReadonlySet<string>): string {
 	const base = slugifyGoalTitle(title);
@@ -99,9 +99,14 @@ export type UnresolvedGoalSelector = Exclude<GoalSelectorResolution, { kind: "fo
  * Former IDs are matched only in full. Prefix-matching them would let a name
  * nothing carries any more compete with a name something does.
  */
-export function resolveGoalSelector(goals: readonly ProjectGoal[], selector: string): GoalSelectorResolution {
+export function resolveGoalSelector(
+	goals: readonly ProjectGoal[],
+	selector: string,
+	retiredIds: readonly string[] = [],
+): GoalSelectorResolution {
 	const needle = selector.trim();
 	if (needle === "") return { kind: "not-found" };
+	if (retiredIds.includes(needle)) return { kind: "not-found" };
 	const stages = [
 		() => goals.filter((goal) => goal.id === needle),
 		() => goals.filter((goal) => goal.previousIds?.includes(needle)),
@@ -122,7 +127,12 @@ export function resolveGoalSelector(goals: readonly ProjectGoal[], selector: str
  * resolve through current and former IDs but never through a prefix, which
  * could otherwise start matching a different goal as the worklist grows.
  */
-export function findGoalByStoredId(goals: readonly ProjectGoal[], id: string): ProjectGoal | undefined {
+export function findGoalByStoredId(
+	goals: readonly ProjectGoal[],
+	id: string,
+	retiredIds: readonly string[] = [],
+): ProjectGoal | undefined {
+	if (retiredIds.includes(id)) return undefined;
 	return goals.find((goal) => goal.id === id || goal.previousIds?.includes(id));
 }
 
@@ -145,13 +155,14 @@ export function isLegacyGeneratedGoalId(id: string): boolean {
  * re-deriving every ID from its current title would rename goals that were
  * renamed after they were created, which is exactly what freezing prevents.
  *
- * Old IDs stay reserved because the migration records them as former IDs, so a
- * later goal can never claim a name that still resolves.
+ * Old IDs stay reserved because the migration records them as former IDs, and
+ * retired IDs participate in collision handling without becoming resolvable.
  */
-export function planGoalIdMigration(goals: readonly ProjectGoal[]): GoalIdMigration[] {
-	const taken = takenGoalIds(goals);
+export function planGoalIdMigration(worklist: ProjectWorklist): GoalIdMigration[] {
+	const taken = takenGoalIds(worklist);
 	const migrations: GoalIdMigration[] = [];
-	for (const goal of goals) {
+	for (const goal of worklist.goals) {
+		if (goal.id === slugifyGoalTitle(goal.title)) continue;
 		if (!isLegacyGeneratedGoalId(goal.id)) continue;
 		const to = generateGoalId(goal.title, taken);
 		taken.add(to);

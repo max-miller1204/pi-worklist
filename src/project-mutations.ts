@@ -46,6 +46,7 @@ export interface ProjectMutationOutcome {
 
 export interface ProjectGoalsSnapshot {
 	goals: ProjectGoal[];
+	retiredIds: string[];
 	revision: string;
 }
 
@@ -59,7 +60,7 @@ export interface ProjectGoalUpdate {
 export async function readProjectGoals(path: string): Promise<ProjectGoalsSnapshot> {
 	const { data, error } = await readProjectWorklist(path);
 	if (error) throw new Error(error);
-	return { goals: data.goals, revision: String(data.revision) };
+	return { goals: data.goals, retiredIds: data.retiredIds ?? [], revision: String(data.revision) };
 }
 
 export async function listProjectGoals(path: string): Promise<ProjectGoal[]> {
@@ -118,7 +119,7 @@ export async function addProjectGoal(
 		path,
 		(worklist) => {
 			const goal: ProjectGoal = {
-				id: generateGoalId(title, takenGoalIds(worklist.goals)),
+				id: generateGoalId(title, takenGoalIds(worklist)),
 				title,
 				description,
 				status: "open",
@@ -295,12 +296,15 @@ export async function deleteProjectGoal(
 	const result = await mutateProjectWorklist(
 		path,
 		(worklist) => {
-			const goals = worklist.goals.filter((goal) => goal.id !== id);
-			const removed = goals.length !== worklist.goals.length;
+			const removed = worklist.goals.find((goal) => goal.id === id);
+			const goals = removed ? worklist.goals.filter((goal) => goal.id !== id) : worklist.goals;
+			const retiredIds = removed
+				? [...new Set([...(worklist.retiredIds ?? []), removed.id, ...(removed.previousIds ?? [])])]
+				: worklist.retiredIds;
 			return {
-				worklist: removed ? { ...worklist, goals } : worklist,
+				worklist: removed ? { ...worklist, goals, retiredIds } : worklist,
 				result: removed ? { goals } : null,
-				changed: removed,
+				changed: removed !== undefined,
 			};
 		},
 		options,
@@ -339,7 +343,7 @@ export async function migrateProjectGoalIds(
 	const result = await mutateProjectWorklist(
 		path,
 		(worklist) => {
-			const migrations = planGoalIdMigration(worklist.goals);
+			const migrations = planGoalIdMigration(worklist);
 			if (migrations.length === 0) {
 				return { worklist, result: { goals: worklist.goals, migrations }, changed: false };
 			}

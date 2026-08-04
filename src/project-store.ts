@@ -99,6 +99,7 @@ export function isProjectWorklist(value: unknown): value is ProjectWorklist {
 	if (obj.revision !== undefined && (!Number.isSafeInteger(obj.revision) || Number(obj.revision) < 0)) {
 		return false;
 	}
+	if (obj.retiredIds !== undefined && !isStringArray(obj.retiredIds)) return false;
 	if (!Array.isArray(obj.goals)) return false;
 	for (const g of obj.goals) {
 		if (typeof g !== "object" || g === null) return false;
