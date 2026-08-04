@@ -1,12 +1,7 @@
-import { randomUUID } from "node:crypto";
-import { createRequire } from "node:module";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { WorklistApplicationService, type WorklistOperationSource } from "./application-service.ts";
-import { createWorklistChangeEvent } from "./change-events.ts";
 import { formatProjectGoals, formatSessionTasks } from "./format.ts";
-import { WORKLIST_CHANGE_EVENT, type WorklistProviderIdentity } from "./integration-contract.ts";
-import { registerWorklistProtocolProvider } from "./protocol-provider.ts";
 import { WorklistParamsSchema } from "./schema.ts";
 import { SessionStore } from "./session-store.ts";
 import { executeWorklist, getProjectPath, WORKLIST_EXECUTION_MODE } from "./tool.ts";
@@ -118,26 +113,9 @@ export function parseTasksCommand(args: string): ParsedCommand | null {
 	return null;
 }
 
-const packageVersion = (createRequire(import.meta.url)("../package.json") as { version: string }).version;
-
-export function createWorklistProviderIdentity(): WorklistProviderIdentity {
-	return { id: "pi-worklist", version: packageVersion, instanceId: randomUUID() };
-}
-
 export default function worklistExtension(pi: ExtensionAPI): void {
-	const providerIdentity = createWorklistProviderIdentity();
 	const sessionStore = new SessionStore(pi);
-	const applicationService = new WorklistApplicationService({
-		sessionStore,
-		publishChange: (description) => {
-			pi.events.emit(WORKLIST_CHANGE_EVENT, createWorklistChangeEvent(providerIdentity, description));
-		},
-	});
-	const protocolProvider = registerWorklistProtocolProvider({
-		events: pi.events,
-		applicationService,
-		provider: providerIdentity,
-	});
+	const applicationService = new WorklistApplicationService({ sessionStore });
 	let projectPath: string | null = null;
 	let projectGoals: ProjectGoal[] = [];
 	let latestContext: ExtensionContext | undefined;
@@ -456,7 +434,6 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 		return { systemPrompt: `${event.systemPrompt}\n\n${summary}` };
 	});
 	pi.on("session_shutdown", () => {
-		protocolProvider.shutdown();
 		latestContext?.ui.setWidget("pi-worklist", undefined);
 		latestContext = undefined;
 	});

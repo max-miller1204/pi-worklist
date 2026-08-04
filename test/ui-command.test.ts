@@ -44,47 +44,6 @@ describe("widget and prompt summary", () => {
 		expect(summary).not.toContain("Task 4");
 	});
 
-	it("does not expose managed projection metadata in normal model context", () => {
-		const managedTask = {
-			id: "managed-task",
-			title: "Projected work",
-			status: "doing" as const,
-			managed: {
-				version: 1,
-				owner: "pi-orchestrator",
-				producer: { id: "pi-orchestrator", version: "producer-secret" },
-				external: { system: "pi-orchestrator", kind: "workflow-step", id: "step-secret" },
-				planRevision: 4,
-				approvedPlanRevision: 3,
-				createdAt: "2026-07-24T20:00:00.000Z",
-				updatedAt: "2026-07-24T20:05:00.000Z",
-				execution: {
-					state: "running",
-					updatedAt: "2026-07-24T20:05:00.000Z",
-					runId: "run-secret",
-					summary: "summary-secret",
-					runReference: "run-reference-secret",
-				},
-				resultReference: "result-reference-secret",
-				sessionContributionReference: "session-contribution-secret",
-			},
-		} as SessionTask;
-
-		const summary = buildPromptSummary([managedTask], []);
-		expect(summary).toContain("Projected work");
-		for (const hiddenValue of [
-			"producer-secret",
-			"step-secret",
-			"run-secret",
-			"summary-secret",
-			"run-reference-secret",
-			"result-reference-secret",
-			"session-contribution-secret",
-		]) {
-			expect(summary).not.toContain(hiddenValue);
-		}
-	});
-
 	it("preserves canonical relative order when completed tasks are filtered", () => {
 		const reordered = [tasks[4], tasks[0], tasks[2], tasks[1]];
 		expect(buildWidgetLines(reordered, []).map((line) => line.slice(2))).toEqual([

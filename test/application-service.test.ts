@@ -8,7 +8,7 @@ import {
 	WorklistApplicationService,
 	type WorklistOperationSource,
 } from "../src/application-service.ts";
-import { WORKLIST_ERROR_CODES } from "../src/integration-contract.ts";
+import { WORKLIST_ERROR_CODES } from "../src/result-envelope.ts";
 import { SessionStore } from "../src/session-store.ts";
 
 function createSessionStore() {
@@ -31,7 +31,7 @@ describe("worklist application service", () => {
 
 		const added = await firstClient.execute(
 			{ scope: "project", action: "add", title: "Revision guarded", expectedRevision: "0" },
-			{ source: "protocol" },
+			{ source: "cli" },
 		);
 		expect(added).toMatchObject({
 			ok: true,
@@ -60,7 +60,7 @@ describe("worklist application service", () => {
 				title: "Stale overwrite",
 				expectedRevision: "1",
 			},
-			{ source: "protocol" },
+			{ source: "cli" },
 		);
 		expect(conflict).toEqual({
 			ok: false,
@@ -112,7 +112,7 @@ describe("worklist application service", () => {
 				description: "Unchanged",
 				expectedRevision: "1",
 			},
-			{ source: "protocol" },
+			{ source: "cli" },
 		);
 		expect(sameUpdate).toMatchObject({
 			ok: true,
@@ -134,7 +134,7 @@ describe("worklist application service", () => {
 		const beforeRepeatedActivation = await readFile(projectPath, "utf8");
 		const repeatedActivation = await service.execute(
 			{ scope: "project", action: "set_active", id, expectedRevision: "2" },
-			{ source: "protocol" },
+			{ source: "cli" },
 		);
 		expect(repeatedActivation).toMatchObject({
 			ok: true,
@@ -150,7 +150,7 @@ describe("worklist application service", () => {
 		const beforeRepeatedCompletion = await readFile(projectPath, "utf8");
 		const repeatedCompletion = await service.execute(
 			{ scope: "project", action: "complete", id, confirm: true, expectedRevision: "3" },
-			{ source: "protocol" },
+			{ source: "cli" },
 		);
 		expect(repeatedCompletion).toMatchObject({
 			ok: true,
@@ -206,7 +206,7 @@ describe("worklist application service", () => {
 				title: "Stale overwrite",
 				expectedRevision: initialRevision,
 			},
-			{ source: "protocol" },
+			{ source: "cli" },
 		);
 		expect(conflict).toEqual({
 			ok: false,
@@ -241,7 +241,7 @@ describe("worklist application service", () => {
 				title: "Newer title",
 				expectedRevision: currentRevision,
 			},
-			{ source: "protocol" },
+			{ source: "cli" },
 		);
 		expect(noOp).toMatchObject({
 			ok: true,
@@ -266,7 +266,7 @@ describe("worklist application service", () => {
 			),
 			service.execute(
 				{ scope: "session", action: "update", id: "task-1", title: "Shared result" },
-				{ source: "protocol" },
+				{ source: "cli" },
 			),
 		]);
 
@@ -290,7 +290,6 @@ describe("worklist application service", () => {
 			"command",
 			"dashboard",
 			"cli",
-			"protocol",
 		] as const satisfies readonly WorklistOperationSource[];
 
 		const successes = await Promise.all(
@@ -382,7 +381,7 @@ describe("worklist application service", () => {
 		const id = added.result.goal?.id;
 		expect(id).toBeTruthy();
 		await expect(
-			service.execute({ scope: "project", action: "complete", id }, { source: "protocol" }),
+			service.execute({ scope: "project", action: "complete", id }, { source: "cli" }),
 		).resolves.toEqual({
 			ok: false,
 			scope: "project",
@@ -422,7 +421,7 @@ describe("worklist application service", () => {
 		});
 	});
 
-	it("applies one operation contract for tool, command, dashboard, CLI, and protocol callers", async () => {
+	it("applies one operation contract for tool, command, dashboard, and CLI callers", async () => {
 		const projectPath = join(
 			await mkdtemp(join(tmpdir(), "pi-worklist-application-service-")),
 			".pi",
@@ -435,7 +434,6 @@ describe("worklist application service", () => {
 			"command",
 			"dashboard",
 			"cli",
-			"protocol",
 		] as const satisfies readonly WorklistOperationSource[];
 
 		for (const [index, source] of sources.entries()) {
@@ -453,9 +451,8 @@ describe("worklist application service", () => {
 			{ title: "command task", status: "done" },
 			{ title: "dashboard task", status: "doing" },
 			{ title: "cli task", status: "done" },
-			{ title: "protocol task", status: "doing" },
 		]);
-		expect(entries).toHaveLength(10);
+		expect(entries).toHaveLength(8);
 
 		const added = await service.execute(
 			{ scope: "project", action: "add", title: "Shared goal", description: "One rule set" },
@@ -464,8 +461,8 @@ describe("worklist application service", () => {
 		const goalId = unwrapWorklistApplicationResult(added).goal?.id;
 		expect(goalId).toBeTruthy();
 		await service.execute(
-			{ scope: "project", action: "update", id: goalId, title: "Updated through protocol" },
-			{ source: "protocol" },
+			{ scope: "project", action: "update", id: goalId, title: "Updated through dashboard" },
+			{ source: "dashboard" },
 		);
 		const listed = unwrapWorklistApplicationResult(
 			await service.execute({ scope: "project", action: "list" }, { source: "tool" }),
@@ -473,7 +470,7 @@ describe("worklist application service", () => {
 		expect(listed.goals).toEqual([
 			expect.objectContaining({
 				id: goalId,
-				title: "Updated through protocol",
+				title: "Updated through dashboard",
 				description: "One rule set",
 			}),
 		]);
@@ -493,7 +490,7 @@ describe("worklist application service", () => {
 		);
 		const id = unwrapWorklistApplicationResult(added).goal?.id;
 
-		for (const source of ["tool", "command", "dashboard", "cli", "protocol"] as const) {
+		for (const source of ["tool", "command", "dashboard", "cli"] as const) {
 			await expect(
 				service.execute(
 					{ scope: "session", action: "add", title: "Invalid", beforeId: "a", afterId: "b" },
