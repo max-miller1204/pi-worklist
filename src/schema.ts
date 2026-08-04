@@ -61,7 +61,8 @@ export const WorklistParamsSchema = Type.Object({
 	action: ActionSchema,
 	id: Type.Optional(
 		Type.String({
-			description: "Task or goal ID (for update, set_status, delete, complete, reopen, archive, set_active).",
+			description:
+				"Task or goal ID (for update, set_status, delete, complete, reopen, archive, set_active). A project goal also accepts a unique prefix of its ID, or an ID it answered to before an ID migration.",
 		}),
 	),
 	title: Type.Optional(Type.String({ description: "Title for add/update." })),

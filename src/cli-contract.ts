@@ -69,6 +69,11 @@ export const CLI_COMMAND_CONTRACT = {
 			summary: "Show one goal with its full description",
 		},
 		{
+			name: "find",
+			usage: "find <text...>",
+			summary: "List the goals whose title or description contains the text",
+		},
+		{
 			name: "ui",
 			usage: "ui",
 			summary: "Open the interactive goal board for a human at the keyboard",
@@ -114,6 +119,12 @@ export const CLI_COMMAND_CONTRACT = {
 			confirmRequired: true,
 		},
 		{
+			name: "migrate_ids",
+			usage: "migrate_ids --confirm",
+			summary: "Rewrite randomly generated goal IDs as title-derived ones",
+			confirmRequired: true,
+		},
+		{
 			name: "help",
 			usage: "help",
 			summary: "Print this help",
@@ -148,6 +159,12 @@ export const CLI_COMMAND_CONTRACT = {
 			summary: "Refuse the change as a conflict unless the goal's updatedAt still matches this value",
 			actions: ["update", "set_active", "complete", "reopen", "archive", "delete"],
 		},
+		{
+			name: "--dry-run",
+			usage: "--dry-run",
+			summary: "Report the ID rewrites without writing them, and without needing --confirm",
+			actions: ["migrate_ids"],
+		},
 	] satisfies CliFlagContract[],
 	/**
 	 * A rule that is easy to violate silently, so every generated surface
@@ -155,6 +172,20 @@ export const CLI_COMMAND_CONTRACT = {
 	 */
 	separatorRule:
 		"Put every flag before `--`, because each token after it is description text. A known flag there remains in the description and triggers a warning: stderr for human output, or the JSON envelope's `warnings` array if `--json` was already enabled. A trailing `--json` therefore does not select JSON output; the command prints human output and still exits 0.",
+	/**
+	 * How an ID comes to exist and how a caller names one.
+	 *
+	 * Every surface states these, because a caller who assumes IDs are opaque
+	 * random strings keeps paying for `list --json` plus client-side filtering to
+	 * find the goal they already know the name of.
+	 */
+	idRules: [
+		"A goal's ID is derived from its title when the goal is created and frozen from then on, so it reads as words and a later rename never invalidates a reference written down elsewhere.",
+		"Read an ID back from `list`, `find`, or `add` instead of deriving it from a title yourself: truncation and collision suffixes make a guessed slug unreliable.",
+		"Every `<id>` argument also accepts a unique prefix of an ID, or an ID the goal answered to before `migrate_ids` renamed it.",
+		"An ambiguous prefix is refused with the goals it matched instead of resolved by guesswork, so widen the prefix rather than retrying it.",
+		"`find <text>` searches titles and descriptions, so locating a goal never needs `list --json` plus client-side filtering.",
+	],
 	exitCodes: [
 		{ code: 0, meaning: "success" },
 		{ code: 1, meaning: "error" },
@@ -166,10 +197,12 @@ export const CLI_COMMAND_CONTRACT = {
 		"Prefer --json and read the deterministic result envelope instead of parsing human output.",
 		"Write every flag before the -- separator, and read the CLI's own exit code rather than a shell pipeline's, so a swallowed flag cannot look like a failure or a success.",
 		"Never run ui: it is an interactive board for a human, it holds the terminal until they quit, and it refuses to start without one.",
-		"Never pass --confirm for complete, reopen, archive, or delete unless the user explicitly requested that exact action.",
+		"Never pass --confirm for complete, reopen, archive, delete, or migrate_ids unless the user explicitly requested that exact action.",
 		"Treat exit code 3 as a request for explicit user confirmation, not as a retryable failure.",
 		"Treat exit code 4 as a concurrent-change conflict: re-read current state before retrying.",
-		"Use list for orientation and show <id> when you need a goal's complete description.",
+		"Use list for orientation, find <text> to locate a goal by wording, and show <id> when you need a goal's complete description.",
+		"Pass a full ID or a prefix long enough to be unique; an ambiguous prefix is refused with candidates rather than resolved by guesswork.",
+		"Run migrate_ids only when the user explicitly asks for it; it rewrites stored IDs, though every old ID keeps resolving afterwards.",
 		"Add a note with --append instead of resending a description you did not write, so nothing in the existing text can be lost in transcription.",
 		"Pass --expect-updated-at with the updatedAt from your own read whenever you change a goal, so your mutation conflicts if the goal changed in the meantime.",
 		"Broad outcomes belong in Project Goals; do not mirror your internal step-by-step plan into them.",
@@ -247,14 +280,15 @@ export function renderSkillMarkdown(): string {
 		(action) => !action.confirmRequired && !action.interactive && action.name !== "help",
 	);
 	const interactiveActions = contract.actions.filter((action) => action.interactive);
-	// A generated ID in the real `goal-<base36 time>-<8 hex>` shape, so the examples
-	// show what `list` and `add` actually hand back rather than a placeholder.
-	const exampleId = "goal-ms6gwxrg-56c1bde6";
+	// A title-derived ID in the shape `add` actually mints, so the examples show
+	// what `list` and `find` hand back rather than a placeholder.
+	const exampleId = "support-goal-templates";
 	// An `updatedAt` in the stored ISO 8601 shape, as `show` reports it.
 	const exampleUpdatedAt = "2026-05-04T09:12:31.004Z";
 	const examples = [
 		"list --json",
 		"add Support goal templates -- Let teams share reusable goal outlines",
+		"find templates --json",
 		`show ${exampleId} --json`,
 		`update ${exampleId} -- Replace only the description`,
 		`update ${exampleId} Support shared goal templates`,
@@ -312,14 +346,19 @@ export function renderSkillMarkdown(): string {
 		...examples.map((example) => `npx -y ${publishedBinary} ${contract.scope} ${example}`),
 		"```",
 		"",
-		"Goal IDs are opaque: read them back from `list` or `add` output instead of constructing them.",
 		`The full generated command reference lives in the package's \`${DOCS_PATH}\`, rendered from the same contract as this skill.`,
+		"",
+		"## Goal IDs",
+		"",
+		...contract.idRules.map((rule) => `- ${rule}`),
 		"",
 		"## Guardrails",
 		"",
-		`- ${actionNameList(lifecycleActions)} are lifecycle actions reserved for explicit user intent.`,
-		"  Pass `--confirm` only when the user explicitly requested that exact action on that goal in this conversation.",
+		`- ${actionNameList(lifecycleActions)} are reserved for explicit user intent.`,
+		"  Pass `--confirm` only for the exact action, on the exact goal, that the user requested in this conversation.",
 		"  Never pass it because a goal merely looks finished or stale.",
+		"- `migrate_ids` names no goal and rewrites every generated ID in the repository at once, so it needs an explicit request of its own.",
+		"  `--dry-run` reports the rewrites it would make without writing them and without `--confirm`; prefer it when you are showing the user what would change.",
 		`- Exit code 3 (${exitCodeMeaning(3)}) means the command needs \`--confirm\`; stop and ask the user instead of retrying with the flag.`,
 		`- Exit code 4 (${exitCodeMeaning(4)}) means a concurrent change conflicted with yours; re-read current state with \`list\` or \`show\` before retrying.`,
 		"  A conflicting change wrote nothing at all, so rebuild it against the goal you just re-read and pass that goal's new `updatedAt`.",
@@ -387,6 +426,10 @@ export function renderCliGuide(): string {
 		...flagRows,
 		"",
 		contract.separatorRule,
+		"",
+		"## Goal IDs",
+		"",
+		...contract.idRules.map((rule) => `- ${rule}`),
 		"",
 		"## Exit codes",
 		"",

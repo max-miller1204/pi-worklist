@@ -1,8 +1,14 @@
 import {
+	MAX_REPORTED_GOAL_CANDIDATES,
+	resolveGoalSelector,
+	type UnresolvedGoalSelector,
+} from "./goal-selection.ts";
+import {
 	activateProjectGoal,
 	addProjectGoal,
 	deleteProjectGoal,
 	listProjectGoals,
+	migrateProjectGoalIds,
 	PROJECT_LIFECYCLE_TARGET_STATUS,
 	ProjectGoalActivationBlockedError,
 	ProjectGoalNotFoundError,
@@ -138,6 +144,46 @@ function notFoundError(entity: "session-task" | "project-goal" | "session-task-a
 	});
 }
 
+/**
+ * The typed failure for a selector that named no goal, or more than one.
+ *
+ * An ambiguous prefix is refused with the goals it matched rather than resolved
+ * by picking one, because every guess a caller cannot see is a mutation applied
+ * to a goal they did not mean. Interfaces share this so a prefix behaves the
+ * same whether it arrived from the CLI, the model tool, or the dashboard.
+ */
+export function projectGoalSelectionError(
+	selector: string,
+	resolution: UnresolvedGoalSelector,
+): WorklistApplicationError {
+	if (resolution.kind === "not-found") return notFoundError("project-goal", selector);
+	const reported = resolution.candidates.slice(0, MAX_REPORTED_GOAL_CANDIDATES);
+	const listed = reported.map((goal) => goal.id).join(", ");
+	const remainder = resolution.candidates.length - reported.length;
+	return validationError(
+		`Goal ID ${selector} matches ${resolution.candidates.length} goals: ${listed}${remainder > 0 ? `, and ${remainder} more` : ""}. Use a longer prefix or the full ID.`,
+		{
+			fields: ["id"],
+			resolution: "provide-unambiguous-goal-id",
+			candidateCount: resolution.candidates.length,
+			candidates: reported.map((goal) => ({ id: goal.id, title: goal.title })),
+		},
+	);
+}
+
+/** The explicit-intent gate every irreversible or bulk Project Goal action passes through. */
+function requireConfirmation(operation: WorklistOperation): void {
+	if (operation.confirm === true) return;
+	throw createApplicationError(
+		WORKLIST_ERROR_CODES.APPROVAL_REQUIRED,
+		`Project ${operation.action} requires explicit confirmation.`,
+		{
+			confirmation: "confirm=true",
+			resolution: "request-explicit-user-confirmation",
+		},
+	);
+}
+
 function readPlacement(operation: WorklistOperation): SessionTaskPlacement | undefined {
 	if (operation.beforeId !== undefined) return { beforeId: operation.beforeId.trim() };
 	if (operation.afterId !== undefined) return { afterId: operation.afterId.trim() };
@@ -267,6 +313,9 @@ const EXPECTED_UPDATED_AT_ACTIONS = new Set([
 	"archive",
 	"delete",
 ]);
+
+/** Project actions whose `id` is a caller-supplied selector rather than a stored ID. */
+const GOAL_SELECTOR_ACTIONS = new Set([...EXPECTED_UPDATED_AT_ACTIONS, "set_status"]);
 
 /**
  * Refuses Project Goal options an action would otherwise accept and ignore.
@@ -734,9 +783,10 @@ export class WorklistApplicationService {
 		}
 	}
 
-	private async executeProject(operation: WorklistOperation): Promise<ProjectExecutionResult> {
+	private async executeProject(rawOperation: WorklistOperation): Promise<ProjectExecutionResult> {
 		const projectPath = this.requireProjectPath();
-		rejectUnsupportedProjectOptions(operation);
+		rejectUnsupportedProjectOptions(rawOperation);
+		const operation = await this.withResolvedGoalId(projectPath, rawOperation);
 		const options: ProjectMutationOptions = {
 			expectedRevision: operation.expectedRevision,
 			expectedGoal: normalizeExpectedGoal(operation),
@@ -804,6 +854,8 @@ export class WorklistApplicationService {
 			case "archive":
 			case "delete":
 				return this.transitionProjectGoal(projectPath, operation, options);
+			case "migrate_ids":
+				return this.runGoalIdMigration(projectPath, operation, options);
 			default:
 				throw createApplicationError(
 					WORKLIST_ERROR_CODES.INVALID_REQUEST,
@@ -815,6 +867,7 @@ export class WorklistApplicationService {
 							"complete",
 							"delete",
 							"list",
+							"migrate_ids",
 							"reopen",
 							"set_active",
 							"set_status",
@@ -823,6 +876,43 @@ export class WorklistApplicationService {
 					},
 				);
 		}
+	}
+
+	/**
+	 * The operation with its goal selector replaced by the stored ID it names.
+	 *
+	 * Resolution reads the worklist before the mutation takes the lock, so a goal
+	 * created in between could in principle have made the prefix ambiguous. That
+	 * is benign: IDs are frozen at creation, the resolved ID is exact, and it
+	 * either still exists, producing the ordinary not-found, or it does not.
+	 * A selector that matches nothing is passed through untouched so the mutation
+	 * itself reports the miss, which keeps one not-found path instead of two.
+	 */
+	private async withResolvedGoalId(
+		projectPath: string,
+		operation: WorklistOperation,
+	): Promise<WorklistOperation> {
+		if (!operation.id || !GOAL_SELECTOR_ACTIONS.has(operation.action)) return operation;
+		const { goals } = await readProjectGoals(projectPath);
+		const resolution = resolveGoalSelector(goals, operation.id);
+		if (resolution.kind === "ambiguous") throw projectGoalSelectionError(operation.id, resolution);
+		if (resolution.kind === "not-found") return operation;
+		return { ...operation, id: resolution.goal.id };
+	}
+
+	private async runGoalIdMigration(
+		projectPath: string,
+		operation: WorklistOperation,
+		options: ProjectMutationOptions,
+	): Promise<ProjectExecutionResult> {
+		requireConfirmation(operation);
+		const { goals, migrations, revision, changed } = await migrateProjectGoalIds(projectPath, options);
+		return {
+			result: { scope: "project", action: "migrate_ids", goals, migrations },
+			revision,
+			changed,
+			changedGoalIds: migrations.map((migration) => migration.to),
+		};
 	}
 
 	private async activateProjectGoal(
@@ -860,16 +950,7 @@ export class WorklistApplicationService {
 				resolution: "provide-project-goal-id",
 			});
 		}
-		if (operation.confirm !== true) {
-			throw createApplicationError(
-				WORKLIST_ERROR_CODES.APPROVAL_REQUIRED,
-				`Project ${operation.action} requires explicit confirmation.`,
-				{
-					confirmation: "confirm=true",
-					resolution: "request-explicit-user-confirmation",
-				},
-			);
-		}
+		requireConfirmation(operation);
 		if (operation.action === "delete") {
 			const { goals, revision, changed } = await deleteProjectGoal(projectPath, operation.id, options);
 			return {

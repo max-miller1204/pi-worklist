@@ -1,4 +1,5 @@
 import type { WorklistOperation } from "../application-service.ts";
+import { matchesGoalQuery } from "../goal-selection.ts";
 import type { ProjectGoal, ProjectGoalStatus } from "../types.ts";
 import type { KeyEvent } from "./keys.ts";
 import { isInterrupt } from "./keys.ts";
@@ -136,13 +137,6 @@ function matchesFilter(goal: ProjectGoal, filter: GoalFilter): boolean {
 	return goal.status === "archived";
 }
 
-function matchesQuery(goal: ProjectGoal, query: string): boolean {
-	if (query === "") return true;
-	const needle = query.toLowerCase();
-	if (goal.title.toLowerCase().includes(needle)) return true;
-	return (goal.description ?? "").toLowerCase().includes(needle);
-}
-
 function compareGoals(left: ProjectGoal, right: ProjectGoal): number {
 	const rank = STATUS_RANK[left.status] - STATUS_RANK[right.status];
 	if (rank !== 0) return rank;
@@ -214,7 +208,7 @@ export class GoalBoard {
 
 	private visibleGoals(): ProjectGoal[] {
 		return this.goals
-			.filter((goal) => matchesFilter(goal, this.filter) && matchesQuery(goal, this.query))
+			.filter((goal) => matchesFilter(goal, this.filter) && matchesGoalQuery(goal, this.query))
 			.sort(compareGoals);
 	}
 

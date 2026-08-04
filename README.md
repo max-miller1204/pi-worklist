@@ -17,6 +17,7 @@ Project Goals track the larger outcomes shared by every Pi session in a Git repo
 - Session Task array order is a canonical queue that supports stable-ID insertion and movement.
 - A new Pi session starts with an empty Session Task list.
 - Project Goals persist at `<git-root>/.pi/worklist.json` and can be committed with the repository.
+- Goal IDs are readable slugs derived from the title and frozen afterwards, and every command accepts a unique ID prefix or a former ID.
 - `/tasks` opens an interactive two-section dashboard.
 - A compact widget shows the active Project Goal and up to three unfinished Session Tasks.
 - The `worklist` model tool manages both scopes through one consistent API.
@@ -130,6 +131,7 @@ The published package ships a compiled `pi-worklist` bin, so no development chec
 
 ```sh
 npx -y pi-worklist@latest project list
+npx -y pi-worklist@latest project find templates
 npx -y pi-worklist@latest project show <id>
 npx -y pi-worklist@latest project add Support goal templates -- Let teams share reusable goal outlines
 npx -y pi-worklist@latest project update <id> Replace the title -- Replace the description
@@ -141,6 +143,7 @@ npx -y pi-worklist@latest project complete <id> --confirm
 
 The CLI routes every mutation through the same service, cross-process lock, and atomic replacement as a live Pi session, so physical writes are serialized and atomic.
 `list` output is deliberately compact without descriptions; `show <id>` prints one goal in full detail.
+`find <text>` lists the goals whose title or description contains the text, so locating one never needs `list --json` plus a client-side filter.
 Lifecycle actions (`complete`, `reopen`, `archive`, `delete`) require `--confirm`, mirroring the model tool's explicit-intent rule; an omitted flag exits with code 3 and changes nothing.
 `--append` adds the text after `--` as a new paragraph instead of replacing the description, so recording a note never re-sends, and never risks losing, prose the caller did not write.
 `--expect-updated-at <timestamp>` carries the goal's `updatedAt` from the caller's own read, and applies to `update`, `set_active`, and the lifecycle actions.
@@ -152,6 +155,24 @@ The complete command reference in [docs/cli.md](docs/cli.md) is generated from `
 In a development checkout, `node src/cli.ts project <action>` runs the same CLI; running the TypeScript entry point directly requires Node 22.18 or newer (for example Node 24), which strips types natively.
 On older Node versions, including the Node 20 floor of the package's `engines` range, the TypeScript entry point fails with an `Unknown file extension ".ts"` error, while the compiled bin has no such requirement.
 Session Tasks are intentionally unavailable here because they live inside a Pi session tree.
+
+## Goal identifiers
+
+A Project Goal's ID is derived from its title when the goal is created: lowercase, hyphenated, capped near 40 characters at a word boundary, with `-2` and `-3` suffixes when a slug is already taken.
+`Support goal templates` becomes `support-goal-templates`, so an ID reads as words in a shell, a commit message, or a PR description instead of as `goal-ms6gwxrg-56c1bde6`.
+
+The slug is frozen once minted.
+Renaming a goal never renames its ID, so a reference recorded anywhere else stays valid, and the ID keeps naming the goal it was written for even after the title has moved on.
+
+Every `<id>` argument, in the CLI and in the model tool, accepts a full ID, a unique prefix of one, or an ID the goal answered to before a migration renamed it.
+An exact match always beats a prefix, so `support-goal-templates` still names its own goal once `support-goal-templates-2` exists.
+An ambiguous prefix is refused with the goals it matched rather than resolved by guesswork, because a guess a caller cannot see is a change applied to a goal they did not mean.
+
+`npx -y pi-worklist@latest project migrate_ids --confirm` rewrites the randomly generated IDs in an existing worklist.
+Only generated IDs are rewritten: a slug is frozen at creation, so re-deriving every ID from its current title would rename exactly the goals that freezing protects.
+Each rewritten goal records its old ID in `previousIds`, which keeps that ID both resolvable and reserved.
+That is what makes migrating a done or archived goal safe rather than a judgment call: a Session Task's `goalId`, an evidence file, and an old PR description all keep resolving to the same goal, and no later goal can claim a name still in use.
+`--dry-run` reports the rewrites without writing them and without `--confirm`.
 
 ## Terminal goal board
 

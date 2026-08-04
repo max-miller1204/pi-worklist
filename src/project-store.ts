@@ -88,6 +88,10 @@ function assertGoalPrecondition(
 	throw new ProjectGoalConflictError(precondition.id, precondition.updatedAt, target.updatedAt);
 }
 
+function isStringArray(value: unknown): value is string[] {
+	return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+}
+
 export function isProjectWorklist(value: unknown): value is ProjectWorklist {
 	if (typeof value !== "object" || value === null) return false;
 	const obj = value as Record<string, unknown>;
@@ -105,6 +109,7 @@ export function isProjectWorklist(value: unknown): value is ProjectWorklist {
 		if (!["open", "active", "done", "archived"].includes(goal.status as string)) return false;
 		if (typeof goal.createdAt !== "string") return false;
 		if (typeof goal.updatedAt !== "string") return false;
+		if (goal.previousIds !== undefined && !isStringArray(goal.previousIds)) return false;
 	}
 	return true;
 }
@@ -214,8 +219,4 @@ export async function mutateProjectWorklist<T>(
 
 export function sortGoals(goals: ProjectGoal[]): ProjectGoal[] {
 	return [...goals].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-}
-
-export function generateId(prefix?: string): string {
-	return `${prefix ? `${prefix}-` : ""}${Date.now().toString(36)}-${randomBytes(4).toString("hex")}`;
 }

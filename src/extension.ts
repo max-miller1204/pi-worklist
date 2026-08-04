@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Text } from "@earendil-works/pi-tui";
 import { WorklistApplicationService, type WorklistOperationSource } from "./application-service.ts";
 import { formatProjectGoals, formatSessionTasks } from "./format.ts";
+import { findGoalByStoredId } from "./goal-selection.ts";
 import { WorklistParamsSchema } from "./schema.ts";
 import { SessionStore } from "./session-store.ts";
 import { executeWorklist, getProjectPath, WORKLIST_EXECUTION_MODE } from "./tool.ts";
@@ -187,7 +188,9 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 		}
 		const task = applicationService.getSessionTasks().find((candidate) => candidate.id === action.id);
 		if (!task) return undefined;
-		const goal = task.goalId ? projectGoals.find((candidate) => candidate.id === task.goalId) : undefined;
+		// A stored association resolves through former IDs too, so an ID migration
+		// never orphans a Session Task the migration itself could not reach.
+		const goal = task.goalId ? findGoalByStoredId(projectGoals, task.goalId) : undefined;
 		return { scope: "session", task, ...(goal ? { goal } : {}) };
 	}
 

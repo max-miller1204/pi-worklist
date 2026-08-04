@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -299,6 +299,156 @@ describe("project goal CLI", () => {
 		expect(unchanged).toHaveLength(1);
 		expect(unchanged[0]).toMatchObject({ title: "Guarded", status: "active" });
 		expect(unchanged[0].description).toBeUndefined();
+	});
+
+	it("names goals after their titles and accepts any unambiguous reference to one", async () => {
+		const root = await tempGitRepo();
+		await runCli(root, ["project", "add", "Support goal templates"]);
+		await runCli(root, ["project", "add", "Support goal templates", "--", "The colliding one"]);
+		await runCli(root, ["project", "add", "Ship the CLI"]);
+		expect((await readGoals(root)).map((goal) => goal.id)).toEqual([
+			"support-goal-templates",
+			"support-goal-templates-2",
+			"ship-the-cli",
+		]);
+
+		const byPrefix = await runCli(root, ["project", "show", "ship"]);
+		expect(byPrefix.code).toBe(0);
+		expect(byPrefix.stdout).toContain("ship-the-cli: Ship the CLI");
+
+		// An exact ID wins over the longer ID it is a prefix of, so no goal is
+		// made unreachable by another goal's collision suffix.
+		const exact = await runCli(root, ["project", "show", "support-goal-templates"]);
+		expect(exact.stdout).toContain("support-goal-templates: Support goal templates");
+		expect(exact.stdout).not.toContain("The colliding one");
+
+		const ambiguous = await runCli(root, ["project", "show", "support", "--json"]);
+		expect(ambiguous.code).toBe(1);
+		expect(ambiguous.stdout).toBe("");
+		expect(JSON.parse(ambiguous.stderr)).toMatchObject({
+			ok: false,
+			scope: "project",
+			action: "show",
+			error: {
+				code: "VALIDATION_FAILED",
+				details: {
+					resolution: "provide-unambiguous-goal-id",
+					candidateCount: 2,
+					candidates: [{ id: "support-goal-templates" }, { id: "support-goal-templates-2" }],
+				},
+			},
+		});
+
+		// A mutation refuses the same ambiguity rather than picking a goal.
+		const ambiguousUpdate = await runCli(root, ["project", "update", "support", "Renamed"]);
+		expect(ambiguousUpdate.code).toBe(1);
+		expect(ambiguousUpdate.stderr).toContain("Use a longer prefix or the full ID.");
+		expect((await readGoals(root)).map((goal) => goal.title)).toEqual([
+			"Support goal templates",
+			"Support goal templates",
+			"Ship the CLI",
+		]);
+
+		// Renaming a goal leaves its ID alone, so references stay valid.
+		const renamed = await runCli(root, ["project", "update", "ship", "Ship the compiled bin"]);
+		expect(renamed.code).toBe(0);
+		expect((await readGoals(root))[2]).toMatchObject({
+			id: "ship-the-cli",
+			title: "Ship the compiled bin",
+		});
+	});
+
+	it("finds goals by wording without a client-side filter over list", async () => {
+		const root = await tempGitRepo();
+		await runCli(root, ["project", "add", "Support goal templates", "--", "Reusable outlines"]);
+		await runCli(root, ["project", "add", "Ship the CLI", "--", "External agent access"]);
+
+		const byTitle = await runCli(root, ["project", "find", "TEMPLATES"]);
+		expect(byTitle.code).toBe(0);
+		expect(byTitle.stdout.trim()).toBe("[open] support-goal-templates: Support goal templates");
+
+		const byDescription = await runCli(root, ["project", "find", "external", "agent", "--json"]);
+		expect(byDescription.code).toBe(0);
+		expect(JSON.parse(byDescription.stdout)).toMatchObject({
+			ok: true,
+			scope: "project",
+			action: "find",
+			result: { goals: [{ id: "ship-the-cli" }] },
+			meta: { changed: false },
+		});
+
+		const empty = await runCli(root, ["project", "find", "dependency graph"]);
+		expect(empty.code).toBe(0);
+		expect(empty.stdout.trim()).toBe("No project goals match dependency graph.");
+
+		const missingText = await runCli(root, ["project", "find"]);
+		expect(missingText.code).toBe(2);
+	});
+
+	it("migrates generated goal IDs on request and keeps the old ones resolvable", async () => {
+		const root = await tempGitRepo();
+		await mkdir(join(root, ".pi"), { recursive: true });
+		await writeFile(
+			join(root, ".pi", "worklist.json"),
+			`${JSON.stringify({
+				version: 1,
+				revision: 2,
+				goals: [
+					{
+						id: "goal-ms6gwxrg-56c1bde6",
+						title: "Support goal templates",
+						status: "open",
+						createdAt: "2026-05-04T09:12:31.004Z",
+						updatedAt: "2026-05-04T09:12:31.004Z",
+					},
+					{
+						id: "future-start-goal",
+						title: "Already readable",
+						status: "archived",
+						createdAt: "2026-05-04T09:12:31.004Z",
+						updatedAt: "2026-05-04T09:12:31.004Z",
+					},
+				],
+			})}\n`,
+			"utf8",
+		);
+
+		const planned = await runCli(root, ["project", "migrate_ids", "--dry-run"]);
+		expect(planned.code).toBe(0);
+		expect(planned.stdout).toContain("1 goal ID(s) would change:");
+		expect(planned.stdout).toContain("goal-ms6gwxrg-56c1bde6 -> support-goal-templates");
+		expect((await readGoals(root)).map((goal) => goal.id)).toEqual([
+			"goal-ms6gwxrg-56c1bde6",
+			"future-start-goal",
+		]);
+
+		const refused = await runCli(root, ["project", "migrate_ids"]);
+		expect(refused.code).toBe(3);
+		expect((await readGoals(root))[0].id).toBe("goal-ms6gwxrg-56c1bde6");
+
+		const migrated = await runCli(root, ["project", "migrate_ids", "--confirm"]);
+		expect(migrated.code).toBe(0);
+		expect(migrated.stdout).toContain("Migrated 1 goal ID(s):");
+		const goals = await readGoals(root);
+		expect(goals.map((goal) => goal.id)).toEqual(["support-goal-templates", "future-start-goal"]);
+		expect(goals[0].previousIds).toEqual(["goal-ms6gwxrg-56c1bde6"]);
+
+		// Anything still holding the old ID, an evidence file or a PR description,
+		// keeps resolving to the same goal.
+		const byFormerId = await runCli(root, ["project", "show", "goal-ms6gwxrg-56c1bde6"]);
+		expect(byFormerId.code).toBe(0);
+		expect(byFormerId.stdout).toContain("support-goal-templates: Support goal templates");
+		expect(byFormerId.stdout).toContain("former ids: goal-ms6gwxrg-56c1bde6");
+
+		const rerun = await runCli(root, ["project", "migrate_ids", "--confirm"]);
+		expect(rerun.code).toBe(0);
+		expect(rerun.stdout.trim()).toBe("No goal IDs need migration.");
+
+		const contradictory = await runCli(root, ["project", "migrate_ids", "--dry-run", "--confirm"]);
+		expect(contradictory.code).toBe(2);
+		const misplaced = await runCli(root, ["project", "list", "--dry-run"]);
+		expect(misplaced.code).toBe(2);
+		expect(misplaced.stderr).toContain("--dry-run is only supported by project migrate_ids");
 	});
 
 	it("rejects the session scope and unknown input with usage errors", async () => {

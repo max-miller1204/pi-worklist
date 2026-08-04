@@ -1,11 +1,11 @@
+import { generateGoalId, planGoalIdMigration, takenGoalIds } from "./goal-selection.ts";
 import {
-	generateId,
 	mutateProjectWorklist,
 	type ProjectMutationOptions,
 	readProjectWorklist,
 	sortGoals,
 } from "./project-store.ts";
-import type { ProjectGoal, ProjectGoalStatus } from "./types.ts";
+import type { GoalIdMigration, ProjectGoal, ProjectGoalStatus } from "./types.ts";
 
 /**
  * Pi-free Project Goal persistence primitives.
@@ -99,6 +99,14 @@ function mutationOutcome(result: {
 	return { ...result.data, revision: String(result.revision), changed: result.changed !== false };
 }
 
+/**
+ * Adds an open goal whose ID is derived from its title.
+ *
+ * The ID is minted inside the mutation, against the goals the lock guarantees
+ * are current, because a slug is only unique relative to what already exists:
+ * choosing it beforehand would let two concurrent adds of the same title agree
+ * on the same ID and leave the second one unreachable.
+ */
 export async function addProjectGoal(
 	path: string,
 	title: string,
@@ -106,17 +114,17 @@ export async function addProjectGoal(
 	options?: ProjectMutationOptions,
 ): Promise<ProjectMutationOutcome> {
 	const now = new Date().toISOString();
-	const goal: ProjectGoal = {
-		id: generateId("goal"),
-		title,
-		description,
-		status: "open",
-		createdAt: now,
-		updatedAt: now,
-	};
 	const result = await mutateProjectWorklist(
 		path,
 		(worklist) => {
+			const goal: ProjectGoal = {
+				id: generateGoalId(title, takenGoalIds(worklist.goals)),
+				title,
+				description,
+				status: "open",
+				createdAt: now,
+				updatedAt: now,
+			};
 			const goals = sortGoals([...worklist.goals, goal]);
 			return { worklist: { ...worklist, goals }, result: { goal, goals } };
 		},
@@ -301,4 +309,56 @@ export async function deleteProjectGoal(
 	if (!result.data) throw new ProjectGoalNotFoundError(id);
 	if (result.revision === undefined) throw new Error("Project mutation did not return a revision");
 	return { ...result.data, revision: String(result.revision), changed: true };
+}
+
+export interface GoalIdMigrationOutcome {
+	goals: ProjectGoal[];
+	migrations: GoalIdMigration[];
+	revision: string;
+	changed: boolean;
+}
+
+/**
+ * Rewrites randomly generated goal IDs into title-derived ones.
+ *
+ * Each rewritten goal keeps its old ID as a former ID, so the references a
+ * migration cannot reach, a Session Task's `goalId`, a PR description, an
+ * evidence file, all keep resolving to the same goal afterwards. That is what
+ * makes migrating a done or archived goal safe rather than a decision to weigh:
+ * no historical reference is invalidated by giving a goal a readable name.
+ *
+ * A future field that stores a goal ID inside the worklist itself, such as
+ * dependency edges, must be rewritten here as well: former IDs keep an outside
+ * reference working, but leaving a stored edge on an old name would let the
+ * file disagree with itself.
+ */
+export async function migrateProjectGoalIds(
+	path: string,
+	options?: ProjectMutationOptions,
+): Promise<GoalIdMigrationOutcome> {
+	const result = await mutateProjectWorklist(
+		path,
+		(worklist) => {
+			const migrations = planGoalIdMigration(worklist.goals);
+			if (migrations.length === 0) {
+				return { worklist, result: { goals: worklist.goals, migrations }, changed: false };
+			}
+			const byPreviousId = new Map(migrations.map((migration) => [migration.from, migration]));
+			const goals = worklist.goals.map((goal) => {
+				const migration = byPreviousId.get(goal.id);
+				if (!migration) return goal;
+				return {
+					...goal,
+					id: migration.to,
+					previousIds: [...new Set([...(goal.previousIds ?? []), migration.from])],
+					updatedAt: nextGoalUpdatedAt(goal.updatedAt),
+				};
+			});
+			return { worklist: { ...worklist, goals }, result: { goals, migrations } };
+		},
+		options,
+	);
+	if (result.error) throw new Error(result.error);
+	if (result.revision === undefined) throw new Error("Project mutation did not return a revision");
+	return { ...result.data, revision: String(result.revision), changed: result.changed !== false };
 }
