@@ -40,6 +40,8 @@ export const MAX_REPORTED_GOAL_CANDIDATES = 10;
  * own words, while `...batch import of a JSON plan document` should not leave
  * `of-a` hanging off the end.
  * Negations are excluded because dropping them could invert the ID's meaning.
+ * More generally, a function word stays out when removing it flips or narrows
+ * the meaning of the remaining text.
  */
 const TRAILING_SLUG_STOPWORDS = new Set([
 	"a",
@@ -86,7 +88,6 @@ const TRAILING_SLUG_STOPWORDS = new Set([
 	"each",
 	"either",
 	"every",
-	"except",
 	"for",
 	"from",
 	"had",
@@ -104,8 +105,6 @@ const TRAILING_SLUG_STOPWORDS = new Set([
 	"might",
 	"must",
 	"near",
-	"neither",
-	"nor",
 	"of",
 	"off",
 	"on",
@@ -140,7 +139,6 @@ const TRAILING_SLUG_STOPWORDS = new Set([
 	"towards",
 	"under",
 	"underneath",
-	"unless",
 	"until",
 	"up",
 	"upon",
@@ -158,7 +156,6 @@ const TRAILING_SLUG_STOPWORDS = new Set([
 	"will",
 	"with",
 	"within",
-	"without",
 	"would",
 	"yet",
 	"your",

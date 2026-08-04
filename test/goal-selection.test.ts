@@ -81,9 +81,21 @@ describe("goal ID derivation", () => {
 		expect(slugifyGoalTitle("Decide what to ship and")).toBe("decide-what-to-ship-and");
 	});
 
-	it("keeps a negation left at the truncation boundary", () => {
+	it("keeps negations and exclusions left at the truncation boundary", () => {
 		expect(slugifyGoalTitle("Ensure project mutation locks are not circumvented")).toBe(
 			"ensure-project-mutation-locks-are-not",
+		);
+		expect(slugifyGoalTitle("Ensure mutation locks permit neither invalid state")).toBe(
+			"ensure-mutation-locks-permit-neither",
+		);
+		expect(slugifyGoalTitle("Run atomic project migrations without downtime")).toBe(
+			"run-atomic-project-migrations-without",
+		);
+		expect(slugifyGoalTitle("Process all worklist goals except archived entries")).toBe(
+			"process-all-worklist-goals-except",
+		);
+		expect(slugifyGoalTitle("Block project activation unless reopened manually")).toBe(
+			"block-project-activation-unless",
 		);
 	});
 
