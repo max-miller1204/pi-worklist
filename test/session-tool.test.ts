@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +9,7 @@ import { formatSessionTasks } from "../src/format.ts";
 import { WORKLIST_ERROR_CODES } from "../src/result-envelope.ts";
 import { SESSION_SNAPSHOT_TYPE, SessionStore } from "../src/session-store.ts";
 import { executeWorklist } from "../src/tool.ts";
+import type { DashboardResult } from "../src/ui.ts";
 
 function fakePi(entries: unknown[] = []) {
 	return {
@@ -537,6 +539,109 @@ describe("session state and tool", () => {
 		await expect(deleteSource).resolves.toMatchObject({ result: true, changed: true });
 		await expect(missingSourceMove).resolves.toMatchObject({ result: null, changed: false });
 		expect(entries).toHaveLength(3);
+	});
+
+	it("warns in project activation text while keeping blocked activation successful", async () => {
+		const path = join(await mkdtemp(join(tmpdir(), "pi-worklist-tool-blocked-")), ".pi", "worklist.json");
+		const blocker = await executeWorklist({ scope: "project", action: "add", title: "Slug ids" }, ctx, {
+			projectPath: path,
+		});
+		const blockerId = blocker.details.goal?.id;
+		if (!blockerId) throw new Error("Blocker goal was not created");
+		const dependent = await executeWorklist(
+			{ scope: "project", action: "add", title: "Dependency graph", dependsOn: [blockerId] },
+			ctx,
+			{ projectPath: path },
+		);
+		const dependentId = dependent.details.goal?.id;
+		if (!dependentId) throw new Error("Dependent goal was not created");
+
+		const activated = await executeWorklist(
+			{ scope: "project", action: "set_active", id: dependentId },
+			ctx,
+			{ projectPath: path },
+		);
+		expect(activated.content).toBe(
+			"Activated project goal dependency-graph\nWarning: dependency-graph is blocked; slug-ids has not landed yet.",
+		);
+		expect(activated.details).toMatchObject({
+			goal: { id: "dependency-graph", status: "active" },
+			blockedBy: ["slug-ids"],
+		});
+
+		const statusAlias = await executeWorklist(
+			{ scope: "project", action: "set_status", id: dependentId, status: "active" },
+			ctx,
+			{ projectPath: path },
+		);
+		expect(statusAlias.content).toContain(
+			"Warning: dependency-graph is blocked; slug-ids has not landed yet.",
+		);
+		expect(statusAlias.details.goal?.status).toBe("active");
+	});
+
+	it("surfaces blocked activation warnings from the Pi dashboard", async () => {
+		const root = await mkdtemp(join(tmpdir(), "pi-worklist-dashboard-blocked-"));
+		execFileSync("git", ["init", "-q"], { cwd: root });
+		const projectPath = join(root, ".pi", "worklist.json");
+		await executeWorklist({ scope: "project", action: "add", title: "Slug ids" }, ctx, {
+			projectPath,
+		});
+		await executeWorklist(
+			{ scope: "project", action: "add", title: "Dependency graph", dependsOn: ["slug-ids"] },
+			ctx,
+			{ projectPath },
+		);
+
+		let tasksHandler: ((args: string, ctx: ExtensionContext) => Promise<void>) | undefined;
+		let sessionStart: ((event: unknown, ctx: ExtensionContext) => Promise<void>) | undefined;
+		const api = {
+			appendEntry: () => {},
+			registerTool: () => {},
+			registerCommand: (
+				name: string,
+				config: { handler: (args: string, ctx: ExtensionContext) => Promise<void> },
+			) => {
+				if (name === "tasks") tasksHandler = config.handler;
+			},
+			on: (event: string, handler: (event: unknown, ctx: ExtensionContext) => Promise<void>) => {
+				if (event === "session_start") sessionStart = handler;
+			},
+			events: { emit: () => {}, on: () => () => {} },
+		} as unknown as ExtensionAPI;
+		worklistExtension(api);
+		if (!tasksHandler || !sessionStart) throw new Error("Dashboard handlers were not registered");
+
+		const dashboardResults: DashboardResult[] = [
+			{
+				action: { kind: "advance", scope: "project", id: "dependency-graph" },
+				state: { scope: "project", selectedId: "dependency-graph" },
+			},
+			{
+				action: { kind: "close" },
+				state: { scope: "project", selectedId: "dependency-graph" },
+			},
+		];
+		const notifications: Array<{ text: string; tone: string }> = [];
+		const dashboardContext = {
+			cwd: root,
+			mode: "tui",
+			sessionManager: { getBranch: () => [] },
+			ui: {
+				setWidget: () => {},
+				custom: async () => dashboardResults.shift(),
+				notify: (text: string, tone: string) => notifications.push({ text, tone }),
+			},
+		} as unknown as ExtensionContext;
+		await sessionStart({}, dashboardContext);
+		await tasksHandler("", dashboardContext);
+
+		expect(notifications).toContainEqual({
+			text: "Activated project goal dependency-graph\nWarning: dependency-graph is blocked; slug-ids has not landed yet.",
+			tone: "warning",
+		});
+		const listed = await executeWorklist({ scope: "project", action: "list" }, ctx, { projectPath });
+		expect(listed.details.goals?.find((goal) => goal.id === "dependency-graph")?.status).toBe("active");
 	});
 
 	it("guards every destructive project lifecycle path", async () => {

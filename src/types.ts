@@ -61,6 +61,15 @@ export interface ProjectGoal {
 	 */
 	branch?: string;
 	/**
+	 * Goals that must land before this one, stored as IDs in one direction only.
+	 *
+	 * The reverse direction, which goals this one blocks, is derived at read time
+	 * rather than stored, so the two halves of an edge cannot disagree. An edge
+	 * means must-land-before whatever its reason, logical or a file both goals
+	 * would touch, and it is satisfied once its target is done or archived.
+	 */
+	dependsOn?: string[];
+	/**
 	 * IDs this goal answered to before an ID migration renamed it, oldest first.
 	 * They stay resolvable and reserved, so references written down elsewhere
 	 * keep working and no later goal can claim a name still in use.
@@ -107,10 +116,22 @@ export interface WorklistOperationResult {
 	tasks?: SessionTask[];
 	goal?: ProjectGoal;
 	goals?: ProjectGoal[];
+	/** Whether the shown goal is blocked, derived from its current dependency edges. */
+	blocked?: boolean;
+	/** Goal IDs the shown goal blocks, derived from other goals' forward edges. */
+	blocks?: string[];
 	/** Goal IDs reserved by deletions and excluded from resolution. */
 	retiredIds?: string[];
 	/** Project Goal ID rewrites, applied or planned, from an ID migration. */
 	migrations?: GoalIdMigration[];
+	/**
+	 * Unsatisfied dependencies of the goal that was just activated.
+	 *
+	 * Advisory rather than a refusal: blocked is a derived reading of the graph,
+	 * and someone who says a goal is the one in flight knows something the edges
+	 * do not. Present only when the activation left a goal blocked.
+	 */
+	blockedBy?: string[];
 }
 
 export type WorklistToolDetails = WorklistOperationResult;

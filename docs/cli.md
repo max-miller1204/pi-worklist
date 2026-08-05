@@ -42,6 +42,7 @@ Every `--json` result envelope reports the running package version as `meta.cliV
 | `--cwd <dir>` | Resolve the git root from this directory instead of the working directory |
 | `--append` | Add the text after -- as a new paragraph instead of replacing the description; cannot be combined with a title change; only for project update |
 | `--group <name>` | Put the goal in a free-form section, such as Foundation; an empty name clears it; only for project add and update |
+| `--depends-on <id>` | Require that goal to land first; repeat it to name several, and pass an empty id alone to clear every edge; only for project add and update |
 | `--expect-updated-at <timestamp>` | Refuse the change as a conflict unless the goal's updatedAt still matches this value; only for project update, set_active, complete, reopen, archive, and delete |
 | `--dry-run` | Report the ID rewrites without writing them, and without needing --confirm; only for project migrate_ids |
 
@@ -64,6 +65,19 @@ Put every flag before `--`, because each token after it is description text. A k
 - A move changes the roadmap's order without touching the moved goal's `updatedAt`, so rearranging the list never reads as editing the goals on it.
 - Reordering needs no confirmation, because it names no new state for a goal, only a new position among the others.
 - `--group <name>` on `add` and `update` files a goal under a free-form section; a group exists exactly when some goal names it, and `--group ''` clears the field.
+
+## Dependencies
+
+- `--depends-on <id>` on `add` and `update` records that the named goal must land before this one; repeat the flag to name several, and `--depends-on ''` on its own clears every edge.
+- An `update` replaces the whole set rather than adding to it, so name every edge the goal should end up with, not just the new one.
+- An edge means must-land-before whatever its reason, so a logical prerequisite and two goals that would collide in the same files are recorded the same way.
+- A dependency is satisfied once its target is done or archived, and a goal with an unsatisfied dependency is blocked.
+- Blocked is derived from the edges on every read and never stored: there is no blocked status, and `set_active` warns about a blocked goal instead of refusing it.
+- Only the forward direction is stored, and `show <id>` derives what the goal blocks, so an edge is written once and the two directions cannot drift apart.
+- An update that would form a cycle, including an existing goal naming itself, is refused with `DEPENDENCY_CYCLE`.
+- Add resolves dependencies before minting the new goal's ID, so an edge naming a guessed future slug is refused with `NOT_FOUND`, like any ID that names no existing goal.
+- Deleting a goal drops the edges naming it in the same atomic change.
+- File order is presentation and a tiebreak while the dependency graph is the source of truth for what may start; the two are allowed to disagree, and neither should be edited to mirror the other.
 
 ## Exit codes
 
@@ -88,5 +102,7 @@ Put every flag before `--`, because each token after it is description text. A k
 - Run migrate_ids only when the user explicitly asks for it; it rewrites stored IDs, though every old ID keeps resolving afterwards.
 - Add a note with --append instead of resending a description you did not write, so nothing in the existing text can be lost in transcription.
 - Group related goals with --group <name> on add or update, and leave the file order alone unless the user asked for a different sequence.
+- Record a real must-land-before relationship with --depends-on <id>, including one that exists only because two goals would collide in the same files; do not add an edge merely to justify the order the file happens to be in.
+- Send the complete set of edges on every --depends-on update, because it replaces the stored set rather than adding to it.
 - Pass --expect-updated-at with the updatedAt from your own read whenever you change a goal, so your mutation conflicts if the goal changed in the meantime.
 - Broad outcomes belong in Project Goals; do not mirror your internal step-by-step plan into them.

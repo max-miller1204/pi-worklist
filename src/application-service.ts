@@ -1,3 +1,4 @@
+import { formatDependencyCycle, unsatisfiedDependencies } from "./dependencies.ts";
 import {
 	MAX_REPORTED_GOAL_CANDIDATES,
 	resolveGoalSelector,
@@ -13,6 +14,8 @@ import {
 	PROJECT_LIFECYCLE_TARGET_STATUS,
 	ProjectGoalActivationBlockedError,
 	ProjectGoalAnchorNotFoundError,
+	ProjectGoalDependencyCycleError,
+	ProjectGoalDependencyNotFoundError,
 	ProjectGoalNotFoundError,
 	type ProjectGoalUpdate,
 	readProjectGoals,
@@ -60,6 +63,15 @@ export interface WorklistOperation {
 	appendDescription?: string;
 	/** Project Goal only: the section it belongs to. The empty string clears it. */
 	group?: string;
+	/**
+	 * Project Goal only: the complete set of goals that must land first.
+	 *
+	 * The whole set rather than an addition, so what a caller sends is what the
+	 * goal ends up with; an empty array clears every edge. Add resolves only
+	 * existing goals before minting the new ID, while update treats the goal's
+	 * own existing ID as a dependency cycle.
+	 */
+	dependsOn?: string[];
 	status?: SessionTaskStatus | ProjectGoalStatus;
 	goalId?: string;
 	beforeId?: string;
@@ -141,13 +153,21 @@ function validationError(message: string, details?: Record<string, unknown>): Wo
 	return createApplicationError(WORKLIST_ERROR_CODES.VALIDATION_FAILED, message, details);
 }
 
-type MissingEntity = "session-task" | "session-task-anchor" | "project-goal" | "project-goal-anchor";
+type MissingEntity =
+	| "session-task"
+	| "session-task-anchor"
+	| "project-goal"
+	| "project-goal-anchor"
+	| "project-goal-dependency";
 
 function notFoundError(entity: MissingEntity, id: string) {
 	let message = `Session task anchor ${id} not found.`;
 	if (entity === "session-task") message = `Session task ${id} was not found.`;
 	else if (entity === "project-goal") message = `Project goal ${id} was not found.`;
 	else if (entity === "project-goal-anchor") message = `Project goal anchor ${id} was not found.`;
+	else if (entity === "project-goal-dependency") {
+		message = `Project goal dependency ${id} was not found.`;
+	}
 	return createApplicationError(WORKLIST_ERROR_CODES.NOT_FOUND, message, {
 		entity,
 		id,
@@ -166,7 +186,7 @@ function notFoundError(entity: MissingEntity, id: string) {
 export function projectGoalSelectionError(
 	selector: string,
 	resolution: UnresolvedGoalSelector,
-	field: "id" | "beforeId" | "afterId" = "id",
+	field: "id" | "beforeId" | "afterId" | "dependsOn" = "id",
 ): WorklistApplicationError {
 	if (resolution.kind === "not-found") return notFoundError("project-goal", selector);
 	const reported = resolution.candidates.slice(0, MAX_REPORTED_GOAL_CANDIDATES);
@@ -299,6 +319,7 @@ const PROJECT_ONLY_FIELDS = [
 	{ field: "description", resolution: "remove-description" },
 	{ field: "appendDescription", resolution: "remove-append-description" },
 	{ field: "group", resolution: "remove-group" },
+	{ field: "dependsOn", resolution: "remove-depends-on" },
 	{ field: "expectedUpdatedAt", resolution: "remove-expected-updated-at" },
 ] as const;
 
@@ -369,8 +390,9 @@ const EXPECTED_UPDATED_AT_ACTIONS = new Set([
 	"delete",
 ]);
 
-/** Project actions that accept a section name. */
+/** Project actions that accept a section name, or a set of dependency edges. */
 const GROUP_ACTIONS = new Set(["add", "update"]);
+const DEPENDS_ON_ACTIONS = GROUP_ACTIONS;
 
 /** Project actions whose `id` is a caller-supplied selector rather than a stored ID. */
 const GOAL_SELECTOR_ACTIONS = new Set([...EXPECTED_UPDATED_AT_ACTIONS, "move", "set_status"]);
@@ -401,6 +423,30 @@ function rejectUnsupportedProjectOptions(operation: WorklistOperation): void {
 			resolution: "use-project-add-or-update",
 		});
 	}
+	if (operation.dependsOn !== undefined && !DEPENDS_ON_ACTIONS.has(operation.action)) {
+		throw validationError("dependsOn is only supported for project add and update.", {
+			fields: ["dependsOn"],
+			resolution: "use-project-add-or-update",
+		});
+	}
+}
+
+/**
+ * The dependency selectors an operation carries, refused when one names nothing.
+ *
+ * A blank entry is rejected rather than skipped, because a caller who sent one
+ * meant to name a goal, and silently dropping it would store a set of edges
+ * they never asked for while reporting success.
+ */
+function normalizeDependsOn(operation: WorklistOperation): string[] | undefined {
+	if (operation.dependsOn === undefined) return undefined;
+	if (operation.dependsOn.some((entry) => !entry.trim())) {
+		throw validationError("dependsOn entries must not be blank.", {
+			fields: ["dependsOn"],
+			resolution: "provide-non-blank-goal-ids",
+		});
+	}
+	return operation.dependsOn.map((entry) => entry.trim());
 }
 
 interface SuccessMetadataInput {
@@ -778,6 +824,19 @@ export class WorklistApplicationService {
 				typedError = notFoundError("project-goal", error.goalId).toResultError();
 			} else if (error instanceof ProjectGoalAnchorNotFoundError) {
 				typedError = notFoundError("project-goal-anchor", error.anchorId).toResultError();
+			} else if (error instanceof ProjectGoalDependencyNotFoundError) {
+				typedError = notFoundError("project-goal-dependency", error.dependencyId).toResultError();
+			} else if (error instanceof ProjectGoalDependencyCycleError) {
+				typedError = createApplicationError(
+					WORKLIST_ERROR_CODES.DEPENDENCY_CYCLE,
+					`${error.message}. An edge means must-land-before, so a cycle names goals that each have to wait for the other.`,
+					{
+						fields: ["dependsOn"],
+						cycle: error.cycle,
+						cyclePath: formatDependencyCycle(error.cycle),
+						resolution: "remove-an-edge-from-the-cycle",
+					},
+				).toResultError();
 			} else if (error instanceof ProjectRevisionConflictError) {
 				typedError = {
 					code: WORKLIST_ERROR_CODES.CONFLICT,
@@ -902,7 +961,11 @@ export class WorklistApplicationService {
 				const { goal, goals, revision, changed } = await addProjectGoal(
 					projectPath,
 					operation.title,
-					{ description: operation.description, group: operation.group },
+					{
+						description: operation.description,
+						group: operation.group,
+						dependsOn: operation.dependsOn,
+					},
 					options,
 				);
 				return {
@@ -927,6 +990,7 @@ export class WorklistApplicationService {
 					{
 						title: operation.title,
 						group: operation.group,
+						dependsOn: operation.dependsOn,
 						...normalizeDescriptionUpdate(operation),
 					},
 					options,
@@ -995,14 +1059,15 @@ export class WorklistApplicationService {
 		projectPath: string,
 		operation: WorklistOperation,
 	): Promise<WorklistOperation> {
-		if (!GOAL_SELECTOR_ACTIONS.has(operation.action)) return operation;
-		if (!operation.id && operation.beforeId === undefined && operation.afterId === undefined) {
-			return operation;
-		}
+		const dependsOn = normalizeDependsOn(operation);
+		const namesGoal =
+			GOAL_SELECTOR_ACTIONS.has(operation.action) &&
+			(Boolean(operation.id) || operation.beforeId !== undefined || operation.afterId !== undefined);
+		if (!namesGoal && dependsOn === undefined) return operation;
 		const { goals, retiredIds } = await readProjectGoals(projectPath);
 		const resolve = (
 			selector: string | undefined,
-			field: "id" | "beforeId" | "afterId",
+			field: "id" | "beforeId" | "afterId" | "dependsOn",
 		): string | undefined => {
 			if (selector === undefined) return undefined;
 			const resolution = resolveGoalSelector(goals, selector, retiredIds);
@@ -1013,9 +1078,18 @@ export class WorklistApplicationService {
 		};
 		return {
 			...operation,
-			...(operation.id ? { id: resolve(operation.id, "id") } : {}),
-			...(operation.beforeId !== undefined ? { beforeId: resolve(operation.beforeId, "beforeId") } : {}),
-			...(operation.afterId !== undefined ? { afterId: resolve(operation.afterId, "afterId") } : {}),
+			...(namesGoal && operation.id ? { id: resolve(operation.id, "id") } : {}),
+			...(namesGoal && operation.beforeId !== undefined
+				? { beforeId: resolve(operation.beforeId, "beforeId") }
+				: {}),
+			...(namesGoal && operation.afterId !== undefined
+				? { afterId: resolve(operation.afterId, "afterId") }
+				: {}),
+			// An edge is as much a reference to a goal as an anchor is, so a prefix or
+			// a former ID names the same goal here as it does anywhere else.
+			...(dependsOn !== undefined
+				? { dependsOn: dependsOn.map((entry) => resolve(entry, "dependsOn") ?? entry) }
+				: {}),
 		};
 	}
 
@@ -1053,12 +1127,15 @@ export class WorklistApplicationService {
 		options: ProjectMutationOptions,
 	): Promise<ProjectExecutionResult> {
 		requireConfirmation(operation);
-		const { goals, migrations, revision, changed } = await migrateProjectGoalIds(projectPath, options);
+		const { goals, migrations, revision, changed, changedGoalIds } = await migrateProjectGoalIds(
+			projectPath,
+			options,
+		);
 		return {
 			result: { scope: "project", action: "migrate_ids", goals, migrations },
 			revision,
 			changed,
-			changedGoalIds: migrations.map((migration) => migration.to),
+			changedGoalIds,
 		};
 	}
 
@@ -1078,8 +1155,18 @@ export class WorklistApplicationService {
 			operation.id,
 			options,
 		);
+		// Blocked is a reading of the graph, not a veto: activating anyway is a
+		// legitimate call someone can make, so the edges are reported rather than
+		// enforced, and the activation still happened when this list is non-empty.
+		const blockedBy = unsatisfiedDependencies(goals, goal).map((entry) => entry.id);
 		return {
-			result: { scope: "project", action: "set_active", goal, goals },
+			result: {
+				scope: "project",
+				action: "set_active",
+				goal,
+				goals,
+				...(blockedBy.length > 0 ? { blockedBy } : {}),
+			},
 			revision,
 			changed,
 			changedGoalIds,
@@ -1099,7 +1186,7 @@ export class WorklistApplicationService {
 		}
 		requireConfirmation(operation);
 		if (operation.action === "delete") {
-			const { goalId, goals, revision, changed } = await deleteProjectGoal(
+			const { goalId, goals, strippedGoalIds, revision, changed } = await deleteProjectGoal(
 				projectPath,
 				operation.id,
 				options,
@@ -1108,7 +1195,10 @@ export class WorklistApplicationService {
 				result: { scope: "project", action: "delete", goals },
 				revision,
 				changed,
-				changedGoalIds: [goalId],
+				// The goals that lost an edge changed as surely as the one that went, so
+				// a reader watching for changes is told about them rather than left to
+				// notice that a dependency quietly vanished.
+				changedGoalIds: [goalId, ...strippedGoalIds],
 			};
 		}
 		if (!isProjectLifecycleAction(operation.action)) {

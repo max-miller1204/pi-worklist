@@ -9,6 +9,7 @@ import {
 	type WorklistOperation,
 } from "./application-service.ts";
 import { CLI_COMMAND_CONTRACT, type CliFlagContract, renderCliUsage } from "./cli-contract.ts";
+import { dependentGoals, type GoalDependency, isGoalBlocked, resolveDependencies } from "./dependencies.ts";
 import { getWorklistPath, resolveGitRoot } from "./git.ts";
 import { matchesGoalQuery, planGoalIdMigration, resolveGoalSelector } from "./goal-selection.ts";
 import { WORKLIST_ERROR_CODES, type WorklistErrorCode, type WorklistResultMeta } from "./result-envelope.ts";
@@ -41,6 +42,8 @@ interface CliInvocation {
 	append: boolean;
 	/** Free-form section name; the empty string clears the goal's group. */
 	group?: string;
+	/** Goals that must land first, as written; an empty entry clears every edge. */
+	dependsOn?: string[];
 	expectedUpdatedAt?: string;
 	/** Report what a mutation would do without writing it. */
 	dryRun: boolean;
@@ -160,6 +163,7 @@ function parseArgs(argv: string[]): CliInvocation {
 
 	const positionals: string[] = [];
 	const flagsUsed = new Set<string>();
+	const dependsOn: string[] = [];
 	let json = false;
 	let confirm = false;
 	let append = false;
@@ -184,12 +188,21 @@ function parseArgs(argv: string[]): CliInvocation {
 		} else if (part === "--group") {
 			group = readClearableFlagValue(head, index, part, "a section name, or '' to clear it");
 			index++;
+		} else if (part === "--depends-on") {
+			dependsOn.push(readClearableFlagValue(head, index, part, "a goal id, or '' to clear every edge"));
+			index++;
 		} else if (part === "--expect-updated-at") {
 			expectedUpdatedAt = readFlagValue(head, index, part, "a timestamp");
 			index++;
 		} else fail(`Unknown flag ${part}\n\n${USAGE}`, 2);
 	}
 
+	// An empty id means "no dependencies at all", which contradicts naming one, so
+	// the combination is refused rather than resolved into whichever the caller
+	// wrote last: both readings silently discard something they asked for.
+	if (dependsOn.some((entry) => entry.trim() === "") && dependsOn.length > 1) {
+		fail(`--depends-on '' clears every edge and cannot be combined with another --depends-on\n\n${USAGE}`, 2);
+	}
 	const [scope, action, ...rest] = positionals;
 	if (!scope || !action) fail(USAGE, 2);
 	return {
@@ -200,6 +213,7 @@ function parseArgs(argv: string[]): CliInvocation {
 		append,
 		dryRun,
 		group,
+		...(flagsUsed.has("--depends-on") ? { dependsOn: dependsOn.filter((entry) => entry.trim() !== "") } : {}),
 		expectedUpdatedAt,
 		json,
 		confirm,
@@ -257,19 +271,40 @@ function formatGoalList(goals: ProjectGoal[]): string {
 	return goals.map(formatGoalLine).join("\n");
 }
 
-/** Explicit full-detail read: every stored field, including the complete description. */
-function formatGoalDetail(goal: ProjectGoal): string {
+/**
+ * One dependency line: the goal it names, and whether it is still in the way.
+ *
+ * A dependency the file names but no goal answers to is called out rather than
+ * quietly listed, because it can never be satisfied and so blocks its dependent
+ * forever; that only happens when the file was edited by hand.
+ */
+function formatDependencyLine(entry: GoalDependency): string {
+	if (!entry.goal) return `  ${entry.id} (missing)`;
+	return `  ${entry.id} [${entry.goal.status}]${entry.satisfied ? "" : " - waiting"}`;
+}
+
+/**
+ * Explicit full-detail read: every stored field, plus what the graph derives.
+ *
+ * Only `dependsOn` is stored, so the goals this one blocks are computed from the
+ * other goals' edges here rather than read from a field that could disagree.
+ */
+function formatGoalDetail(goal: ProjectGoal, goals: readonly ProjectGoal[]): string {
 	const previousIds = goal.previousIds ?? [];
 	const links = goal.links ?? [];
+	const dependencies = resolveDependencies(goals, goal);
+	const blocks = dependentGoals(goals, goal);
 	return [
 		`${goal.id}: ${goal.title}`,
-		`status: ${goal.status}`,
+		`status: ${goal.status}${isGoalBlocked(goals, goal) ? " (blocked)" : ""}`,
 		...(goal.group !== undefined ? [`group: ${goal.group}`] : []),
 		...(goal.branch !== undefined ? [`branch: ${goal.branch}`] : []),
 		`created: ${goal.createdAt}`,
 		`updated: ${goal.updatedAt}`,
 		...(goal.completedAt !== undefined ? [`completed: ${goal.completedAt}`] : []),
 		...(previousIds.length > 0 ? [`former ids: ${previousIds.join(", ")}`] : []),
+		...(dependencies.length > 0 ? ["depends on:", ...dependencies.map(formatDependencyLine)] : []),
+		...(blocks.length > 0 ? ["blocks:", ...blocks.map((blocked) => `  ${blocked.id}`)] : []),
 		...(links.length > 0 ? ["links:", ...links.map((link) => `  ${link}`)] : []),
 		...(goal.description !== undefined ? ["description:", goal.description] : []),
 	].join("\n");
@@ -466,6 +501,15 @@ async function runSetActive(invocation: CliInvocation, service: WorklistApplicat
 		});
 		const goal = envelope.ok ? envelope.result.goal : undefined;
 		if (!goal) throw new Error(`Activated Project Goal ${id} was not returned`);
+		// A warning, not a refusal: the activation already happened, and someone who
+		// says a blocked goal is the one in flight may know something the edges do
+		// not. It goes to stderr so it cannot be mistaken for the command's output.
+		const blockedBy = (envelope.ok ? envelope.result.blockedBy : undefined) ?? [];
+		if (blockedBy.length > 0 && !invocation.json) {
+			process.stderr.write(
+				`Warning: ${goal.id} is blocked; ${blockedBy.join(", ")} ${blockedBy.length === 1 ? "has" : "have"} not landed yet.\n`,
+			);
+		}
 		report(invocation, envelope, `Activated project goal ${goal.id}`);
 	} catch (error) {
 		if (
@@ -546,8 +590,14 @@ async function run(invocation: CliInvocation): Promise<void> {
 			const selector = requireId(invocation);
 			const { goals, retiredIds, meta } = await readProjectSnapshot(service, "show");
 			const goal = selectGoal(goals, selector, "show", retiredIds);
-			const detail = { scope: "project", action: "show", goal } as const;
-			report(invocation, readEnvelope("show", detail, meta), formatGoalDetail(goal));
+			const detail = {
+				scope: "project",
+				action: "show",
+				goal,
+				blocked: isGoalBlocked(goals, goal, retiredIds),
+				blocks: dependentGoals(goals, goal, retiredIds).map((dependent) => dependent.id),
+			} as const;
+			report(invocation, readEnvelope("show", detail, meta), formatGoalDetail(goal, goals));
 			return;
 		}
 		case "find": {
@@ -574,6 +624,7 @@ async function run(invocation: CliInvocation): Promise<void> {
 				title,
 				description,
 				group: invocation.group,
+				dependsOn: invocation.dependsOn,
 			});
 			const goal = envelope.ok ? envelope.result.goal : undefined;
 			if (!goal) throw new Error("Added Project Goal was not returned");
@@ -611,8 +662,16 @@ async function run(invocation: CliInvocation): Promise<void> {
 					fail(`project update cannot change the title while appending to the description\n\n${USAGE}`, 2);
 				}
 			}
-			if (title === undefined && invocation.description === undefined && invocation.group === undefined) {
-				fail(`project update requires a new title, a -- description, or --group\n\n${USAGE}`, 2);
+			if (
+				title === undefined &&
+				invocation.description === undefined &&
+				invocation.group === undefined &&
+				invocation.dependsOn === undefined
+			) {
+				fail(
+					`project update requires a new title, a -- description, --group, or --depends-on\n\n${USAGE}`,
+					2,
+				);
 			}
 			const envelope = await executeCliOperation(service, {
 				scope: "project",
@@ -620,6 +679,7 @@ async function run(invocation: CliInvocation): Promise<void> {
 				id,
 				title,
 				group: invocation.group,
+				dependsOn: invocation.dependsOn,
 				...(invocation.append
 					? { appendDescription: invocation.description }
 					: { description: invocation.description }),

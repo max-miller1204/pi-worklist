@@ -30,6 +30,13 @@ function getApplicationService(deps: ToolDeps): WorklistApplicationService {
 	});
 }
 
+function formatProjectActivation(result: WorklistOperationResult): string {
+	const activated = `Activated project goal ${result.goal?.id}`;
+	const blockedBy = result.blockedBy ?? [];
+	if (blockedBy.length === 0) return activated;
+	return `${activated}\nWarning: ${result.goal?.id} is blocked; ${blockedBy.join(", ")} ${blockedBy.length === 1 ? "has" : "have"} not landed yet.`;
+}
+
 function formatResult(operation: WorklistOperation, result: WorklistOperationResult): string {
 	if (operation.scope === "session") {
 		switch (operation.action) {
@@ -61,7 +68,7 @@ function formatResult(operation: WorklistOperation, result: WorklistOperationRes
 				return `Updated project goal ${result.goal?.id}`;
 			case "set_status":
 			case "set_active":
-				return `Activated project goal ${result.goal?.id}`;
+				return formatProjectActivation(result);
 			case "complete":
 			case "reopen":
 			case "archive":

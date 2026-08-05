@@ -1,6 +1,18 @@
+import { findDependencyCycle, formatDependencyCycle } from "./dependencies.ts";
 import { findGoalByStoredId, generateGoalId, planGoalIdMigration, takenGoalIds } from "./goal-selection.ts";
-import { mutateProjectWorklist, type ProjectMutationOptions, readProjectWorklist } from "./project-store.ts";
-import type { GoalIdMigration, ProjectGoal, ProjectGoalPlacement, ProjectGoalStatus } from "./types.ts";
+import {
+	mutateProjectWorklist,
+	type ProjectMutationOptions,
+	ProjectMutationRefusedError,
+	readProjectWorklist,
+} from "./project-store.ts";
+import type {
+	GoalIdMigration,
+	ProjectGoal,
+	ProjectGoalPlacement,
+	ProjectGoalStatus,
+	ProjectWorklist,
+} from "./types.ts";
 
 /**
  * Pi-free Project Goal persistence primitives.
@@ -42,6 +54,27 @@ export class ProjectGoalAnchorNotFoundError extends Error {
 	}
 }
 
+export class ProjectGoalDependencyNotFoundError extends ProjectMutationRefusedError {
+	readonly dependencyId: string;
+
+	constructor(dependencyId: string) {
+		super(`Project goal ${dependencyId} not found`);
+		this.name = "ProjectGoalDependencyNotFoundError";
+		this.dependencyId = dependencyId;
+	}
+}
+
+export class ProjectGoalDependencyCycleError extends ProjectMutationRefusedError {
+	/** The goals on the cycle, each named once, starting where the walk closed it. */
+	readonly cycle: string[];
+
+	constructor(cycle: string[]) {
+		super(`Project goal dependencies would form a cycle: ${formatDependencyCycle(cycle)}`);
+		this.name = "ProjectGoalDependencyCycleError";
+		this.cycle = cycle;
+	}
+}
+
 export interface ProjectMutationOutcome {
 	goal: ProjectGoal;
 	goals: ProjectGoal[];
@@ -62,6 +95,8 @@ export interface ProjectGoalUpdate {
 	appendDescription?: string;
 	/** Free-form section name. The empty string clears the field. */
 	group?: string;
+	/** The complete set of existing goals that must land first. Naming this goal is a cycle. */
+	dependsOn?: string[];
 }
 
 export async function readProjectGoals(path: string): Promise<ProjectGoalsSnapshot> {
@@ -88,20 +123,66 @@ function nextGoalUpdatedAt(previous: string): string {
  * the file, so the JSON never accumulates properties that only say "nothing
  * here" and a reader cannot tell "cleared" apart from "never set".
  */
-function withOptionalField(
+function withOptionalField<Field extends "group" | "completedAt" | "dependsOn">(
 	goal: ProjectGoal,
-	field: "group" | "completedAt",
-	value: string | undefined,
+	field: Field,
+	value: ProjectGoal[Field],
 ): ProjectGoal {
 	if (value !== undefined) return { ...goal, [field]: value };
 	const { [field]: _cleared, ...rest } = goal;
-	return rest;
+	return rest as ProjectGoal;
 }
 
 /** A group name as stored: trimmed, or absent once the caller clears it. */
 function resolveGroup(current: string | undefined, next: string | undefined): string | undefined {
 	if (next === undefined) return current;
 	return next.trim() || undefined;
+}
+
+/**
+ * The dependency edges a goal ends up with, canonicalized under the lock.
+ *
+ * Every entry is resolved to the target's current ID, so the file never stores a
+ * name the goal it points at has already stopped using, and a blank or repeated
+ * entry is dropped rather than persisted as a second way to say the same edge.
+ * An empty result clears the field, which keeps "no dependencies" a single
+ * representation instead of an absent field and an empty array meaning the same.
+ */
+function resolveDependsOn(
+	worklist: ProjectWorklist,
+	current: string[] | undefined,
+	next: readonly string[] | undefined,
+): string[] | undefined {
+	if (next === undefined) return current;
+	const canonical: string[] = [];
+	for (const entry of next) {
+		const id = entry.trim();
+		if (id === "") continue;
+		const target = findGoalByStoredId(worklist.goals, id, worklist.retiredIds ?? []);
+		if (!target) throw new ProjectGoalDependencyNotFoundError(id);
+		if (!canonical.includes(target.id)) canonical.push(target.id);
+	}
+	return canonical.length > 0 ? canonical : undefined;
+}
+
+/** Two edge sets naming the same goals in the same order. */
+function sameDependsOn(left: string[] | undefined, right: string[] | undefined): boolean {
+	if (left === right) return true;
+	if (!left || !right) return false;
+	return left.length === right.length && left.every((id, index) => id === right[index]);
+}
+
+/**
+ * Refuses edges that would make the graph unable to answer what may start next.
+ *
+ * The check runs over the goals as the mutation would leave them, under the same
+ * lock that writes them, so a cycle cannot be closed by two writers who each saw
+ * only their own half of it. Walking from the changed goal is enough: every
+ * other goal's edges were already acyclic, so only the new ones can close a loop.
+ */
+function assertAcyclic(goals: readonly ProjectGoal[], goalId: string, retiredIds: readonly string[]): void {
+	const cycle = findDependencyCycle(goals, goalId, retiredIds);
+	if (cycle) throw new ProjectGoalDependencyCycleError(cycle);
 }
 
 /**
@@ -152,6 +233,8 @@ function mutationOutcome(result: {
 export interface ProjectGoalDraft {
 	description?: string;
 	group?: string;
+	/** Existing goal IDs only; the new goal's ID has not been minted when these resolve. */
+	dependsOn?: string[];
 }
 
 /**
@@ -177,16 +260,23 @@ export async function addProjectGoal(
 	const result = await mutateProjectWorklist(
 		path,
 		(worklist) => {
+			// The edges resolve against the goals under the lock, so an edge to a goal
+			// another writer deleted in the meantime is refused rather than stored.
+			const dependsOn = resolveDependsOn(worklist, undefined, draft.dependsOn);
 			const goal: ProjectGoal = {
 				id: generateGoalId(title, takenGoalIds(worklist)),
 				title,
 				description: draft.description,
 				...(group !== undefined ? { group } : {}),
+				...(dependsOn !== undefined ? { dependsOn } : {}),
 				status: "open",
 				createdAt: now,
 				updatedAt: now,
 			};
 			const goals = [...worklist.goals, goal];
+			// A freshly minted ID cannot be its own dependency, so the only cycle a new
+			// goal can reach is one a hand edit already left in the file.
+			assertAcyclic(goals, goal.id, worklist.retiredIds ?? []);
 			return { worklist: { ...worklist, goals }, result: { goal, goals } };
 		},
 		options,
@@ -210,7 +300,13 @@ export async function updateProjectGoal(
 			const title = updates.title ?? current.title;
 			const description = resolveDescription(current.description, updates);
 			const group = resolveGroup(current.group, updates.group);
-			if (title === current.title && description === current.description && group === current.group) {
+			const dependsOn = resolveDependsOn(worklist, current.dependsOn, updates.dependsOn);
+			if (
+				title === current.title &&
+				description === current.description &&
+				group === current.group &&
+				sameDependsOn(dependsOn, current.dependsOn)
+			) {
 				return {
 					worklist,
 					result: { goal: current, goals: worklist.goals },
@@ -218,17 +314,22 @@ export async function updateProjectGoal(
 				};
 			}
 			const updated = withOptionalField(
-				{
-					...current,
-					title,
-					...(description !== undefined ? { description } : {}),
-					updatedAt: nextGoalUpdatedAt(current.updatedAt),
-				},
-				"group",
-				group,
+				withOptionalField(
+					{
+						...current,
+						title,
+						...(description !== undefined ? { description } : {}),
+						updatedAt: nextGoalUpdatedAt(current.updatedAt),
+					},
+					"group",
+					group,
+				),
+				"dependsOn",
+				dependsOn,
 			);
 			const goals = [...worklist.goals];
 			goals[index] = updated;
+			assertAcyclic(goals, updated.id, worklist.retiredIds ?? []);
 			return { worklist: { ...worklist, goals }, result: { goal: updated, goals } };
 		},
 		options,
@@ -444,23 +545,61 @@ export async function moveProjectGoal(
 	return mutationOutcome({ ...result, data: result.data.outcome });
 }
 
+/**
+ * The goals with every edge naming `removed` dropped, and which ones changed.
+ *
+ * Stripping happens inside the same mutation as the deletion, so the file is
+ * never briefly readable with an edge pointing at nothing: a dangling edge is
+ * read as an unsatisfied dependency, which would block its dependents on work
+ * nobody can ever finish. The goals that lose an edge are stamped, because the
+ * edge is stored on them and losing it genuinely changes what they say.
+ */
+function stripDependenciesOn(
+	goals: readonly ProjectGoal[],
+	removed: ProjectGoal,
+): { goals: ProjectGoal[]; strippedGoalIds: string[] } {
+	const retired = new Set([removed.id, ...(removed.previousIds ?? [])]);
+	const strippedGoalIds: string[] = [];
+	const next = goals.map((goal) => {
+		if (!goal.dependsOn?.some((dependencyId) => retired.has(dependencyId))) return goal;
+		const dependsOn = goal.dependsOn.filter((dependencyId) => !retired.has(dependencyId));
+		strippedGoalIds.push(goal.id);
+		return withOptionalField(
+			{ ...goal, updatedAt: nextGoalUpdatedAt(goal.updatedAt) },
+			"dependsOn",
+			dependsOn.length > 0 ? dependsOn : undefined,
+		);
+	});
+	return { goals: next, strippedGoalIds };
+}
+
+export interface ProjectDeletionOutcome {
+	goalId: string;
+	goals: ProjectGoal[];
+	/** Goals that lost an edge to the deleted goal, so callers can report them too. */
+	strippedGoalIds: string[];
+	revision: string;
+	changed: boolean;
+}
+
 export async function deleteProjectGoal(
 	path: string,
 	id: string,
 	options?: ProjectMutationOptions,
-): Promise<{ goalId: string; goals: ProjectGoal[]; revision: string; changed: boolean }> {
+): Promise<ProjectDeletionOutcome> {
 	const result = await mutateProjectWorklist(
 		path,
 		(worklist) => {
 			const removed = findGoalByStoredId(worklist.goals, id, worklist.retiredIds ?? []);
-			const goals = removed ? worklist.goals.filter((goal) => goal.id !== removed.id) : worklist.goals;
-			const retiredIds = removed
-				? [...new Set([...(worklist.retiredIds ?? []), removed.id, ...(removed.previousIds ?? [])])]
-				: worklist.retiredIds;
+			if (!removed) return { worklist, result: null, changed: false };
+			const remaining = worklist.goals.filter((goal) => goal.id !== removed.id);
+			const { goals, strippedGoalIds } = stripDependenciesOn(remaining, removed);
+			const retiredIds = [
+				...new Set([...(worklist.retiredIds ?? []), removed.id, ...(removed.previousIds ?? [])]),
+			];
 			return {
-				worklist: removed ? { ...worklist, goals, retiredIds } : worklist,
-				result: removed ? { goalId: removed.id, goals } : null,
-				changed: removed !== undefined,
+				worklist: { ...worklist, goals, retiredIds },
+				result: { goalId: removed.id, goals, strippedGoalIds },
 			};
 		},
 		options,
@@ -474,6 +613,7 @@ export async function deleteProjectGoal(
 export interface GoalIdMigrationOutcome {
 	goals: ProjectGoal[];
 	migrations: GoalIdMigration[];
+	changedGoalIds: string[];
 	revision: string;
 	changed: boolean;
 }
@@ -487,10 +627,11 @@ export interface GoalIdMigrationOutcome {
  * makes migrating a done or archived goal safe rather than a decision to weigh:
  * no historical reference is invalidated by giving a goal a readable name.
  *
- * A future field that stores a goal ID inside the worklist itself, such as
- * dependency edges, must be rewritten here as well: former IDs keep an outside
- * reference working, but leaving a stored edge on an old name would let the
- * file disagree with itself.
+ * Any field that stores a goal ID inside the worklist itself, such as dependency
+ * edges, is rewritten here as well: former IDs keep an outside reference
+ * working, but leaving a stored edge on an old name would let the file disagree
+ * with itself. A goal whose only change is a rewritten edge is stamped too,
+ * because that edge is stored on it.
  */
 export async function migrateProjectGoalIds(
 	path: string,
@@ -501,20 +642,34 @@ export async function migrateProjectGoalIds(
 		(worklist) => {
 			const migrations = planGoalIdMigration(worklist);
 			if (migrations.length === 0) {
-				return { worklist, result: { goals: worklist.goals, migrations }, changed: false };
+				return {
+					worklist,
+					result: { goals: worklist.goals, migrations, changedGoalIds: [] },
+					changed: false,
+				};
 			}
 			const byPreviousId = new Map(migrations.map((migration) => [migration.from, migration]));
+			const changedGoalIds: string[] = [];
 			const goals = worklist.goals.map((goal) => {
 				const migration = byPreviousId.get(goal.id);
-				if (!migration) return goal;
-				return {
+				const dependsOn = goal.dependsOn?.map((id) => byPreviousId.get(id)?.to ?? id);
+				const edgesRewritten = !sameDependsOn(dependsOn, goal.dependsOn);
+				if (!migration && !edgesRewritten) return goal;
+				const migratedGoal: ProjectGoal = {
 					...goal,
-					id: migration.to,
-					previousIds: [...new Set([...(goal.previousIds ?? []), migration.from])],
+					...(migration
+						? {
+								id: migration.to,
+								previousIds: [...new Set([...(goal.previousIds ?? []), migration.from])],
+							}
+						: {}),
+					...(dependsOn !== undefined ? { dependsOn } : {}),
 					updatedAt: nextGoalUpdatedAt(goal.updatedAt),
 				};
+				changedGoalIds.push(migratedGoal.id);
+				return migratedGoal;
 			});
-			return { worklist: { ...worklist, goals }, result: { goals, migrations } };
+			return { worklist: { ...worklist, goals }, result: { goals, migrations, changedGoalIds } };
 		},
 		options,
 	);

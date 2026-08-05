@@ -10,6 +10,8 @@ import {
 	moveProjectGoal,
 	ProjectGoalActivationBlockedError,
 	ProjectGoalAnchorNotFoundError,
+	ProjectGoalDependencyCycleError,
+	ProjectGoalDependencyNotFoundError,
 	ProjectGoalNotFoundError,
 	readProjectGoals,
 	transitionProjectGoal,
@@ -341,6 +343,176 @@ describe("project mutation service", () => {
 		const cleared = await updateProjectGoal(path, goal.id, { group: "" });
 		expect(Object.hasOwn(cleared.goal, "group")).toBe(false);
 		expect((await updateProjectGoal(path, goal.id, { group: "" })).changed).toBe(false);
+	});
+
+	it("stores dependency edges canonically and replaces the whole set on update", async () => {
+		const path = await tempPath();
+		const first = await addProjectGoal(path, "Slug ids");
+		const second = await addProjectGoal(path, "Schema fields");
+		const third = await addProjectGoal(path, "Dependency graph", {
+			dependsOn: [first.goal.id, second.goal.id],
+		});
+		expect(third.goal.dependsOn).toEqual(["slug-ids", "schema-fields"]);
+
+		// The set is replaced, not extended, so what a caller sends is what is stored.
+		const narrowed = await updateProjectGoal(path, third.goal.id, { dependsOn: [second.goal.id] });
+		expect(narrowed.goal.dependsOn).toEqual(["schema-fields"]);
+		expect((await updateProjectGoal(path, third.goal.id, { dependsOn: ["schema-fields"] })).changed).toBe(
+			false,
+		);
+
+		// Repeats and blank entries say nothing a single edge does not.
+		const deduped = await updateProjectGoal(path, third.goal.id, {
+			dependsOn: ["slug-ids", " ", "slug-ids"],
+		});
+		expect(deduped.goal.dependsOn).toEqual(["slug-ids"]);
+
+		const cleared = await updateProjectGoal(path, third.goal.id, { dependsOn: [] });
+		expect(Object.hasOwn(cleared.goal, "dependsOn")).toBe(false);
+		expect((await updateProjectGoal(path, third.goal.id, { dependsOn: [] })).changed).toBe(false);
+	});
+
+	it("stores an edge under the target's current ID, whatever name the caller used", async () => {
+		const path = await tempPath();
+		await mkdir(dirname(path), { recursive: true });
+		await writeFile(
+			path,
+			`${JSON.stringify({
+				version: 1,
+				revision: 0,
+				goals: [
+					{
+						id: "slug-ids",
+						title: "Slug ids",
+						status: "open",
+						createdAt: "2026-08-03T00:00:00.000Z",
+						updatedAt: "2026-08-03T00:00:00.000Z",
+						previousIds: ["goal-mse1rzxb-8213cc2a"],
+					},
+				],
+			})}\n`,
+			"utf8",
+		);
+
+		const added = await addProjectGoal(path, "Dependency graph", {
+			dependsOn: ["goal-mse1rzxb-8213cc2a"],
+		});
+		expect(added.goal.dependsOn).toEqual(["slug-ids"]);
+	});
+
+	it("treats a guessed add-time self ID as an unknown dependency", async () => {
+		const path = await tempPath();
+
+		const refused = await addProjectGoal(path, "Solo", { dependsOn: ["solo"] }).catch(
+			(error: unknown) => error,
+		);
+		expect(refused).toBeInstanceOf(ProjectGoalDependencyNotFoundError);
+		expect((refused as ProjectGoalDependencyNotFoundError).dependencyId).toBe("solo");
+		expect((await readProjectGoals(path)).goals).toEqual([]);
+	});
+
+	it("refuses edges that name nothing, name the goal itself, or close a cycle", async () => {
+		const path = await tempPath();
+		const first = await addProjectGoal(path, "Slug ids");
+		const second = await addProjectGoal(path, "Dependency graph", { dependsOn: [first.goal.id] });
+		const before = await readProjectGoals(path);
+
+		await expect(addProjectGoal(path, "Broken", { dependsOn: ["nowhere"] })).rejects.toThrow(
+			ProjectGoalDependencyNotFoundError,
+		);
+		await expect(updateProjectGoal(path, second.goal.id, { dependsOn: ["nowhere"] })).rejects.toThrow(
+			ProjectGoalDependencyNotFoundError,
+		);
+		await expect(updateProjectGoal(path, first.goal.id, { dependsOn: [first.goal.id] })).rejects.toThrow(
+			ProjectGoalDependencyCycleError,
+		);
+		await expect(updateProjectGoal(path, first.goal.id, { dependsOn: [second.goal.id] })).rejects.toThrow(
+			ProjectGoalDependencyCycleError,
+		);
+
+		// Every refusal is decided before anything is written.
+		expect(await readProjectGoals(path)).toEqual(before);
+	});
+
+	it("names every goal on a refused cycle", async () => {
+		const path = await tempPath();
+		await addProjectGoal(path, "One");
+		await addProjectGoal(path, "Two", { dependsOn: ["one"] });
+		await addProjectGoal(path, "Three", { dependsOn: ["two"] });
+
+		const refused = await updateProjectGoal(path, "one", { dependsOn: ["three"] }).catch(
+			(error: unknown) => error,
+		);
+		expect(refused).toBeInstanceOf(ProjectGoalDependencyCycleError);
+		expect((refused as ProjectGoalDependencyCycleError).cycle).toEqual(["one", "three", "two"]);
+		expect((refused as Error).message).toContain("one -> three -> two -> one");
+	});
+
+	it("strips edges to a deleted goal inside the same mutation", async () => {
+		const path = await tempPath();
+		await addProjectGoal(path, "Slug ids");
+		await addProjectGoal(path, "Schema fields");
+		await addProjectGoal(path, "Dependency graph", { dependsOn: ["slug-ids", "schema-fields"] });
+		await addProjectGoal(path, "Apply plan", { dependsOn: ["schema-fields"] });
+		const untouchedBefore = (await readProjectGoals(path)).goals.find((goal) => goal.id === "slug-ids");
+
+		const deleted = await deleteProjectGoal(path, "schema-fields");
+		expect(deleted.strippedGoalIds).toEqual(["dependency-graph", "apply-plan"]);
+
+		const after = await readProjectGoals(path);
+		expect(after.goals.find((goal) => goal.id === "dependency-graph")?.dependsOn).toEqual(["slug-ids"]);
+		// An edge set emptied by the deletion leaves no empty array behind.
+		const emptied = after.goals.find((goal) => goal.id === "apply-plan");
+		expect(Object.hasOwn(emptied ?? {}, "dependsOn")).toBe(false);
+		// The stripped goals changed, so they are stamped; the untouched one is not.
+		expect(String(emptied?.updatedAt) > deleted.goals[0].createdAt).toBe(true);
+		expect(after.goals.find((goal) => goal.id === "slug-ids")).toEqual(untouchedBefore);
+	});
+
+	it("rewrites dependency edges when an ID migration renames their target", async () => {
+		const path = await tempPath();
+		await mkdir(dirname(path), { recursive: true });
+		await writeFile(
+			path,
+			`${JSON.stringify({
+				version: 1,
+				revision: 1,
+				goals: [
+					{
+						id: "goal-mse1rzxb-8213cc2a",
+						title: "Slug ids",
+						status: "open",
+						createdAt: "2026-08-04T00:00:00.000Z",
+						updatedAt: "2026-08-04T00:00:00.000Z",
+					},
+					{
+						id: "dependency-graph",
+						title: "Dependency graph",
+						status: "open",
+						createdAt: "2026-08-04T00:00:00.000Z",
+						updatedAt: "2026-08-04T00:00:00.000Z",
+						dependsOn: ["goal-mse1rzxb-8213cc2a"],
+					},
+					{
+						id: "unrelated",
+						title: "Unrelated",
+						status: "open",
+						createdAt: "2026-08-04T00:00:00.000Z",
+						updatedAt: "2026-08-04T00:00:00.000Z",
+					},
+				],
+			})}\n`,
+			"utf8",
+		);
+
+		const migrated = await migrateProjectGoalIds(path);
+		expect(migrated.goals[0].id).toBe("slug-ids");
+		expect(migrated.changedGoalIds).toEqual(["slug-ids", "dependency-graph"]);
+		// A former ID would still resolve, but leaving it stored would let the file
+		// disagree with itself about what the goal is called.
+		expect(migrated.goals[1].dependsOn).toEqual(["slug-ids"]);
+		expect(migrated.goals[1].updatedAt > "2026-08-04T00:00:00.000Z").toBe(true);
+		expect(migrated.goals[2].updatedAt).toBe("2026-08-04T00:00:00.000Z");
 	});
 
 	it("blocks activating done or archived goals with a typed error", async () => {

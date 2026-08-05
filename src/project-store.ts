@@ -32,7 +32,19 @@ export type ProjectMutation<T> = (current: RevisionedProjectWorklist) => {
 	changed?: boolean;
 };
 
-export class ProjectRevisionConflictError extends Error {
+/**
+ * A mutation refused on its own terms, rather than one that failed to persist.
+ *
+ * `mutateProjectWorklist` turns an unexpected throw into a persistence error,
+ * because a caller cannot act on a stack trace from the middle of a write. A
+ * refusal is different: it is the answer, decided under the lock against
+ * canonical state, so it is rethrown unchanged and keeps its type all the way to
+ * the interface that has to explain it. Every deliberate rejection a mutation
+ * raises must extend this, or it arrives as an unexplained persistence failure.
+ */
+export class ProjectMutationRefusedError extends Error {}
+
+export class ProjectRevisionConflictError extends ProjectMutationRefusedError {
 	readonly expectedRevision: string;
 	readonly actualRevision: string;
 
@@ -44,7 +56,7 @@ export class ProjectRevisionConflictError extends Error {
 	}
 }
 
-export class ProjectGoalConflictError extends Error {
+export class ProjectGoalConflictError extends ProjectMutationRefusedError {
 	readonly goalId: string;
 	readonly expectedUpdatedAt: string;
 	readonly actualUpdatedAt: string;
@@ -97,7 +109,7 @@ function isStringArray(value: unknown): value is string[] {
 const OPTIONAL_GOAL_STRING_FIELDS = ["description", "group", "completedAt", "branch"] as const;
 
 /** Optional goal fields carrying a list of strings. */
-const OPTIONAL_GOAL_STRING_ARRAY_FIELDS = ["links", "previousIds"] as const;
+const OPTIONAL_GOAL_STRING_ARRAY_FIELDS = ["links", "previousIds", "dependsOn"] as const;
 
 export function isProjectWorklist(value: unknown): value is ProjectWorklist {
 	if (typeof value !== "object" || value === null) return false;
@@ -218,7 +230,7 @@ export async function mutateProjectWorklist<T>(
 		tempName = undefined;
 		return { data: result, revision };
 	} catch (err) {
-		if (err instanceof ProjectRevisionConflictError || err instanceof ProjectGoalConflictError) throw err;
+		if (err instanceof ProjectMutationRefusedError) throw err;
 		return {
 			data: undefined as unknown as T,
 			error: `Project mutation failed: ${String(err)}`,

@@ -19,7 +19,8 @@ Project Goals track the larger outcomes shared by every Pi session in a Git repo
 - Project Goals persist at `<git-root>/.pi/worklist.json` and can be committed with the repository.
 - Goal IDs are readable slugs derived from the title and frozen afterwards, and every Project Goal ID argument accepts a unique prefix or a former ID.
 - Project Goal file order is canonical: goals are appended and rearranged only by an explicit move, so a roadmap reads in the sequence someone chose for it.
-- Project Goals carry optional `group`, `completedAt`, `links`, and `branch` fields alongside the description.
+- Project Goals carry optional `group`, `completedAt`, `links`, `branch`, and `dependsOn` fields alongside the description.
+- Project Goal dependencies are stored in one direction and checked for cycles at mutation time, so blocked work is derived rather than tracked by hand.
 - `/tasks` opens an interactive two-section dashboard.
 - A compact widget shows the active Project Goal and up to three unfinished Session Tasks.
 - The `worklist` model tool manages both scopes through one consistent API.
@@ -58,7 +59,7 @@ Use Tab to switch lists and arrow keys to navigate.
 In Session Tasks, `a` appends, `i` inserts before the selected task, and Shift+Up or Shift+Down moves the selected task.
 Project Goals support `a` to add and the same Shift+Up and Shift+Down to reorder, but not insertion at a position.
 In either scope, press Enter to open a detail window, Space to advance status, `e` to edit, `d` to delete, and Escape to close.
-The detail window wraps complete descriptions and metadata instead of truncating them.
+The detail window wraps complete descriptions and the metadata it displays instead of truncating them.
 Use Up and Down or `j` and `k` to scroll long details, with Page Up and Page Down for larger jumps, then Enter or Escape to return to the dashboard.
 For a Session Task associated with a Project Goal, the detail window also shows the goal title and full description.
 The dashboard keeps the current list and the selected task across each action, so a moved task stays selected at its new position.
@@ -106,7 +107,7 @@ Only the active goal and an intentionally bounded list of incomplete task titles
 Project Goals use a schema-versioned JSON file at `.pi/worklist.json` in the canonical Git root.
 The goal array order is canonical rather than incidental: `add` appends, `move` is the only action that rearranges it, and every reader displays that order unless it was explicitly asked for another one.
 A move rewrites the order without touching any goal's `updatedAt`, so rearranging the roadmap never reads as editing the goals on it and never invalidates a baseline nobody's edit conflicts with.
-Beyond the description, a goal may carry an optional free-form `group`, a `completedAt` stamped by `complete` and cleared by `reopen`, an informational `links` array, and a `branch` naming where the work is happening.
+Beyond the description, a goal may carry an optional free-form `group`, a `completedAt` stamped by `complete` and cleared by `reopen`, an informational `links` array, a `branch` naming where the work is happening, and a `dependsOn` array of goals that must land first.
 Every one of those fields is optional and additive, so the schema version stays at 1 and older files keep loading unchanged; a goal completed before `completedAt` existed simply has none, because that moment is genuinely unknown.
 The file carries a monotonic numeric revision, while application callers receive that revision as an opaque string.
 Legacy files without a revision remain readable at revision `0` and gain revision `1` on their next mutation.
@@ -123,7 +124,7 @@ Project Goal operations are unavailable outside a Git repository, while Session 
 
 The `worklist` tool accepts `scope=session|project` and actions including `list`, `add`, `move`, `update`, `set_status`, `set_active`, `complete`, `reopen`, `archive`, and `delete`.
 For Session Tasks, `add` optionally accepts exactly one of `beforeId` or `afterId`, while `move` requires exactly one.
-Project Goal `move` takes the same anchors and reorders the roadmap; `add` and `update` also accept a `group`, where an empty string clears it.
+Project Goal `move` takes the same anchors and reorders the roadmap; `add` and `update` also accept a `group`, where an empty string clears it, and a `dependsOn` array that replaces the goal's edges, where an empty array clears them.
 Moves preserve the task ID, title, status, and Project Goal association.
 Self-placement, already-satisfied placement, identical Session Task updates, and repeated status changes succeed without writing another session snapshot.
 Session Tasks use concise, self-contained titles without descriptions.
@@ -146,6 +147,7 @@ npx -y pi-worklist@latest project update <id> Replace the title -- Replace the d
 npx -y pi-worklist@latest project update <id> --append -- Add a note as a new paragraph
 npx -y pi-worklist@latest project update <id> --expect-updated-at <updatedAt> --append -- Add it only if nobody edited first
 npx -y pi-worklist@latest project update <id> --group Foundation
+npx -y pi-worklist@latest project update <id> --depends-on <other-id> --depends-on <third-id>
 npx -y pi-worklist@latest project move <id> up
 npx -y pi-worklist@latest project move <id> before <anchor-id>
 npx -y pi-worklist@latest project set_active <id>
@@ -157,6 +159,7 @@ The CLI routes every mutation through the same service, cross-process lock, and 
 `find <text>` lists the goals whose title or description contains the text, so locating one never needs `list --json` plus a client-side filter.
 `move <id> up|down` steps one place and `move <id> before|after <anchor-id>` lands beside a named goal; both resolve their arguments through the same selector as every other command, and a move that would change nothing succeeds without writing.
 `--group <name>` on `add` and `update` files a goal under a free-form section, and `--group ''` clears it; a group exists exactly when some goal names it, so there is no separate list to keep in step.
+`--depends-on <id>` on `add` and `update` records a goal that must land first and may be repeated, `--depends-on ''` alone clears every edge, and an update replaces the stored set rather than adding to it.
 Lifecycle actions (`complete`, `reopen`, `archive`, `delete`) require `--confirm`, mirroring the model tool's explicit-intent rule; an omitted flag exits with code 3 and changes nothing.
 `--append` adds the text after `--` as a new paragraph instead of replacing the description, so recording a note never re-sends, and never risks losing, prose the caller did not write.
 `--expect-updated-at <timestamp>` carries the goal's `updatedAt` from the caller's own read, and applies to `update`, `set_active`, and the lifecycle actions.
@@ -192,6 +195,39 @@ Deleting a goal retires its current and former IDs permanently.
 Those IDs no longer resolve, but a later goal cannot claim one and silently inherit a stale reference intended for the deleted goal.
 `--dry-run` reports the rewrites without writing them and without `--confirm`.
 
+## Goal dependencies
+
+A Project Goal may record the goals that must land before it:
+
+```sh
+npx -y pi-worklist@latest project add Add the dependency graph --depends-on slug-ids --depends-on schema-fields
+npx -y pi-worklist@latest project update <id> --depends-on <other-id>
+npx -y pi-worklist@latest project update <id> --depends-on ''
+```
+
+An edge means must-land-before, whatever its reason.
+A logical prerequisite and two goals that would collide in the same files are recorded the same way, because the consequence is identical: one of them has to go first.
+A dependency is satisfied once its target is `done` or `archived`, since an archived goal settles the question the edge was waiting on just as finishing it would.
+
+Only the forward direction is stored.
+What a goal blocks is derived from everyone else's edges on every read, so an edge is written once and the two halves cannot drift apart.
+`show <id>` prints both, and marks an edge naming no goal as missing rather than listing it as though something will eventually finish it.
+
+Blocked is a derived display state rather than a status.
+Nothing is ever left marked blocked after the goal holding it up was finished, because the reading is recomputed from the graph every time it is shown.
+The terminal board dims a blocked row for the same reason it dims settled work, and its detail pane names the edges holding the goal so the dimming is never unexplained.
+`set_active` warns about a blocked goal and activates it anyway: someone who says a goal is the one in flight may know something the edges do not.
+
+Edges are validated under the same lock that writes them.
+On update, a depth-first check from the changed goal refuses anything that would close a cycle, including an existing goal that depends on itself, and reports every goal on the loop; the failure carries the `DEPENDENCY_CYCLE` error code.
+On add, dependency IDs resolve before the new goal's ID is minted, so an edge naming a guessed future slug is refused with `NOT_FOUND`; read the ID back from add rather than deriving it from the title.
+An edge naming no goal is refused, an edge is stored under its target's current ID whatever name the caller used, and deleting a goal drops the edges naming it inside the same atomic change so a dangling edge never reaches the file.
+An ID migration rewrites stored edges too, because a former ID would still resolve but would leave the file disagreeing with itself.
+
+File order and the dependency graph answer two different questions and are allowed to disagree.
+File order is presentation and a tiebreak, arranged by whoever cares how the roadmap reads; the graph is the source of truth for what may start.
+Neither should be edited to mirror the other: re-sorting the file to match the edges throws away an arrangement someone chose, and adding an edge to justify the file's order records a constraint that does not exist.
+
 ## Terminal goal board
 
 `npx -y pi-worklist@latest project ui` opens an interactive board over the same Project Goals, so the roadmap can be read and edited from a shell without starting a Pi session:
@@ -201,7 +237,8 @@ npx -y pi-worklist@latest project ui
 ```
 
 The board is a split view: the goal list on the left, the selected goal's status, timestamps, identifier, and complete description on the right.
-The detail pane also spells out a goal's group, branch, completion time, and links whenever it carries them, and omits each row entirely when it does not.
+The detail pane also spells out a goal's group, branch, completion time, dependencies, dependents, and links when present, and omits empty rows entirely.
+Each dependency is listed with the target's own status marker, so whether it is still in the way reads in the same visual language as the list.
 Below about 76 columns the two panes stack instead, and the layout stays aligned for titles containing wide or combined characters.
 
 `o` cycles the order through file, status, and recent, and the header names the current one.
@@ -210,7 +247,7 @@ Reordering is refused outside file order, where the rows are not where the file 
 Status and recent are views over that same order, which stays their tiebreak, so an arrangement survives a trip through them.
 Those two views lift the active goal above every other row and give it a marker of its own, so the work in flight is the first thing the list says.
 The status line names the active goal in full in every order, which keeps it readable while the list is filtered to something else or scrolled past it.
-In the all view, done and archived rows recede so live work stays legible beside them, and the selected row always keeps full contrast.
+In the all view, done and archived rows recede so live work stays legible beside them, and a goal waiting on work that has not landed recedes in every view for the same reason; the selected row always keeps full contrast.
 A goal still in play that has gone untouched for 30 days or more carries its age at the right edge of its row when at least 12 cells remain for the title, and the detail pane spells that age out under `UPDATED`.
 Settled goals are never aged: a done or archived goal is finished rather than neglected.
 The header shows per-status totals across the whole roadmap, so a filtered list still reports its overall shape; on narrow terminals, those counts yield first to the filter and shown-of-total labels.
