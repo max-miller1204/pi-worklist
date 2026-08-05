@@ -539,6 +539,45 @@ describe("session state and tool", () => {
 		expect(entries).toHaveLength(3);
 	});
 
+	it("warns in project activation text while keeping blocked activation successful", async () => {
+		const path = join(await mkdtemp(join(tmpdir(), "pi-worklist-tool-blocked-")), ".pi", "worklist.json");
+		const blocker = await executeWorklist({ scope: "project", action: "add", title: "Slug ids" }, ctx, {
+			projectPath: path,
+		});
+		const blockerId = blocker.details.goal?.id;
+		if (!blockerId) throw new Error("Blocker goal was not created");
+		const dependent = await executeWorklist(
+			{ scope: "project", action: "add", title: "Dependency graph", dependsOn: [blockerId] },
+			ctx,
+			{ projectPath: path },
+		);
+		const dependentId = dependent.details.goal?.id;
+		if (!dependentId) throw new Error("Dependent goal was not created");
+
+		const activated = await executeWorklist(
+			{ scope: "project", action: "set_active", id: dependentId },
+			ctx,
+			{ projectPath: path },
+		);
+		expect(activated.content).toBe(
+			"Activated project goal dependency-graph\nWarning: dependency-graph is blocked; slug-ids has not landed yet.",
+		);
+		expect(activated.details).toMatchObject({
+			goal: { id: "dependency-graph", status: "active" },
+			blockedBy: ["slug-ids"],
+		});
+
+		const statusAlias = await executeWorklist(
+			{ scope: "project", action: "set_status", id: dependentId, status: "active" },
+			ctx,
+			{ projectPath: path },
+		);
+		expect(statusAlias.content).toContain(
+			"Warning: dependency-graph is blocked; slug-ids has not landed yet.",
+		);
+		expect(statusAlias.details.goal?.status).toBe("active");
+	});
+
 	it("guards every destructive project lifecycle path", async () => {
 		const path = join(await mkdtemp(join(tmpdir(), "pi-worklist-tool-")), ".pi", "worklist.json");
 		const { api } = fakePi();
