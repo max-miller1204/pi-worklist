@@ -167,6 +167,7 @@
     }
     lines.forEach((line, lineIndex) => {
       let offset = 0;
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI SGR sequences start with ESC.
       for (const match of line.matchAll(/\u001b\[([0-9;]*)m/g)) {
         append(line.slice(offset, match.index));
         (match[1] || "0").split(";").map(Number).forEach(apply);
