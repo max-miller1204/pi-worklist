@@ -1,0 +1,68 @@
+name: Release
+
+# Publishing is driven entirely by tags: pushing v1.2.3 publishes 1.2.3.
+# Commits and merges to main never reach this workflow, so the existing
+# `npm version <bump> && git push --follow-tags` flow is unchanged - only the
+# manual `npm publish` step moves into CI.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+# No NPM_TOKEN: npm authenticates this workflow over OIDC via Trusted
+# Publishing, which also attaches build provenance to the published tarball.
+# `contents: write` is what lets the last step create the GitHub Release.
+permissions:
+  id-token: write
+  contents: write
+
+# Never let two publishes for the same tag run at once, and never cancel one
+# midway - a half-finished publish is worse than a slow one.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      # Trusted Publishing requires npm >= 11.5.1, which is newer than the npm
+      # bundled with some Node 24 releases.
+      - name: Ensure npm supports trusted publishing
+        run: npm install -g npm@latest
+
+      # Guards against tagging v0.15.0 while package.json still says 0.14.0,
+      # which would otherwise publish the wrong version under the right tag.
+      - name: Verify tag matches package.json version
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          pkg_version="$(node -p "require('./package.json').version")"
+          if [ "$tag_version" != "$pkg_version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME implies version $tag_version, but package.json is $pkg_version"
+            exit 1
+          fi
+          echo "Tag $GITHUB_REF_NAME matches package.json version $pkg_version"
+
+      - run: npm ci
+
+      # Same gates as CI, re-run against the exact commit being published so a
+      # green tag cannot outrun a red main.
+      - run: npm run verify
+
+      - run: npm publish
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            --verify-tag
