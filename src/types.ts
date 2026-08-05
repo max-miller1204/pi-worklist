@@ -116,6 +116,10 @@ export interface WorklistOperationResult {
 	tasks?: SessionTask[];
 	goal?: ProjectGoal;
 	goals?: ProjectGoal[];
+	/** Whether the shown goal is blocked, derived from its current dependency edges. */
+	blocked?: boolean;
+	/** Goal IDs the shown goal blocks, derived from other goals' forward edges. */
+	blocks?: string[];
 	/** Goal IDs reserved by deletions and excluded from resolution. */
 	retiredIds?: string[];
 	/** Project Goal ID rewrites, applied or planned, from an ID migration. */

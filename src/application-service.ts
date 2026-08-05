@@ -67,7 +67,9 @@ export interface WorklistOperation {
 	 * Project Goal only: the complete set of goals that must land first.
 	 *
 	 * The whole set rather than an addition, so what a caller sends is what the
-	 * goal ends up with; an empty array clears every edge.
+	 * goal ends up with; an empty array clears every edge. Add resolves only
+	 * existing goals before minting the new ID, while update treats the goal's
+	 * own existing ID as a dependency cycle.
 	 */
 	dependsOn?: string[];
 	status?: SessionTaskStatus | ProjectGoalStatus;

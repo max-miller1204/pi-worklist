@@ -727,11 +727,29 @@ describe("project goal CLI", () => {
 		expect(shown.stdout).toContain(
 			"depends on:\n  slug-ids [open] - waiting\n  schema-fields [open] - waiting",
 		);
+		const shownJson = await runCli(root, ["project", "show", "dependency-graph", "--json"]);
+		expect(JSON.parse(shownJson.stdout)).toMatchObject({
+			result: {
+				goal: { id: "dependency-graph", dependsOn: ["slug-ids", "schema-fields"] },
+				blocked: true,
+				blocks: [],
+			},
+		});
 
 		// Only the forward direction is stored, so the reverse is derived on read.
 		const target = await runCli(root, ["project", "show", "slug-ids"]);
 		expect(target.stdout).toContain("blocks:\n  dependency-graph");
 		expect(target.stdout).not.toContain("depends on:");
+		const targetJson = await runCli(root, ["project", "show", "slug-ids", "--json"]);
+		expect(JSON.parse(targetJson.stdout)).toMatchObject({
+			result: {
+				goal: { id: "slug-ids" },
+				blocked: false,
+				blocks: ["dependency-graph"],
+			},
+		});
+		expect((await readGoals(root))[0]).not.toHaveProperty("blocks");
+		expect((await readGoals(root))[0]).not.toHaveProperty("blocked");
 
 		await runCli(root, ["project", "complete", "slug-ids", "--confirm"]);
 		await runCli(root, ["project", "archive", "schema-fields", "--confirm"]);

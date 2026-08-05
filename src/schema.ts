@@ -80,7 +80,7 @@ export const WorklistParamsSchema = Type.Object({
 	dependsOn: Type.Optional(
 		Type.Array(Type.String(), {
 			description:
-				"Project goal IDs that must land before this one, for project goal add/update. Replaces the whole set, so send every edge the goal should end up with; an empty array clears them. An edge means must-land-before, whether the reason is logical or two goals colliding in the same files.",
+				"Existing project goal IDs that must land before this one, for project goal add/update. Add resolves these before minting the new goal ID, so read IDs back instead of guessing the new slug; update rejects the goal's own ID as a dependency cycle. Replaces the whole set, so send every edge the goal should end up with; an empty array clears them. An edge means must-land-before, whether the reason is logical or two goals colliding in the same files.",
 		}),
 	),
 	status: Type.Optional(StatusSchema),

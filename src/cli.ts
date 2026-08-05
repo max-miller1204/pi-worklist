@@ -590,7 +590,13 @@ async function run(invocation: CliInvocation): Promise<void> {
 			const selector = requireId(invocation);
 			const { goals, retiredIds, meta } = await readProjectSnapshot(service, "show");
 			const goal = selectGoal(goals, selector, "show", retiredIds);
-			const detail = { scope: "project", action: "show", goal } as const;
+			const detail = {
+				scope: "project",
+				action: "show",
+				goal,
+				blocked: isGoalBlocked(goals, goal, retiredIds),
+				blocks: dependentGoals(goals, goal, retiredIds).map((dependent) => dependent.id),
+			} as const;
 			report(invocation, readEnvelope("show", detail, meta), formatGoalDetail(goal, goals));
 			return;
 		}

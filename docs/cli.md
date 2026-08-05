@@ -74,7 +74,9 @@ Put every flag before `--`, because each token after it is description text. A k
 - A dependency is satisfied once its target is done or archived, and a goal with an unsatisfied dependency is blocked.
 - Blocked is derived from the edges on every read and never stored: there is no blocked status, and `set_active` warns about a blocked goal instead of refusing it.
 - Only the forward direction is stored, and `show <id>` derives what the goal blocks, so an edge is written once and the two directions cannot drift apart.
-- Edges that would form a cycle, that name the goal itself, or that name no goal at all are refused, and deleting a goal drops the edges naming it in the same atomic change.
+- An update that would form a cycle, including an existing goal naming itself, is refused with `DEPENDENCY_CYCLE`.
+- Add resolves dependencies before minting the new goal's ID, so an edge naming a guessed future slug is refused with `NOT_FOUND`, like any ID that names no existing goal.
+- Deleting a goal drops the edges naming it in the same atomic change.
 - File order is presentation and a tiebreak while the dependency graph is the source of truth for what may start; the two are allowed to disagree, and neither should be edited to mirror the other.
 
 ## Exit codes

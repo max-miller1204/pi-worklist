@@ -95,7 +95,7 @@ export interface ProjectGoalUpdate {
 	appendDescription?: string;
 	/** Free-form section name. The empty string clears the field. */
 	group?: string;
-	/** The complete set of goals that must land first. The empty array clears them. */
+	/** The complete set of existing goals that must land first. Naming this goal is a cycle. */
 	dependsOn?: string[];
 }
 
@@ -233,6 +233,7 @@ function mutationOutcome(result: {
 export interface ProjectGoalDraft {
 	description?: string;
 	group?: string;
+	/** Existing goal IDs only; the new goal's ID has not been minted when these resolve. */
 	dependsOn?: string[];
 }
 

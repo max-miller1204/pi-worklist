@@ -219,7 +219,8 @@ The terminal board dims a blocked row for the same reason it dims settled work, 
 `set_active` warns about a blocked goal and activates it anyway: someone who says a goal is the one in flight may know something the edges do not.
 
 Edges are validated under the same lock that writes them.
-A depth-first check from the changed goal refuses anything that would close a cycle, including a goal that depends on itself, and reports every goal on the loop; the failure carries the `DEPENDENCY_CYCLE` error code.
+On update, a depth-first check from the changed goal refuses anything that would close a cycle, including an existing goal that depends on itself, and reports every goal on the loop; the failure carries the `DEPENDENCY_CYCLE` error code.
+On add, dependency IDs resolve before the new goal's ID is minted, so an edge naming a guessed future slug is refused with `NOT_FOUND`; read the ID back from add rather than deriving it from the title.
 An edge naming no goal is refused, an edge is stored under its target's current ID whatever name the caller used, and deleting a goal drops the edges naming it inside the same atomic change so a dangling edge never reaches the file.
 An ID migration rewrites stored edges too, because a former ID would still resolve but would leave the file disagreeing with itself.
 

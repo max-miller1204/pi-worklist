@@ -400,6 +400,17 @@ describe("project mutation service", () => {
 		expect(added.goal.dependsOn).toEqual(["slug-ids"]);
 	});
 
+	it("treats a guessed add-time self ID as an unknown dependency", async () => {
+		const path = await tempPath();
+
+		const refused = await addProjectGoal(path, "Solo", { dependsOn: ["solo"] }).catch(
+			(error: unknown) => error,
+		);
+		expect(refused).toBeInstanceOf(ProjectGoalDependencyNotFoundError);
+		expect((refused as ProjectGoalDependencyNotFoundError).dependencyId).toBe("solo");
+		expect((await readProjectGoals(path)).goals).toEqual([]);
+	});
+
 	it("refuses edges that name nothing, name the goal itself, or close a cycle", async () => {
 		const path = await tempPath();
 		const first = await addProjectGoal(path, "Slug ids");
