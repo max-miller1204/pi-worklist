@@ -27,11 +27,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      # Deliberately no `registry-url`. It makes setup-node write an .npmrc
+      # holding `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}`, and npm
+      # treats that as configured credentials even when the variable is unset -
+      # so it skips the OIDC exchange entirely and publishes with an empty
+      # token, which the registry rejects as a 404. Leaving it out is what lets
+      # trusted publishing engage.
       - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
-          registry-url: https://registry.npmjs.org
 
       # Trusted Publishing requires npm >= 11.5.1, which is newer than the npm
       # bundled with some Node 24 releases.
