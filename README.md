@@ -4,6 +4,7 @@
 
 [![npm version](https://img.shields.io/npm/v/pi-worklist.svg)](https://www.npmjs.com/package/pi-worklist)
 [![CI](https://github.com/max-miller1204/pi-worklist/actions/workflows/ci.yml/badge.svg)](https://github.com/max-miller1204/pi-worklist/actions/workflows/ci.yml)
+[![Release](https://github.com/max-miller1204/pi-worklist/actions/workflows/release.yml/badge.svg)](https://github.com/max-miller1204/pi-worklist/actions/workflows/release.yml)
 [![Pi package](https://img.shields.io/badge/Pi-package-8a76b5)](https://pi.dev/packages/pi-worklist)
 
 `pi-worklist` gives Pi two deliberately different lists.
@@ -313,21 +314,21 @@ The `pi-package` npm keyword and `pi.extensions` manifest let the gallery discov
 
 ### Future releases
 
-Start from a clean, current `main` branch and authenticate with npm:
+Publishing runs in CI, not from a maintainer's machine.
+Pushing a `v*.*.*` tag is what publishes; a commit or merge to `main` never does.
+
+Start from a clean, current `main` branch:
 
 ```sh
 git switch main
 git pull --ff-only
-npm login --auth-type=web
-npm whoami
 ```
 
-Install the locked dependencies and run every release check:
+Optionally run the release checks locally, which is the same `npm run verify` the release workflow runs but with faster feedback than waiting on CI:
 
 ```sh
 npm ci
 npm run verify
-npm audit --audit-level=high
 ```
 
 Create the release commit and tag with the appropriate semantic version bump:
@@ -337,14 +338,20 @@ npm version patch
 # Use `npm version minor` or `npm version major` when appropriate.
 ```
 
-Publish the new public package, then push the version commit and tag:
+Push the version commit and its tag, which is the step that publishes:
 
 ```sh
-npm publish --access public
 git push origin main --follow-tags
 ```
 
-Verify npm, Pi installation, and the gallery after publication:
+That tag push runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which re-runs `npm run verify` against the tagged commit, publishes to npm, and creates a GitHub Release with notes generated from the pull requests merged since the previous tag.
+It refuses to publish when the tag disagrees with `package.json`, which is the mistake that would otherwise ship the wrong version under the right name.
+
+Authentication is npm Trusted Publishing over OIDC, so the repository stores no `NPM_TOKEN` and a release needs no local `npm login`.
+npm attaches build provenance to every tarball published this way, letting an installer verify the package was built from this repository at that commit.
+The trust relationship is configured once on npm, under the package's Trusted Publishers settings, naming this repository and the `release.yml` workflow filename; a workflow renamed or moved needs that entry updated or every publish will be rejected.
+
+Verify npm, Pi installation, and the gallery after the workflow finishes:
 
 ```sh
 npm view pi-worklist version
@@ -352,7 +359,8 @@ pi update npm:pi-worklist
 ```
 
 Each npm version is immutable, so bump the version before every subsequent publication.
-If publication succeeds but the Git push fails, fix the Git problem and retry only the push rather than publishing the same version again.
+A run that failed before `npm publish` published nothing, so delete the tag, fix the cause, and tag again.
+A run that failed after it cannot be retried on the same version, because npm already has it; finish the remaining steps by hand or release the fix as a new version.
 The Pi gallery may take a short time to refresh after npm accepts a release.
 
 ## License
