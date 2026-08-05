@@ -19,7 +19,7 @@ Project Goals track the larger outcomes shared by every Pi session in a Git repo
 - Project Goals persist at `<git-root>/.pi/worklist.json` and can be committed with the repository.
 - Goal IDs are readable slugs derived from the title and frozen afterwards, and every Project Goal ID argument accepts a unique prefix or a former ID.
 - Project Goal file order is canonical: goals are appended and rearranged only by an explicit move, so a roadmap reads in the sequence someone chose for it.
-- Project Goals carry optional `group`, `completedAt`, `links`, and `branch` fields alongside the description.
+- Project Goals carry optional `group`, `completedAt`, `links`, `branch`, and `dependsOn` fields alongside the description.
 - Project Goal dependencies are stored in one direction and checked for cycles at mutation time, so blocked work is derived rather than tracked by hand.
 - `/tasks` opens an interactive two-section dashboard.
 - A compact widget shows the active Project Goal and up to three unfinished Session Tasks.
@@ -59,7 +59,7 @@ Use Tab to switch lists and arrow keys to navigate.
 In Session Tasks, `a` appends, `i` inserts before the selected task, and Shift+Up or Shift+Down moves the selected task.
 Project Goals support `a` to add and the same Shift+Up and Shift+Down to reorder, but not insertion at a position.
 In either scope, press Enter to open a detail window, Space to advance status, `e` to edit, `d` to delete, and Escape to close.
-The detail window wraps complete descriptions and metadata instead of truncating them.
+The detail window wraps complete descriptions and the metadata it displays instead of truncating them.
 Use Up and Down or `j` and `k` to scroll long details, with Page Up and Page Down for larger jumps, then Enter or Escape to return to the dashboard.
 For a Session Task associated with a Project Goal, the detail window also shows the goal title and full description.
 The dashboard keeps the current list and the selected task across each action, so a moved task stays selected at its new position.
@@ -237,7 +237,7 @@ npx -y pi-worklist@latest project ui
 ```
 
 The board is a split view: the goal list on the left, the selected goal's status, timestamps, identifier, and complete description on the right.
-The detail pane also spells out a goal's group, branch, completion time, dependencies, dependents, and links whenever it carries them, and omits each row entirely when it does not.
+The detail pane also spells out a goal's group, branch, completion time, dependencies, dependents, and links when present, and omits empty rows entirely.
 Each dependency is listed with the target's own status marker, so whether it is still in the way reads in the same visual language as the list.
 Below about 76 columns the two panes stack instead, and the layout stays aligned for titles containing wide or combined characters.
 
