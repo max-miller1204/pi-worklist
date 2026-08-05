@@ -954,6 +954,188 @@ describe("worklist application service", () => {
 		});
 	});
 
+	it("resolves dependency edges the same way as every other goal reference", async () => {
+		const projectPath = join(
+			await mkdtemp(join(tmpdir(), "pi-worklist-application-dependencies-")),
+			".pi",
+			"worklist.json",
+		);
+		const service = new WorklistApplicationService({ projectPath });
+		for (const title of ["Slug ids", "Schema fields"]) {
+			// Each add reads the IDs the previous one minted, so they run in turn.
+			// pi-lens-ignore: await-in-loop
+			await service.execute({ scope: "project", action: "add", title }, { source: "cli" });
+		}
+
+		// A prefix names a goal in an edge exactly as it does in an id argument.
+		const added = await service.execute(
+			{ scope: "project", action: "add", title: "Dependency graph", dependsOn: ["slug", "schema"] },
+			{ source: "cli" },
+		);
+		expect(added).toMatchObject({
+			ok: true,
+			result: { goal: { dependsOn: ["slug-ids", "schema-fields"] } },
+		});
+
+		await expect(
+			service.execute(
+				{ scope: "project", action: "update", id: "dependency-graph", dependsOn: ["s"] },
+				{ source: "cli" },
+			),
+		).resolves.toMatchObject({
+			ok: false,
+			error: {
+				code: WORKLIST_ERROR_CODES.VALIDATION_FAILED,
+				details: { fields: ["dependsOn"], resolution: "provide-unambiguous-goal-id" },
+			},
+		});
+		await expect(
+			service.execute(
+				{ scope: "project", action: "add", title: "Blank edge", dependsOn: ["slug-ids", "  "] },
+				{ source: "cli" },
+			),
+		).resolves.toMatchObject({
+			ok: false,
+			error: {
+				code: WORKLIST_ERROR_CODES.VALIDATION_FAILED,
+				details: { fields: ["dependsOn"], resolution: "provide-non-blank-goal-ids" },
+			},
+		});
+		await expect(
+			service.execute(
+				{ scope: "project", action: "add", title: "Unknown edge", dependsOn: ["nowhere"] },
+				{ source: "cli" },
+			),
+		).resolves.toMatchObject({
+			ok: false,
+			error: {
+				code: WORKLIST_ERROR_CODES.NOT_FOUND,
+				details: { entity: "project-goal-dependency", id: "nowhere" },
+			},
+		});
+		await expect(
+			service.execute(
+				{ scope: "project", action: "set_active", id: "slug-ids", dependsOn: ["schema-fields"] },
+				{ source: "cli" },
+			),
+		).resolves.toMatchObject({
+			ok: false,
+			error: {
+				code: WORKLIST_ERROR_CODES.VALIDATION_FAILED,
+				details: { fields: ["dependsOn"], resolution: "use-project-add-or-update" },
+			},
+		});
+		const withSession = new WorklistApplicationService({
+			sessionStore: createSessionStore().store,
+			projectPath,
+		});
+		await expect(
+			withSession.execute(
+				{ scope: "session", action: "add", title: "Task", dependsOn: ["slug-ids"] },
+				{ source: "cli" },
+			),
+		).resolves.toMatchObject({
+			ok: false,
+			error: {
+				code: WORKLIST_ERROR_CODES.VALIDATION_FAILED,
+				details: { fields: ["dependsOn"], resolution: "remove-depends-on" },
+			},
+		});
+	});
+
+	it("reports a refused cycle with the goals on it, and writes nothing", async () => {
+		const projectPath = join(
+			await mkdtemp(join(tmpdir(), "pi-worklist-application-cycle-")),
+			".pi",
+			"worklist.json",
+		);
+		const service = new WorklistApplicationService({ projectPath });
+		await service.execute({ scope: "project", action: "add", title: "Slug ids" }, { source: "cli" });
+		await service.execute(
+			{ scope: "project", action: "add", title: "Dependency graph", dependsOn: ["slug-ids"] },
+			{ source: "cli" },
+		);
+		const before = await readFile(projectPath, "utf8");
+
+		await expect(
+			service.execute(
+				{ scope: "project", action: "update", id: "slug-ids", dependsOn: ["dependency-graph"] },
+				{ source: "tool" },
+			),
+		).resolves.toMatchObject({
+			ok: false,
+			error: {
+				code: WORKLIST_ERROR_CODES.DEPENDENCY_CYCLE,
+				retryable: false,
+				details: {
+					fields: ["dependsOn"],
+					cycle: ["slug-ids", "dependency-graph"],
+					cyclePath: "slug-ids -> dependency-graph -> slug-ids",
+					resolution: "remove-an-edge-from-the-cycle",
+				},
+			},
+			meta: { changed: false },
+		});
+		expect(await readFile(projectPath, "utf8")).toBe(before);
+	});
+
+	it("warns about a blocked activation instead of refusing it", async () => {
+		const projectPath = join(
+			await mkdtemp(join(tmpdir(), "pi-worklist-application-blocked-")),
+			".pi",
+			"worklist.json",
+		);
+		const service = new WorklistApplicationService({ projectPath });
+		await service.execute({ scope: "project", action: "add", title: "Slug ids" }, { source: "cli" });
+		await service.execute(
+			{ scope: "project", action: "add", title: "Dependency graph", dependsOn: ["slug-ids"] },
+			{ source: "cli" },
+		);
+
+		// Blocked is a reading of the graph, so the activation still happens.
+		await expect(
+			service.execute({ scope: "project", action: "set_active", id: "dependency-graph" }, { source: "cli" }),
+		).resolves.toMatchObject({
+			ok: true,
+			result: { goal: { id: "dependency-graph", status: "active" }, blockedBy: ["slug-ids"] },
+		});
+
+		await service.execute(
+			{ scope: "project", action: "complete", id: "slug-ids", confirm: true },
+			{ source: "cli" },
+		);
+		const unblocked = await service.execute(
+			{ scope: "project", action: "set_active", id: "dependency-graph" },
+			{ source: "cli" },
+		);
+		expect(unblocked.ok && Object.hasOwn(unblocked.result, "blockedBy")).toBe(false);
+	});
+
+	it("reports the goals that lost an edge to a deleted goal", async () => {
+		const projectPath = join(
+			await mkdtemp(join(tmpdir(), "pi-worklist-application-strip-")),
+			".pi",
+			"worklist.json",
+		);
+		const service = new WorklistApplicationService({ projectPath });
+		await service.execute({ scope: "project", action: "add", title: "Slug ids" }, { source: "cli" });
+		await service.execute(
+			{ scope: "project", action: "add", title: "Dependency graph", dependsOn: ["slug-ids"] },
+			{ source: "cli" },
+		);
+
+		await expect(
+			service.execute(
+				{ scope: "project", action: "delete", id: "slug-ids", confirm: true },
+				{ source: "cli" },
+			),
+		).resolves.toMatchObject({
+			ok: true,
+			meta: { changedEntities: { projectGoalIds: ["dependency-graph", "slug-ids"] } },
+		});
+		expect((await service.getProjectGoals())[0].dependsOn).toBeUndefined();
+	});
+
 	it("enforces shared validation and explicit confirmation regardless of caller", async () => {
 		const projectPath = join(
 			await mkdtemp(join(tmpdir(), "pi-worklist-application-validation-")),

@@ -1,4 +1,5 @@
 import type { WorklistOperation } from "../application-service.ts";
+import { dependentGoals, isGoalBlocked, resolveDependencies } from "../dependencies.ts";
 import { findGoalByStoredId, matchesGoalQuery } from "../goal-selection.ts";
 import type { ProjectGoal, ProjectGoalStatus } from "../types.ts";
 import type { KeyEvent } from "./keys.ts";
@@ -230,6 +231,9 @@ function readReorderStep(key: KeyEvent): -1 | 1 | undefined {
 	if (key.char === "J" || (key.shift && key.name === "down")) return 1;
 	return undefined;
 }
+
+/** Text that carries no styling of its own, so a caller can stay uniform. */
+const plain: Style = (text) => text;
 
 function toCellArray(value: string): string[] {
 	return [...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(value)].map(
@@ -972,7 +976,11 @@ export class GoalBoard {
 		// selected row always keeps full contrast so the cursor is never the dim one.
 		const emphasized = isSelected && this.focus === "list";
 		const settled = goal.status === "done" || goal.status === "archived";
-		const dimmed = this.filter === "all" && settled && !isSelected;
+		// A goal waiting on work that has not landed recedes for the same reason
+		// settled work does: it is not what can be picked up right now. The detail
+		// pane says which edges are holding it, so the dimming is never unexplained.
+		const blocked = isGoalBlocked(this.goals, goal);
+		const dimmed = !isSelected && ((this.filter === "all" && settled) || blocked);
 		const label = isActive(goal)
 			? accent(emphasized ? bold(title) : title)
 			: emphasized
@@ -987,7 +995,7 @@ export class GoalBoard {
 	}
 
 	private buildDetailLines(width: number): string[] {
-		const { accent, bold, muted, dim, warning } = this.palette;
+		const { accent, bold, muted, dim, warning, danger } = this.palette;
 		const goal = this.selectedGoal;
 		if (!goal) return [dim("No goal selected.")];
 
@@ -997,7 +1005,24 @@ export class GoalBoard {
 
 		const field = (label: string, value: string, style: Style) =>
 			`${muted(label.padEnd(DETAIL_LABEL_WIDTH))}${style(value)}`;
-		lines.push(field("STATUS", goal.status.toUpperCase(), this.statusStyle(goal.status)));
+		/**
+		 * A marked goal ID under a label, wrapped rather than cut.
+		 *
+		 * These IDs are what every CLI command takes, so a narrow pane must still
+		 * hand back one that can be typed; a blank label continues the list above.
+		 */
+		const pushDetailIdRows = (label: string, marker: string, id: string, style: Style): void => {
+			const indent = DETAIL_LABEL_WIDTH + 2;
+			for (const [index, chunk] of wrapText(id, Math.max(1, width - indent)).entries()) {
+				const lead =
+					index === 0 ? `${muted(label.padEnd(DETAIL_LABEL_WIDTH))}${marker} ` : " ".repeat(indent);
+				lines.push(`${lead}${style(chunk)}`);
+			}
+		};
+		// The dimmed row says only that a goal is not startable; the status line here
+		// says so in words, and the DEPENDS rows below say what it is waiting on.
+		const blockedNote = isGoalBlocked(this.goals, goal) ? warning(`${SEPARATOR}blocked`) : "";
+		lines.push(field("STATUS", goal.status.toUpperCase(), this.statusStyle(goal.status)) + blockedNote);
 		if (goal.group !== undefined) lines.push(field("GROUP", singleLine(goal.group), muted));
 		if (goal.branch !== undefined) lines.push(field("BRANCH", singleLine(goal.branch), accent));
 		// The badge in the list is only a number; spell out what it means here.
@@ -1011,6 +1036,24 @@ export class GoalBoard {
 		// The ID is what every CLI command takes, so it must be readable in full.
 		for (const [index, chunk] of wrapText(goal.id, Math.max(1, width - DETAIL_LABEL_WIDTH)).entries()) {
 			lines.push(index === 0 ? field("ID", chunk, dim) : `${" ".repeat(DETAIL_LABEL_WIDTH)}${dim(chunk)}`);
+		}
+		// A dependency's own status marker says whether it is still in the way, in
+		// the same visual language as the list: ✓ and ◌ are settled, ◆ and ○ are not.
+		// Only the forward direction is stored, so the goals this one blocks are
+		// derived here from everyone else's edges rather than read from a field.
+		for (const [index, entry] of resolveDependencies(this.goals, goal).entries()) {
+			const marker = entry.goal
+				? this.statusStyle(entry.goal.status)(STATUS_MARKERS[entry.goal.status])
+				: danger("?");
+			// An edge naming no goal can never be satisfied, so it is called out rather
+			// than listed as though something will eventually finish it.
+			const text = entry.goal ? entry.id : `${entry.id} (missing)`;
+			const style = entry.goal ? (entry.satisfied ? dim : plain) : danger;
+			pushDetailIdRows(index === 0 ? "DEPENDS" : "", marker, text, style);
+		}
+		for (const [index, blocked] of dependentGoals(this.goals, goal).entries()) {
+			const marker = this.statusStyle(blocked.status)(STATUS_MARKERS[blocked.status]);
+			pushDetailIdRows(index === 0 ? "BLOCKS" : "", marker, blocked.id, plain);
 		}
 		// Links are informational, so they are listed verbatim and wrapped rather
 		// than shortened: a URL cut in half is a URL nobody can follow.

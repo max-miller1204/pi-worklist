@@ -165,6 +165,13 @@ export const CLI_COMMAND_CONTRACT = {
 			actions: ["add", "update"],
 		},
 		{
+			name: "--depends-on",
+			usage: "--depends-on <id>",
+			summary:
+				"Require that goal to land first; repeat it to name several, and pass an empty id alone to clear every edge",
+			actions: ["add", "update"],
+		},
+		{
 			name: "--expect-updated-at",
 			usage: "--expect-updated-at <timestamp>",
 			summary: "Refuse the change as a conflict unless the goal's updatedAt still matches this value",
@@ -212,6 +219,24 @@ export const CLI_COMMAND_CONTRACT = {
 		"A move changes the roadmap's order without touching the moved goal's `updatedAt`, so rearranging the list never reads as editing the goals on it.",
 		"Reordering needs no confirmation, because it names no new state for a goal, only a new position among the others.",
 	],
+	/**
+	 * What a dependency edge means, and what follows from it.
+	 *
+	 * Stated on every surface because the graph and the file order answer two
+	 * different questions, and a caller who reads them as one thing will either
+	 * re-sort the roadmap to match the edges or add edges to justify an order
+	 * somebody arranged for another reason entirely.
+	 */
+	dependencyRules: [
+		"`--depends-on <id>` on `add` and `update` records that the named goal must land before this one; repeat the flag to name several, and `--depends-on ''` on its own clears every edge.",
+		"An `update` replaces the whole set rather than adding to it, so name every edge the goal should end up with, not just the new one.",
+		"An edge means must-land-before whatever its reason, so a logical prerequisite and two goals that would collide in the same files are recorded the same way.",
+		"A dependency is satisfied once its target is done or archived, and a goal with an unsatisfied dependency is blocked.",
+		"Blocked is derived from the edges on every read and never stored: there is no blocked status, and `set_active` warns about a blocked goal instead of refusing it.",
+		"Only the forward direction is stored, and `show <id>` derives what the goal blocks, so an edge is written once and the two directions cannot drift apart.",
+		"Edges that would form a cycle, that name the goal itself, or that name no goal at all are refused, and deleting a goal drops the edges naming it in the same atomic change.",
+		"File order is presentation and a tiebreak while the dependency graph is the source of truth for what may start; the two are allowed to disagree, and neither should be edited to mirror the other.",
+	],
 	exitCodes: [
 		{ code: 0, meaning: "success" },
 		{ code: 1, meaning: "error" },
@@ -231,6 +256,8 @@ export const CLI_COMMAND_CONTRACT = {
 		"Run migrate_ids only when the user explicitly asks for it; it rewrites stored IDs, though every old ID keeps resolving afterwards.",
 		"Add a note with --append instead of resending a description you did not write, so nothing in the existing text can be lost in transcription.",
 		"Group related goals with --group <name> on add or update, and leave the file order alone unless the user asked for a different sequence.",
+		"Record a real must-land-before relationship with --depends-on <id>, including one that exists only because two goals would collide in the same files; do not add an edge merely to justify the order the file happens to be in.",
+		"Send the complete set of edges on every --depends-on update, because it replaces the stored set rather than adding to it.",
 		"Pass --expect-updated-at with the updatedAt from your own read whenever you change a goal, so your mutation conflicts if the goal changed in the meantime.",
 		"Broad outcomes belong in Project Goals; do not mirror your internal step-by-step plan into them.",
 	],
@@ -314,6 +341,8 @@ export function renderSkillMarkdown(): string {
 	const exampleId = "support-goal-templates";
 	// A second real-looking ID, so the anchor form of `move` reads unambiguously.
 	const anchorExampleId = "retire-the-legacy-importer";
+	// A third, so a repeated --depends-on names two different goals.
+	const secondDependencyId = "ship-the-new-parser";
 	// An `updatedAt` in the stored ISO 8601 shape, as `show` reports it.
 	const exampleUpdatedAt = "2026-05-04T09:12:31.004Z";
 	const examples = [
@@ -326,6 +355,9 @@ export function renderSkillMarkdown(): string {
 		`update ${exampleId} --append -- Blocked on the template schema until it lands`,
 		`update ${exampleId} --expect-updated-at ${exampleUpdatedAt} --append -- Reviewed and still current`,
 		`update ${exampleId} --group Foundation`,
+		`add Retire the legacy importer --depends-on ${exampleId} --depends-on ${secondDependencyId}`,
+		`update ${anchorExampleId} --depends-on ${exampleId}`,
+		`update ${anchorExampleId} --depends-on ''`,
 		`move ${exampleId} up`,
 		`move ${exampleId} before ${anchorExampleId}`,
 		`set_active ${exampleId}`,
@@ -390,6 +422,10 @@ export function renderSkillMarkdown(): string {
 		"",
 		...contract.orderRules.map((rule) => `- ${rule}`),
 		"- `--group <name>` on `add` and `update` files a goal under a free-form section; a group exists exactly when some goal names it, and `--group ''` clears the field.",
+		"",
+		"## Dependencies",
+		"",
+		...contract.dependencyRules.map((rule) => `- ${rule}`),
 		"",
 		"## Guardrails",
 		"",
@@ -474,6 +510,10 @@ export function renderCliGuide(): string {
 		"",
 		...contract.orderRules.map((rule) => `- ${rule}`),
 		"- `--group <name>` on `add` and `update` files a goal under a free-form section; a group exists exactly when some goal names it, and `--group ''` clears the field.",
+		"",
+		"## Dependencies",
+		"",
+		...contract.dependencyRules.map((rule) => `- ${rule}`),
 		"",
 		"## Exit codes",
 		"",

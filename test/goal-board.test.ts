@@ -64,6 +64,13 @@ const BORDER_CHARACTERS = ["│", "╭", "╰", "├", "┤", "╮", "╯", "┬
 const MARKERS = /[◆○✓◌]/;
 const DIM = "\u001b[2m";
 
+/** Every row of the detail pane, trimmed of its borders and trailing padding. */
+function detailLines(board: GoalBoard, width = 100, rows = 20): string[] {
+	return plainFrame(board, width, rows)
+		.map((line) => line.split("│")[2] ?? "")
+		.map((cell) => cell.replace(/^ /, "").trimEnd());
+}
+
 /** Every goal row of the list pane, reduced to `<marker> <title>` and any badge. */
 function listedRows(board: GoalBoard, width = 100, rows = 20): string[] {
 	return plainFrame(board, width, rows)
@@ -223,6 +230,55 @@ describe("goal board presentation", () => {
 		const done = createBoard(GOALS, true);
 		press(done, "f");
 		expect(dimmedTitle(done.render(100, 20).lines, "Ship the CLI")).toBe(false);
+	});
+
+	it("dims a goal waiting on work that has not landed", () => {
+		const goals = [
+			goal({ id: "g-foundation", title: "Land the foundation" }),
+			goal({ id: "g-waiting", title: "Build on it", dependsOn: ["g-foundation"] }),
+		];
+		const dimmedTitle = (board: GoalBoard, title: string) =>
+			board.render(100, 20).lines.some((line) => line.includes(`${DIM}${title}`));
+
+		const board = createBoard(goals, true);
+		expect(dimmedTitle(board, "Build on it")).toBe(true);
+		expect(dimmedTitle(board, "Land the foundation")).toBe(false);
+
+		// The selected row always keeps full contrast, blocked or not.
+		press(board, "j");
+		expect(board.selectedGoal?.id).toBe("g-waiting");
+		expect(dimmedTitle(board, "Build on it")).toBe(false);
+
+		// Nothing stays marked blocked once the goal holding it up has landed.
+		const landed = createBoard([{ ...goals[0], status: "done" as const }, goals[1]], true);
+		press(landed, "f");
+		expect(dimmedTitle(landed, "Build on it")).toBe(false);
+	});
+
+	it("spells out both directions of an edge in the detail pane", () => {
+		const goals = [
+			goal({ id: "g-done", title: "Land the foundation", status: "done" }),
+			goal({ id: "g-open", title: "Ship the schema" }),
+			goal({ id: "g-waiting", title: "Build on it", dependsOn: ["g-done", "g-open", "g-gone"] }),
+			goal({ id: "g-later", title: "Then this", dependsOn: ["g-waiting"] }),
+		];
+		const board = createBoard(goals);
+		// The default filter hides the done goal, so the waiting one is the second row.
+		press(board, "j");
+		expect(board.selectedGoal?.id).toBe("g-waiting");
+		const detail = detailLines(board);
+
+		expect(detail.some((line) => /STATUS\s+OPEN · blocked/.test(line))).toBe(true);
+		expect(detail.find((line) => line.includes("DEPENDS"))).toMatch(/DEPENDS\s+✓ g-done/);
+		expect(detail.some((line) => /^\s+○ g-open$/.test(line))).toBe(true);
+		// An edge naming no goal can never be satisfied, so it is called out.
+		expect(detail.some((line) => /^\s+\? g-gone \(missing\)$/.test(line))).toBe(true);
+		// The reverse direction is derived, never stored.
+		expect(detail.find((line) => line.includes("BLOCKS"))).toMatch(/BLOCKS\s+○ g-later/);
+
+		const unblocked = createBoard(goals);
+		expect(detailLines(unblocked).some((line) => line.includes("DEPENDS"))).toBe(false);
+		expect(detailLines(unblocked).some((line) => line.includes("blocked"))).toBe(false);
 	});
 
 	it("ages goals still in play, and leaves settled ones alone", () => {

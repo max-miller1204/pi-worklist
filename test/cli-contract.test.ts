@@ -76,6 +76,28 @@ describe("single CLI command contract", () => {
 		}
 	});
 
+	it("renders every stated rule onto both published surfaces", () => {
+		// A rule added to the contract but rendered nowhere is worse than no rule at
+		// all: it reads as settled in the source and is invisible to every caller.
+		const surfaces = [
+			[DOCS_PATH, renderCliGuide()],
+			[SKILL_PATH, renderSkillMarkdown()],
+		] as const;
+		const ruleSets = {
+			idRules: CLI_COMMAND_CONTRACT.idRules,
+			orderRules: CLI_COMMAND_CONTRACT.orderRules,
+			dependencyRules: CLI_COMMAND_CONTRACT.dependencyRules,
+		};
+		for (const [name, rules] of Object.entries(ruleSets)) {
+			expect(rules.length, `${name} states no rules`).toBeGreaterThan(0);
+			for (const rule of rules) {
+				for (const [path, surface] of surfaces) {
+					expect(surface, `${path} omits a ${name} entry`).toContain(rule);
+				}
+			}
+		}
+	});
+
 	it("keeps the committed worklist skill byte-identical to the contract render", async () => {
 		const skill = await readFile(resolve(SKILL_PATH), "utf8");
 		expect(skill, `${SKILL_PATH} is stale; run \`npm run docs\` to regenerate it`).toBe(

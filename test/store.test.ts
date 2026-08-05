@@ -93,6 +93,7 @@ describe("project store", () => {
 					completedAt: "2026-05-05T09:12:31.004Z",
 					branch: "feat/guard",
 					links: ["https://example.test/pull/12"],
+					dependsOn: ["goal-0"],
 				}),
 			),
 		).toBe(true);
@@ -105,6 +106,8 @@ describe("project store", () => {
 			{ branch: ["feat/guard"] },
 			{ links: "https://example.test/pull/12" },
 			{ links: [1] },
+			{ dependsOn: "goal-0" },
+			{ dependsOn: [1] },
 		]) {
 			expect(isProjectWorklist(worklistWith(invalid)), JSON.stringify(invalid)).toBe(false);
 		}

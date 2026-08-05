@@ -705,6 +705,138 @@ describe("project goal CLI", () => {
 		expect(wrongAction.stderr).toContain("--group is only supported by project add, update");
 	});
 
+	it("records dependency edges and derives what a goal blocks", async () => {
+		const root = await tempGitRepo();
+		await runCli(root, ["project", "add", "Slug", "ids"]);
+		await runCli(root, ["project", "add", "Schema", "fields"]);
+		const added = await runCli(root, [
+			"project",
+			"add",
+			"Dependency",
+			"graph",
+			"--depends-on",
+			"slug",
+			"--depends-on",
+			"schema-fields",
+		]);
+		expect(added.code).toBe(0);
+		expect((await readGoals(root))[2].dependsOn).toEqual(["slug-ids", "schema-fields"]);
+
+		const shown = await runCli(root, ["project", "show", "dependency-graph"]);
+		expect(shown.stdout).toContain("status: open (blocked)");
+		expect(shown.stdout).toContain(
+			"depends on:\n  slug-ids [open] - waiting\n  schema-fields [open] - waiting",
+		);
+
+		// Only the forward direction is stored, so the reverse is derived on read.
+		const target = await runCli(root, ["project", "show", "slug-ids"]);
+		expect(target.stdout).toContain("blocks:\n  dependency-graph");
+		expect(target.stdout).not.toContain("depends on:");
+
+		await runCli(root, ["project", "complete", "slug-ids", "--confirm"]);
+		await runCli(root, ["project", "archive", "schema-fields", "--confirm"]);
+		const satisfied = await runCli(root, ["project", "show", "dependency-graph"]);
+		expect(satisfied.stdout).toContain("status: open\n");
+		expect(satisfied.stdout).toContain("depends on:\n  slug-ids [done]\n  schema-fields [archived]");
+
+		const cleared = await runCli(root, ["project", "update", "dependency-graph", "--depends-on", ""]);
+		expect(cleared.code).toBe(0);
+		expect((await readGoals(root))[2]).not.toHaveProperty("dependsOn");
+	});
+
+	it("refuses edges that cannot hold, and warns rather than refusing a blocked activation", async () => {
+		const root = await tempGitRepo();
+		await runCli(root, ["project", "add", "Slug", "ids"]);
+		await runCli(root, ["project", "add", "Dependency", "graph", "--depends-on", "slug-ids"]);
+		const before = await readGoals(root);
+
+		const cycle = await runCli(root, ["project", "update", "slug-ids", "--depends-on", "dependency-graph"]);
+		expect(cycle.code).toBe(1);
+		expect(cycle.stderr).toContain("cycle: slug-ids -> dependency-graph -> slug-ids");
+
+		const cycleJson = await runCli(root, [
+			"project",
+			"update",
+			"slug-ids",
+			"--depends-on",
+			"dependency-graph",
+			"--json",
+		]);
+		expect(cycleJson.code).toBe(1);
+		expect(JSON.parse(cycleJson.stderr)).toMatchObject({
+			ok: false,
+			error: {
+				code: "DEPENDENCY_CYCLE",
+				details: { cycle: ["slug-ids", "dependency-graph"] },
+			},
+		});
+
+		const missing = await runCli(root, ["project", "update", "slug-ids", "--depends-on", "nowhere"]);
+		expect(missing.code).toBe(1);
+		expect(missing.stderr).toContain("Project goal dependency nowhere was not found");
+		expect(await readGoals(root)).toEqual(before);
+
+		// Blocked is a reading of the graph, not a veto on saying what is in flight.
+		const activated = await runCli(root, ["project", "set_active", "dependency-graph"]);
+		expect(activated.code).toBe(0);
+		expect(activated.stdout).toContain("Activated project goal dependency-graph");
+		expect(activated.stderr).toContain("dependency-graph is blocked; slug-ids has not landed yet");
+		expect((await readGoals(root))[1].status).toBe("active");
+
+		// The JSON envelope carries the same fact, so nothing depends on stderr prose.
+		const activatedJson = await runCli(root, ["project", "set_active", "dependency-graph", "--json"]);
+		expect(activatedJson.stderr).toBe("");
+		expect(JSON.parse(activatedJson.stdout)).toMatchObject({
+			ok: true,
+			result: { blockedBy: ["slug-ids"] },
+		});
+	});
+
+	it("drops the edges naming a deleted goal in the same change", async () => {
+		const root = await tempGitRepo();
+		await runCli(root, ["project", "add", "Slug", "ids"]);
+		await runCli(root, ["project", "add", "Dependency", "graph", "--depends-on", "slug-ids"]);
+
+		const deleted = await runCli(root, ["project", "delete", "slug-ids", "--confirm", "--json"]);
+		expect(deleted.code).toBe(0);
+		expect(JSON.parse(deleted.stdout)).toMatchObject({
+			meta: { changedEntities: { projectGoalIds: ["dependency-graph", "slug-ids"] } },
+		});
+		// A dangling edge would read as an unsatisfied dependency and block the goal
+		// on work nobody can ever finish, so it never reaches the file.
+		expect((await readGoals(root))[0]).not.toHaveProperty("dependsOn");
+		expect((await runCli(root, ["project", "show", "dependency-graph"])).stdout).toContain("status: open\n");
+	});
+
+	it("refuses --depends-on where it would be ignored or contradict itself", async () => {
+		const root = await tempGitRepo();
+		await runCli(root, ["project", "add", "Slug", "ids"]);
+
+		const missingValue = await runCli(root, ["project", "update", "slug-ids", "--depends-on"]);
+		expect(missingValue.code).toBe(2);
+		expect(missingValue.stderr).toContain("--depends-on requires a goal id");
+
+		const contradictory = await runCli(root, [
+			"project",
+			"update",
+			"slug-ids",
+			"--depends-on",
+			"",
+			"--depends-on",
+			"slug-ids",
+		]);
+		expect(contradictory.code).toBe(2);
+		expect(contradictory.stderr).toContain("cannot be combined with another --depends-on");
+
+		const wrongAction = await runCli(root, ["project", "set_active", "slug-ids", "--depends-on", "slug-ids"]);
+		expect(wrongAction.code).toBe(2);
+		expect(wrongAction.stderr).toContain("--depends-on is only supported by project add, update");
+
+		const nothingToDo = await runCli(root, ["project", "update", "slug-ids"]);
+		expect(nothingToDo.code).toBe(2);
+		expect(nothingToDo.stderr).toContain("--group, or --depends-on");
+	});
+
 	it("reports malformed files without overwriting them", async () => {
 		const root = await tempGitRepo();
 		await runCli(root, ["project", "add", "Existing"]);

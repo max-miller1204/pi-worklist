@@ -48,6 +48,7 @@ Flags:
 - `--cwd <dir>` - Resolve the git root from this directory instead of the working directory.
 - `--append` - Add the text after -- as a new paragraph instead of replacing the description; cannot be combined with a title change; only for project update.
 - `--group <name>` - Put the goal in a free-form section, such as Foundation; an empty name clears it; only for project add and update.
+- `--depends-on <id>` - Require that goal to land first; repeat it to name several, and pass an empty id alone to clear every edge; only for project add and update.
 - `--expect-updated-at <timestamp>` - Refuse the change as a conflict unless the goal's updatedAt still matches this value; only for project update, set_active, complete, reopen, archive, and delete.
 - `--dry-run` - Report the ID rewrites without writing them, and without needing --confirm; only for project migrate_ids.
 
@@ -72,6 +73,9 @@ npx -y pi-worklist@latest project update support-goal-templates Support shared g
 npx -y pi-worklist@latest project update support-goal-templates --append -- Blocked on the template schema until it lands
 npx -y pi-worklist@latest project update support-goal-templates --expect-updated-at 2026-05-04T09:12:31.004Z --append -- Reviewed and still current
 npx -y pi-worklist@latest project update support-goal-templates --group Foundation
+npx -y pi-worklist@latest project add Retire the legacy importer --depends-on support-goal-templates --depends-on ship-the-new-parser
+npx -y pi-worklist@latest project update retire-the-legacy-importer --depends-on support-goal-templates
+npx -y pi-worklist@latest project update retire-the-legacy-importer --depends-on ''
 npx -y pi-worklist@latest project move support-goal-templates up
 npx -y pi-worklist@latest project move support-goal-templates before retire-the-legacy-importer
 npx -y pi-worklist@latest project set_active support-goal-templates
@@ -96,6 +100,17 @@ The full generated command reference lives in the package's `docs/cli.md`, rende
 - A move changes the roadmap's order without touching the moved goal's `updatedAt`, so rearranging the list never reads as editing the goals on it.
 - Reordering needs no confirmation, because it names no new state for a goal, only a new position among the others.
 - `--group <name>` on `add` and `update` files a goal under a free-form section; a group exists exactly when some goal names it, and `--group ''` clears the field.
+
+## Dependencies
+
+- `--depends-on <id>` on `add` and `update` records that the named goal must land before this one; repeat the flag to name several, and `--depends-on ''` on its own clears every edge.
+- An `update` replaces the whole set rather than adding to it, so name every edge the goal should end up with, not just the new one.
+- An edge means must-land-before whatever its reason, so a logical prerequisite and two goals that would collide in the same files are recorded the same way.
+- A dependency is satisfied once its target is done or archived, and a goal with an unsatisfied dependency is blocked.
+- Blocked is derived from the edges on every read and never stored: there is no blocked status, and `set_active` warns about a blocked goal instead of refusing it.
+- Only the forward direction is stored, and `show <id>` derives what the goal blocks, so an edge is written once and the two directions cannot drift apart.
+- Edges that would form a cycle, that name the goal itself, or that name no goal at all are refused, and deleting a goal drops the edges naming it in the same atomic change.
+- File order is presentation and a tiebreak while the dependency graph is the source of truth for what may start; the two are allowed to disagree, and neither should be edited to mirror the other.
 
 ## Guardrails
 

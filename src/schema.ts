@@ -77,6 +77,12 @@ export const WorklistParamsSchema = Type.Object({
 				"Free-form section for project goal add/update, such as Foundation or Later. Pass an empty string to clear it. Session tasks do not support groups.",
 		}),
 	),
+	dependsOn: Type.Optional(
+		Type.Array(Type.String(), {
+			description:
+				"Project goal IDs that must land before this one, for project goal add/update. Replaces the whole set, so send every edge the goal should end up with; an empty array clears them. An edge means must-land-before, whether the reason is logical or two goals colliding in the same files.",
+		}),
+	),
 	status: Type.Optional(StatusSchema),
 	goalId: Type.Optional(
 		Type.String({
