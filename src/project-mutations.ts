@@ -612,6 +612,7 @@ export async function deleteProjectGoal(
 export interface GoalIdMigrationOutcome {
 	goals: ProjectGoal[];
 	migrations: GoalIdMigration[];
+	changedGoalIds: string[];
 	revision: string;
 	changed: boolean;
 }
@@ -640,15 +641,20 @@ export async function migrateProjectGoalIds(
 		(worklist) => {
 			const migrations = planGoalIdMigration(worklist);
 			if (migrations.length === 0) {
-				return { worklist, result: { goals: worklist.goals, migrations }, changed: false };
+				return {
+					worklist,
+					result: { goals: worklist.goals, migrations, changedGoalIds: [] },
+					changed: false,
+				};
 			}
 			const byPreviousId = new Map(migrations.map((migration) => [migration.from, migration]));
+			const changedGoalIds: string[] = [];
 			const goals = worklist.goals.map((goal) => {
 				const migration = byPreviousId.get(goal.id);
 				const dependsOn = goal.dependsOn?.map((id) => byPreviousId.get(id)?.to ?? id);
 				const edgesRewritten = !sameDependsOn(dependsOn, goal.dependsOn);
 				if (!migration && !edgesRewritten) return goal;
-				return {
+				const migratedGoal: ProjectGoal = {
 					...goal,
 					...(migration
 						? {
@@ -659,8 +665,10 @@ export async function migrateProjectGoalIds(
 					...(dependsOn !== undefined ? { dependsOn } : {}),
 					updatedAt: nextGoalUpdatedAt(goal.updatedAt),
 				};
+				changedGoalIds.push(migratedGoal.id);
+				return migratedGoal;
 			});
-			return { worklist: { ...worklist, goals }, result: { goals, migrations } };
+			return { worklist: { ...worklist, goals }, result: { goals, migrations, changedGoalIds } };
 		},
 		options,
 	);

@@ -1125,12 +1125,15 @@ export class WorklistApplicationService {
 		options: ProjectMutationOptions,
 	): Promise<ProjectExecutionResult> {
 		requireConfirmation(operation);
-		const { goals, migrations, revision, changed } = await migrateProjectGoalIds(projectPath, options);
+		const { goals, migrations, revision, changed, changedGoalIds } = await migrateProjectGoalIds(
+			projectPath,
+			options,
+		);
 		return {
 			result: { scope: "project", action: "migrate_ids", goals, migrations },
 			revision,
 			changed,
-			changedGoalIds: migrations.map((migration) => migration.to),
+			changedGoalIds,
 		};
 	}
 

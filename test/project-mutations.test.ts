@@ -496,6 +496,7 @@ describe("project mutation service", () => {
 
 		const migrated = await migrateProjectGoalIds(path);
 		expect(migrated.goals[0].id).toBe("slug-ids");
+		expect(migrated.changedGoalIds).toEqual(["slug-ids", "dependency-graph"]);
 		// A former ID would still resolve, but leaving it stored would let the file
 		// disagree with itself about what the goal is called.
 		expect(migrated.goals[1].dependsOn).toEqual(["slug-ids"]);

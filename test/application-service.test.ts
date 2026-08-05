@@ -817,6 +817,14 @@ describe("worklist application service", () => {
 						createdAt: "2026-05-04T09:12:31.004Z",
 						updatedAt: "2026-05-04T09:12:31.004Z",
 					},
+					{
+						id: "dependency-graph",
+						title: "Dependency graph",
+						status: "open",
+						createdAt: "2026-05-04T09:12:31.004Z",
+						updatedAt: "2026-05-04T09:12:31.004Z",
+						dependsOn: ["goal-ms6gwxrg-56c1bde6"],
+					},
 				],
 			})}\n`,
 			"utf8",
@@ -826,7 +834,7 @@ describe("worklist application service", () => {
 			ok: true,
 			action: "migrate_ids",
 			result: {
-				goals: [{ id: "goal-ms6gwxrg-56c1bde6" }],
+				goals: [{ id: "goal-ms6gwxrg-56c1bde6" }, { id: "dependency-graph" }],
 				retiredIds: [],
 			},
 			meta: {
@@ -851,11 +859,17 @@ describe("worklist application service", () => {
 			ok: true,
 			result: {
 				migrations: [{ from: "goal-ms6gwxrg-56c1bde6", to: "support-goal-templates" }],
+				goals: [
+					{ id: "support-goal-templates" },
+					{ id: "dependency-graph", dependsOn: ["support-goal-templates"] },
+				],
 			},
 			meta: {
 				changed: true,
 				semanticNoOp: false,
-				changedEntities: { projectGoalIds: ["support-goal-templates"] },
+				changedEntities: {
+					projectGoalIds: ["dependency-graph", "support-goal-templates"],
+				},
 				revisions: { project: "2" },
 			},
 		});
