@@ -479,7 +479,19 @@
         "goal-mse1szxx-daa779cc"
       ],
       "group": "Later"
+    },
+    {
+      "id": "link-flag-write-the-reserved-links",
+      "title": "link-flag: write the reserved links field from add and update",
+      "description": "Give the `links` field a writer, so the schema landed by schema-fields stops being unreachable. Today `links` has a type (`ProjectGoal.links?: string[]`), store validation and preservation (`OPTIONAL_GOAL_STRING_ARRAY_FIELDS`), and two readers - `project show` renders a `links:` block and the goal board's detail pane wraps each URL verbatim - but nothing anywhere sets it: `ProjectGoalUpdate` carries only title, description, appendDescription, group, and dependsOn, and no CLI flag or tool argument reaches it. That was deliberate at the time; the schema-fields PR reserved `links` and `branch` \"for the goals that own their writers\". `branch` has its owner in project-start, which writes it as the dispatch marker; `links` has no such goal, so the field is currently write-only-by-hand, and hand-editing .pi/worklist.json is exactly what the skill forbids because it bypasses the lock, validation, and timestamps. The demand is already real: migrating the colony repository's goals off GitHub Issues left 5 of them carrying their origin issue URL as an `orig: https://...` prose line, because there was nowhere structured to put it, and a 2026-08-05 audit of that worklist found duplicated prose metadata drifting from the fields it shadowed - the same failure mode this field exists to prevent. Add `--link <url>` to add and update, repeatable to name several, mirroring how `--depends-on` threads from cli-contract.ts through ProjectGoalUpdate and application-service.ts into the mutation; on update the flag replaces the whole set, and a single empty value clears it, so the two array fields behave identically and nobody has to remember which is which. Validate each entry as an absolute http or https URL and reject anything else with a usage error: the field's contract is that it carries no machine semantics, which is a rule about not parsing links for state, not a licence to store junk a reader will wrap across three lines. Decide at implementation whether to dedupe and cap the count. Expose it on the same surfaces `--group` reached - the CLI and the model tool - and regenerate docs/cli.md and the skill from the contract rather than editing either by hand. Tests should cover setting, appending by re-passing the full set, clearing, rejection of a non-URL, and round-trip preservation of an existing links array through an unrelated update, which is the regression that would silently drop data. The change is additive: PROJECT_WORKLIST_VERSION stays 1, existing files load unchanged, and the merge-driver goal's plan to union `dependsOn` and `links` on merge keeps working as written. Out of scope: `branch`, whose writer belongs to project-start, and any behavior that reads meaning out of a link.",
+      "group": "Foundation",
+      "dependsOn": [
+        "description-flag-order-independent"
+      ],
+      "status": "open",
+      "createdAt": "2026-08-05T15:33:01.104Z",
+      "updatedAt": "2026-08-05T15:33:01.104Z"
     }
   ],
-  "revision": 192
+  "revision": 193
 }
