@@ -261,6 +261,15 @@
       "group": "TUI"
     },
     {
+      "id": "pi-tui-parity-mirror-board-polish-in",
+      "title": "pi-tui-parity: mirror board polish in the Pi widget and dashboard",
+      "description": "Depends on: tui-polish, tui-groups. Bring the inline Pi surfaces up to the same visual system as the terminal board so the board does not become the favored child: status dimming and staleness markers in the dashboard goal list, group sections in the dashboard, a counts line and distinct active-goal treatment in the widget, and the new schema fields (group, dependencies, completedAt) surfaced in the dashboard detail view. One visual language, two renderers: keep every treatment consistent with what tui-polish and tui-groups established rather than inventing a second style.",
+      "status": "open",
+      "createdAt": "2026-08-04T20:13:32.848Z",
+      "updatedAt": "2026-08-04T20:15:19.888Z",
+      "group": "TUI"
+    },
+    {
       "id": "project-start-mark-a-goal-in-flight-and",
       "title": "project-start: mark a goal in flight and record its branch",
       "description": "Depends on: slug-ids, schema-fields. Add project start <id> [--branch <name>]: records the branch in the dedicated branch field (not links, which stays purely informational) as the started or dispatched marker and leaves active semantics untouched; single active remains the focus concept, and in-flight only appears when fan-out is used. Create the branch only when asked, since treehouse owns worktree and branch creation in fan-out flows. Define the full marker lifecycle so a claim always has a release: project complete clears the branch field, and a start --clear release action un-claims an abandoned dispatch, so a reopened or orphaned goal never stays invisible to ready forever. Because ready excludes goals with the branch field set, the marker doubles as a crash-safe dispatch ledger.",
@@ -393,5 +402,5 @@
       "group": "Later"
     }
   ],
-  "revision": 128
+  "revision": 131
 }
