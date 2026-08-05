@@ -7,7 +7,8 @@
       "description": "Let the user select a Project Goal from the Worklist dashboard and request orchestration through a versioned capability handshake. Show the action only when pi-orchestrator is available, pass the stable goal ID and current goal revision, preserve explicit approval before execution, and keep retry, cancellation, logs, evidence, and run control in the orchestrator rather than duplicating those controls in pi-worklist.",
       "status": "archived",
       "createdAt": "2026-07-13T00:00:00.000Z",
-      "updatedAt": "2026-08-04T00:20:56.716Z"
+      "updatedAt": "2026-08-05T04:01:15.492Z",
+      "group": "Orchestrator"
     },
     {
       "id": "add-a-versioned-inter-extension",
@@ -15,10 +16,11 @@
       "description": "Expose a machine-oriented integration protocol over Pi's shared pi.events bus so pi-orchestrator can discover capabilities, read the active or selected Project Goal, list Session Tasks, reconcile task projections, and update projected execution state without invoking the model-facing tool, instantiating another SessionStore, editing .pi/worklist.json, or appending snapshots directly. Include protocol versions, request IDs, actor and run correlation metadata, deterministic result envelopes, changed-field and semantic no-op reporting, typed error codes with retryability and conflict details, bounded read projections, timeouts, capability negotiation, and a graceful unavailable or incompatible fallback. Route the tool, command, dashboard, CLI, and inter-extension requests through one mutation service so every interface applies identical validation and persistence rules.",
       "status": "done",
       "createdAt": "2026-07-24T02:12:07.823Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-05T04:01:15.588Z",
       "previousIds": [
         "goal-mryb1h5b-f5473d74"
-      ]
+      ],
+      "group": "Orchestrator"
     },
     {
       "id": "add-atomic-session-task-projection",
@@ -26,10 +28,11 @@
       "description": "Provide one serialized batch operation that upserts all Session Task projections for an orchestration run by stable external identity, updates existing projections, creates missing projections, preserves unrelated user-created tasks and canonical queue order, and appends exactly one session snapshot. Make reconciliation idempotent across retries, recovery, /tree, /fork, /clone, and /resume so pi-orchestrator can safely rebuild the current session view without duplicating tasks.",
       "status": "done",
       "createdAt": "2026-07-24T02:12:07.825Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-05T04:01:15.684Z",
       "previousIds": [
         "goal-mryb1h5d-8654f513"
-      ]
+      ],
+      "group": "Orchestrator"
     },
     {
       "id": "enforce-project-goal-association",
@@ -37,10 +40,11 @@
       "description": "Validate that every orchestrator-managed Session Task goalId refers to an existing Project Goal and reject orchestration of done or archived goals unless the user explicitly reopens them. Return the goal's stable ID and revision or updatedAt value so pi-orchestrator can snapshot the exact goal used for planning and detect edits before approval. Define safe behavior for deletion, archival, reopening, and temporarily orphaned projections without weakening explicit confirmation for destructive Project Goal lifecycle actions.",
       "status": "done",
       "createdAt": "2026-07-24T02:12:07.826Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-05T04:01:15.779Z",
       "previousIds": [
         "goal-mryb1h5e-e452f08c"
-      ]
+      ],
+      "group": "Orchestrator"
     },
     {
       "id": "add-revisions-and-idempotent-external",
@@ -48,10 +52,11 @@
       "description": "Add monotonic revisions to Project Worklists and branch-aware concurrency tokens or snapshot entry IDs to Session Task snapshots, support optional expectedRevision checks, and accept idempotency keys for external batch creation and status updates. A semantic no-op must not rewrite .pi/worklist.json, append a Session Task snapshot, increment a revision, or emit a change event. Preserve the existing cross-process lock, atomic rename, branch-aware snapshot semantics, and backward readers while returning explicit typed conflicts instead of allowing a resumed orchestrator to overwrite newer user changes.",
       "status": "done",
       "createdAt": "2026-07-24T02:12:07.827Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-05T04:01:15.880Z",
       "previousIds": [
         "goal-mryb1h5f-49db693f"
-      ]
+      ],
+      "group": "Foundation"
     },
     {
       "id": "publish-structured-worklist-change",
@@ -59,10 +64,11 @@
       "description": "Emit compact versioned events after every successful tool, command, dashboard, or external mutation. Include scope, resulting revision, changed entity IDs, actor, mutation type, timestamp, and optional orchestration run or correlation ID so pi-orchestrator can detect user edits, moves, deletions, and status changes. Keep events live and queryable through current snapshots for initial integration rather than duplicating the orchestrator's durable event journal.",
       "status": "done",
       "createdAt": "2026-07-24T02:12:07.829Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-05T04:01:15.970Z",
       "previousIds": [
         "goal-mryb1h5h-bb98956e"
-      ]
+      ],
+      "group": "Orchestrator"
     },
     {
       "id": "define-managed-session-task-override",
@@ -70,10 +76,11 @@
       "description": "Mark orchestrator-managed Session Tasks clearly while preserving user control over editing, moving, deleting, and changing their status. Emit a divergence event for user overrides, require pi-orchestrator to pause or reconcile instead of silently restoring stale data, define how managed projections detach when a run ends, and retain the rule that successful tasks never automatically complete their associated Project Goal.",
       "status": "done",
       "createdAt": "2026-07-24T02:12:07.830Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-05T04:01:16.062Z",
       "previousIds": [
         "goal-mryb1h5i-8ea0e01c"
-      ]
+      ],
+      "group": "Orchestrator"
     },
     {
       "id": "ship-a-compiled-pi-worklist-cli-bin",
@@ -81,10 +88,11 @@
       "description": "Publish an executable bin so npx pi-worklist works from the installed npm package. Compile the CLI to JavaScript at build or publish time because Node refuses to type-strip TypeScript under node_modules, while preserving the package's Node >=20 support. Provide compact bounded list output, explicit full-detail reads, deterministic mutation confirmations, stable --json result envelopes, typed errors and exit codes, and CLI, skill, and agent guidance generated from one command contract. Keep the CLI on the same application service as the Pi extension so behavior and validation cannot drift.",
       "status": "done",
       "createdAt": "2026-07-24T17:26:03.792Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-05T04:01:16.155Z",
       "previousIds": [
         "goal-mrz7osuo-4849456d"
-      ]
+      ],
+      "group": "Foundation"
     },
     {
       "id": "represent-orchestrator-managed-session",
@@ -92,10 +100,11 @@
       "description": "Add a versioned, branch-aware projection schema containing producer and external identity, orchestration run ID, step ID, approved plan revision, read-only execution state, timestamps, and bounded result or session-contribution references. Preserve todo, doing, and done as the user-facing lifecycle, keep attempts, retries, artifacts, evidence, and recovery canonical in pi-orchestrator, and migrate older snapshots without changing existing IDs or exposing hidden metadata in normal model context.",
       "status": "done",
       "createdAt": "2026-07-24T18:18:33.262Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-05T04:01:16.260Z",
       "previousIds": [
         "goal-mrz9kazy-ba655dee"
-      ]
+      ],
+      "group": "Orchestrator"
     },
     {
       "id": "provide-bounded-list-and-explicit",
@@ -103,10 +112,11 @@
       "description": "Make model tool, command, and CLI list operations return a compact projection containing ID, title, status, goal association, and lightweight projected execution state. Truncate long descriptions with an explicit show or get --full path, support allow-listed fields, status filters, archived filters, and result limits, and provide complete structured details only when requested. Preserve complete stored data and do not introduce TOON as a dependency.",
       "status": "done",
       "createdAt": "2026-07-24T18:18:33.263Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-05T04:01:16.355Z",
       "previousIds": [
         "goal-mrz9kazz-630a45ae"
-      ]
+      ],
+      "group": "Foundation"
     },
     {
       "id": "add-orchestration-aware-worklist-ui",
@@ -114,10 +124,11 @@
       "description": "Show managed-task badges, projected execution state, failures, and bounded run or result references in the Worklist dashboard and widget. Provide an action that opens the associated pi-orchestrator run while keeping retry, cancellation, logs, artifacts, evidence, and recovery controls in pi-orchestrator.",
       "status": "archived",
       "createdAt": "2026-07-24T18:18:33.264Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-05T04:01:16.455Z",
       "previousIds": [
         "goal-mrz9kb00-72e82709"
-      ]
+      ],
+      "group": "Orchestrator"
     },
     {
       "id": "add-pi-orchestrator-compatibility-and",
@@ -125,10 +136,11 @@
       "description": "Exercise capability negotiation, Project Goal selection, atomic projection reconciliation, deterministic result envelopes, typed conflicts, semantic no-ops, user overrides, /tree, /fork, /clone, /resume, session replacement, recovery, absent or incompatible orchestrator versions, and explicit Project Goal completion boundaries in real Pi integration tests.",
       "status": "archived",
       "createdAt": "2026-07-24T18:18:33.265Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-05T04:01:16.548Z",
       "previousIds": [
         "goal-mrz9kb01-0b0a7daa"
-      ]
+      ],
+      "group": "Orchestrator"
     },
     {
       "id": "add-approved-project-goal-batch-creation",
@@ -136,10 +148,11 @@
       "description": "Expose a versioned inter-extension capability that atomically and idempotently creates a validated batch of Project Goals from an explicitly approved orchestrator roadmap. Require expected-revision checks, stable external roadmap and repository references, bounded provenance, typed conflict results, and explicit user approval for the exact batch. Preserve standalone pi-worklist behavior, reject silent goal rewrites or completion, and keep roadmap dependencies, execution state, artifacts, and evidence canonical in pi-orchestrator.",
       "status": "done",
       "createdAt": "2026-07-24T18:31:54.214Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-05T04:01:16.647Z",
       "previousIds": [
         "goal-mrza1h0o-24e2abdf"
-      ]
+      ],
+      "group": "Orchestrator"
     },
     {
       "id": "add-optimistic-concurrency-and-append",
@@ -147,10 +160,11 @@
       "description": "project update replaces the whole description, which is racy and error-prone for external callers: the cross-process lock serializes writes but nothing detects that the caller's baseline was stale, so two sessions that both read then update silently last-writer-clobber, and changing one line means faithfully re-supplying the entire multi-paragraph blob. Add (a) an optimistic-concurrency guard, e.g. --expect-updated-at <timestamp>, rejecting with the existing exit-code-4 conflict semantics when the goal changed after the caller's read, and (b) an additive primitive, e.g. --append-description <text>, so the common add-a-note case never rewrites the blob at all. Motivated 2026-07-31 by an agent session in the colony repo that had to reconstruct a long stage-E goal description just to add a staleness note and one soft-dep token.",
       "status": "done",
       "createdAt": "2026-07-31T19:38:52.196Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-05T04:01:16.746Z",
       "previousIds": [
         "goal-ms9cijz9-c8b6b3b8"
-      ]
+      ],
+      "group": "Foundation"
     },
     {
       "id": "stop-npx-cache-serving-a-stale-cli-that",
@@ -158,10 +172,11 @@
       "description": "The misplaced-flag warning from PR #10 works but never reaches anyone following the generated docs, because npx serves a cached older build.\n\nEvidence, gathered 2026-08-03 against a warm cache:\n- 'npx -y pi-worklist project add T -- D --json' printed nothing on stderr and stored the description as 'D --json'.\n- 'npx -y pi-worklist@latest ...' with identical arguments printed the warning correctly.\n- ~/.npm/_npx held pi-worklist 0.5.0, 0.6.0 (twice) and 0.8.0; none contain MISPLACED_GLOBAL_FLAG. The registry latest is 0.8.1.\n- The published 0.8.1 tarball DOES contain the fix in both dist/cli.js and src/cli.ts, and 'node src/cli.ts' from a checkout warns correctly. So the fix is sound; only the delivery is broken.\n- '-y' suppresses the install prompt; it does not force a re-resolve when a cache entry already exists.\n\nThis bit a real session: three goal descriptions were silently contaminated with a literal '--json' and had to be found and stripped by hand, which is exactly the failure the warning was written to prevent.\n\nFix in src/cli-contract.ts, which generates both docs/cli.md and the agent skill. Lines 245, 270, 286 and 296 all emit the bare 'npx -y ${contract.binary}' form. Emitting 'npx -y pi-worklist@latest' (or a pinned version) makes a stale cache unable to win, and every consumer of the generated skill picks it up on the next regeneration.\n\nWorth pairing with: put the running version on the result envelope's meta, so 'which build am I actually on' is one command rather than an inference from ~/.npm/_npx directory names.",
       "status": "done",
       "createdAt": "2026-08-03T20:21:15.233Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-05T04:01:16.844Z",
       "previousIds": [
         "goal-msdocm75-9bedb8be"
-      ]
+      ],
+      "group": "Foundation"
     },
     {
       "id": "slug-ids-human-readable-goal-ids-and",
@@ -204,9 +219,9 @@
       "id": "dependency-graph-dependson-edges-with",
       "title": "dependency-graph: dependsOn edges with cycle checks and blocked state",
       "description": "Depends on: slug-ids, schema-fields. Store only the forward direction (dependsOn: string[]) and derive blocks at read time. An edge means must-land-before, whether the reason is logical or file overlap; a dependency is satisfied when its target is done or archived. DFS cycle check at mutation time with a new dependency-cycle error code; reject self references and unknown IDs; strip edges to a deleted goal inside the same atomic mutation. Blocked is a derived display state, not a status: dim blocked goals in the board and warn rather than refuse on set_active. Show depends-on and blocks in project show; repeatable --depends-on flag on add and update. Backfill the captured plan goals by migrating their prose Depends on: description lines into real dependsOn edges and deleting the migrated prose lines, so prose and edges cannot drift apart. Document that file order is presentation and tiebreak while the DAG is the source of truth for what may start; the two are allowed to disagree and neither should be edited to mirror the other.",
-      "status": "open",
+      "status": "active",
       "createdAt": "2026-08-04T02:37:25.384Z",
-      "updatedAt": "2026-08-04T20:06:58.032Z",
+      "updatedAt": "2026-08-05T04:23:12.435Z",
       "previousIds": [
         "goal-mse1sdfs-d2fbda2c"
       ],
@@ -402,5 +417,5 @@
       "group": "Later"
     }
   ],
-  "revision": 131
+  "revision": 149
 }
