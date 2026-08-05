@@ -152,7 +152,10 @@ export async function runGoalBoard(options: GoalBoardRuntimeOptions): Promise<vo
 		const envelope = await service.execute(operation, { source: "cli" });
 		if (envelope.ok) {
 			await reload();
-			board.setMessage(success, "success");
+			const blockedBy = envelope.result.blockedBy ?? [];
+			if (blockedBy.length > 0) {
+				board.setMessage(`Warning: ${success}; blocked by ${blockedBy.join(", ")}.`, "info");
+			} else board.setMessage(success, "success");
 			return;
 		}
 		// A conflict means another writer moved first; show canonical state, not stale rows.

@@ -123,6 +123,23 @@ describe("goal board runtime", () => {
 		expect((await board.goals())[0].status).toBe("active");
 	});
 
+	it("warns when activating a blocked goal while preserving success", async () => {
+		const root = await tempGitRepo();
+		await seed(root, ["add", "Slug ids"]);
+		await seed(root, ["add", "Dependency graph", "--depends-on", "slug-ids"]);
+		const board = await openBoard(root);
+		board.send(`${ESC}[B `);
+		await waitFor(
+			() =>
+				board.output.text.includes("Warning: Activated") && board.output.text.includes("blocked by slug-ids"),
+			"the blocked activation warning",
+		);
+		board.send("q");
+		await board.done;
+
+		expect((await board.goals()).find((goal) => goal.id === "dependency-graph")?.status).toBe("active");
+	});
+
 	it("completes the active goal only after an explicit yes", async () => {
 		const root = await tempGitRepo();
 		await seed(root, ["add", "Replace legacy auth"]);

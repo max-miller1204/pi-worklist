@@ -331,7 +331,8 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 		const goal = projectGoals.find((item) => item.id === action.id);
 		if (!goal) return true;
 		if (goal.status === "open") {
-			await execute({ scope: "project", action: "set_active", id: goal.id }, ctx, "dashboard");
+			const result = await execute({ scope: "project", action: "set_active", id: goal.id }, ctx, "dashboard");
+			if (result.details.blockedBy?.length) ctx.ui.notify(result.content, "warning");
 		} else {
 			const actionName = goal.status === "active" ? "complete" : "reopen";
 			const confirmed = await ctx.ui.confirm(`${actionName} project goal?`, goal.title);
