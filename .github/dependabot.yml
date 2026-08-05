@@ -16,3 +16,14 @@ updates:
         update-types:
           - minor
           - patch
+      # Everything outside the pi group would otherwise open one PR per package.
+      # Batch the routine dev bumps into a single PR; majors stay ungrouped so
+      # they arrive individually and get reviewed on their own merits.
+      dev-deps:
+        dependency-type: development
+        exclude-patterns:
+          - "@earendil-works/pi-*"
+          - typebox
+        update-types:
+          - minor
+          - patch
