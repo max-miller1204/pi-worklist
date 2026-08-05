@@ -217,6 +217,15 @@ export async function runGoalBoard(options: GoalBoardRuntimeOptions): Promise<vo
 					await applyOperation(intent.operation, intent.success);
 					return;
 				}
+				if (intent.kind === "reorder") {
+					const operation = board.resolveReorder(intent);
+					if (!operation) {
+						board.setMessage(intent.delta < 0 ? "Already first." : "Already last.", "info");
+						return;
+					}
+					await applyOperation(operation, intent.success);
+					return;
+				}
 				await editDescription(intent.goal);
 			})
 			.catch((error: unknown) => {

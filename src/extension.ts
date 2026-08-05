@@ -157,7 +157,7 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 		name: "worklist",
 		label: "Worklist",
 		description:
-			"Manage branch-aware, ordered Session Tasks or repository-wide Project Goals. Session add accepts optional beforeId or afterId; session move requires exactly one. Project Goals cannot be reordered. Project complete, reopen, archive, and delete require confirm=true after explicit user intent.",
+			"Manage branch-aware, ordered Session Tasks or repository-wide Project Goals. Session add accepts optional beforeId or afterId; session move requires exactly one. Project move requires exactly one of beforeId or afterId. Project complete, reopen, archive, and delete require confirm=true after explicit user intent.",
 		promptSnippet: "Manage small Session Task chunks and repository-scoped Project Goals",
 		promptGuidelines: [...WORKLIST_PROMPT_GUIDELINES],
 		parameters: WorklistParamsSchema,
@@ -255,7 +255,7 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 		if (action.kind === "move") {
 			await execute(
 				{
-					scope: "session",
+					scope: action.scope,
 					action: "move",
 					id: action.id,
 					...(action.beforeId !== undefined ? { beforeId: action.beforeId } : {}),

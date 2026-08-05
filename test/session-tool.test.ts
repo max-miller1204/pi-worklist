@@ -442,11 +442,25 @@ describe("session state and tool", () => {
 			{ params: { scope: "session" as const, action: "list", beforeId: "a" }, error: "only supported" },
 			{
 				params: { scope: "project" as const, action: "add", title: "Goal", afterId: "a" },
-				error: "Project Goal reordering",
+				error: "only supported for project move",
 			},
 			{
-				params: { scope: "project" as const, action: "move", id: "a", beforeId: "b" },
-				error: "Project Goal reordering",
+				params: { scope: "session" as const, action: "move", id: "a", direction: "up" as const },
+				error: "direction is only supported for project move",
+			},
+			{
+				params: {
+					scope: "project" as const,
+					action: "move",
+					id: "a",
+					beforeId: "b",
+					direction: "up" as const,
+				},
+				error: "mutually exclusive",
+			},
+			{
+				params: { scope: "project" as const, action: "move", id: "a", direction: "sideways" as never },
+				error: "direction must be up or down",
 			},
 		];
 		for (const { params, error } of invalidCalls) {
@@ -588,11 +602,15 @@ describe("registered model tool", () => {
 	});
 
 	it("exposes the session ordering surface to the model", () => {
-		const parameters = registerExtension().parameters as {
+		const tool = registerExtension();
+		const parameters = tool.parameters as {
 			properties: Record<string, { enum?: string[]; description?: string }>;
 		};
 		expect(parameters.properties.action.enum).toContain("move");
+		expect(parameters.properties.id.description).toContain("for move");
 		expect(parameters.properties.beforeId).toBeDefined();
 		expect(parameters.properties.afterId).toBeDefined();
+		expect(tool.description).toContain("Project move requires exactly one of beforeId or afterId");
+		expect(tool.description).not.toContain("Project Goals cannot be reordered");
 	});
 });

@@ -9,8 +9,23 @@ export interface SessionTask {
 }
 
 export type SessionTaskPlacement =
-	| { beforeId: string; afterId?: never }
-	| { beforeId?: never; afterId: string };
+	| { beforeId: string; afterId?: never; direction?: never }
+	| { beforeId?: never; afterId: string; direction?: never };
+
+/** Move one step through canonical file order, whatever a display sort shows. */
+export type ProjectGoalDirection = "up" | "down";
+
+/**
+ * Where a Project Goal lands in canonical file order.
+ *
+ * An anchor is the general form and the one a filtered view needs, because the
+ * caller has already decided which goal to land beside. A direction is resolved
+ * under the lock instead, so a one-step move cannot read a neighbor that another
+ * writer has moved by the time the mutation runs.
+ */
+export type ProjectGoalPlacement =
+	| SessionTaskPlacement
+	| { beforeId?: never; afterId?: never; direction: ProjectGoalDirection };
 
 export interface ProjectGoal {
 	id: string;
@@ -19,6 +34,32 @@ export interface ProjectGoal {
 	status: ProjectGoalStatus;
 	createdAt: string;
 	updatedAt: string;
+	/**
+	 * Free-form section this goal belongs to. A group exists exactly when some
+	 * goal names it, so there is no separate list of groups to keep in step.
+	 */
+	group?: string;
+	/**
+	 * When the goal was completed. Set by `complete` and cleared by `reopen`,
+	 * so it always agrees with the status rather than recording a stale run.
+	 *
+	 * Absent on a goal completed before this field existed: the moment is
+	 * genuinely unknown, and stamping "now" onto it would invent history.
+	 */
+	completedAt?: string;
+	/**
+	 * Informational URLs. Deliberately carries no machine semantics, so nothing
+	 * can come to depend on parsing a link for state.
+	 */
+	links?: string[];
+	/**
+	 * The branch this goal is being worked on, written when a goal is dispatched.
+	 *
+	 * State markers get a dedicated field rather than being encoded into `links`,
+	 * so reading whether a goal is in flight never becomes a string heuristic
+	 * over prose a user is free to edit.
+	 */
+	branch?: string;
 	/**
 	 * IDs this goal answered to before an ID migration renamed it, oldest first.
 	 * They stay resolvable and reserved, so references written down elsewhere
@@ -45,6 +86,11 @@ export interface ProjectWorklist {
 	version: number;
 	/** Absent only in legacy version 1 files, which readers normalize to revision 0. */
 	revision?: number;
+	/**
+	 * Goals in canonical order. The array order is the roadmap's order: it is what
+	 * a new goal is appended to, what `move` rearranges, and what every reader
+	 * displays unless the reader was explicitly asked for another arrangement.
+	 */
 	goals: ProjectGoal[];
 	/** IDs formerly owned by deleted goals. Reserved permanently, but not resolvable. */
 	retiredIds?: string[];

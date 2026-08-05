@@ -2,7 +2,8 @@ import { randomBytes } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import lockfile from "proper-lockfile";
-import type { ProjectGoal, ProjectWorklist, RevisionedProjectWorklist } from "./types.ts";
+import { findGoalByStoredId } from "./goal-selection.ts";
+import type { ProjectWorklist, RevisionedProjectWorklist } from "./types.ts";
 import { PROJECT_WORKLIST_VERSION } from "./types.ts";
 
 export interface ProjectStoreResult<T> {
@@ -83,14 +84,20 @@ function assertGoalPrecondition(
 	precondition: ProjectGoalPrecondition | undefined,
 ): void {
 	if (!precondition) return;
-	const target = worklist.goals.find((goal) => goal.id === precondition.id);
+	const target = findGoalByStoredId(worklist.goals, precondition.id, worklist.retiredIds ?? []);
 	if (!target || isSameInstant(precondition.updatedAt, target.updatedAt)) return;
-	throw new ProjectGoalConflictError(precondition.id, precondition.updatedAt, target.updatedAt);
+	throw new ProjectGoalConflictError(target.id, precondition.updatedAt, target.updatedAt);
 }
 
 function isStringArray(value: unknown): value is string[] {
 	return Array.isArray(value) && value.every((entry) => typeof entry === "string");
 }
+
+/** Optional goal fields carrying a single string, validated the same way. */
+const OPTIONAL_GOAL_STRING_FIELDS = ["description", "group", "completedAt", "branch"] as const;
+
+/** Optional goal fields carrying a list of strings. */
+const OPTIONAL_GOAL_STRING_ARRAY_FIELDS = ["links", "previousIds"] as const;
 
 export function isProjectWorklist(value: unknown): value is ProjectWorklist {
 	if (typeof value !== "object" || value === null) return false;
@@ -106,11 +113,15 @@ export function isProjectWorklist(value: unknown): value is ProjectWorklist {
 		const goal = g as Record<string, unknown>;
 		if (typeof goal.id !== "string") return false;
 		if (typeof goal.title !== "string") return false;
-		if (goal.description !== undefined && typeof goal.description !== "string") return false;
 		if (!["open", "active", "done", "archived"].includes(goal.status as string)) return false;
 		if (typeof goal.createdAt !== "string") return false;
 		if (typeof goal.updatedAt !== "string") return false;
-		if (goal.previousIds !== undefined && !isStringArray(goal.previousIds)) return false;
+		for (const field of OPTIONAL_GOAL_STRING_FIELDS) {
+			if (goal[field] !== undefined && typeof goal[field] !== "string") return false;
+		}
+		for (const field of OPTIONAL_GOAL_STRING_ARRAY_FIELDS) {
+			if (goal[field] !== undefined && !isStringArray(goal[field])) return false;
+		}
 	}
 	return true;
 }
@@ -216,8 +227,4 @@ export async function mutateProjectWorklist<T>(
 		if (tempName) await rm(tempName, { force: true });
 		await release();
 	}
-}
-
-export function sortGoals(goals: ProjectGoal[]): ProjectGoal[] {
-	return [...goals].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 }

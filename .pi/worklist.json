@@ -166,212 +166,232 @@
     {
       "id": "slug-ids-human-readable-goal-ids-and",
       "title": "slug-ids: human-readable goal IDs and CLI prefix matching",
-      "description": "Group: Foundation. Depends on: none. Derive goal IDs from the title at creation (lowercase, hyphens, capped around 40 chars), append -2/-3 on collisions, and freeze the slug afterward so renaming a title never renames the ID. Add unique-prefix ID matching to every CLI id argument, listing candidates on ambiguity. Also add a find <text> action or --match selector over titles and descriptions that returns matching goals with their IDs, absorbing the earlier goal-search goal so external agents stop doing list --json plus client-side grep. Include an optional migrate-ids command that rewrites existing random IDs and every reference to them: SessionTask.goalId now, and dependsOn edges too if it is ever re-run after dependency-graph lands. Decide at migration time whether done and archived goals keep their historical IDs so references in old PR descriptions and evidence files stay valid. Avoid sequential numeric IDs: parallel branches would mint colliding numbers.",
+      "description": "Depends on: none. Derive goal IDs from the title at creation (lowercase, hyphens, capped around 40 chars), append -2/-3 on collisions, and freeze the slug afterward so renaming a title never renames the ID. Add unique-prefix ID matching to every CLI id argument, listing candidates on ambiguity. Also add a find <text> action or --match selector over titles and descriptions that returns matching goals with their IDs, absorbing the earlier goal-search goal so external agents stop doing list --json plus client-side grep. Include an optional migrate-ids command that rewrites existing random IDs and every reference to them: SessionTask.goalId now, and dependsOn edges too if it is ever re-run after dependency-graph lands. Decide at migration time whether done and archived goals keep their historical IDs so references in old PR descriptions and evidence files stay valid. Avoid sequential numeric IDs: parallel branches would mint colliding numbers.",
       "status": "done",
       "createdAt": "2026-08-04T02:37:07.871Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-04T20:06:57.745Z",
       "previousIds": [
         "goal-mse1rzxb-8213cc2a"
-      ]
+      ],
+      "group": "Foundation"
     },
     {
       "id": "tui-polish-quick-readability-wins-in",
       "title": "tui-polish: quick readability wins in the goal board",
-      "description": "Group: TUI. Depends on: none. Pin the active goal to the top with a distinct marker, dim done and archived rows in the all view, add staleness markers for goals untouched for 30+ days, and show per-status counts in the header. Sorting is deliberately out of scope: the sort cycle moved into schema-fields so it is built once on canonical file order instead of shipping on createdAt and being reworked one goal later.",
+      "description": "Depends on: none. Pin the active goal to the top with a distinct marker, dim done and archived rows in the all view, add staleness markers for goals untouched for 30+ days, and show per-status counts in the header. Sorting is deliberately out of scope: the sort cycle moved into schema-fields so it is built once on canonical file order instead of shipping on createdAt and being reworked one goal later.",
       "status": "done",
       "createdAt": "2026-08-04T02:37:07.968Z",
-      "updatedAt": "2026-08-04T18:51:58.708Z",
+      "updatedAt": "2026-08-04T20:06:57.836Z",
       "previousIds": [
         "goal-mse1s000-0b246515"
-      ]
+      ],
+      "group": "TUI"
     },
     {
       "id": "schema-fields-group-completedat-links",
       "title": "schema-fields: group, completedAt, links, and manual ordering",
-      "description": "Group: Foundation. Depends on: slug-ids. One contract churn adding optional ProjectGoal fields: group (free-form section string; a group exists iff some goal names it), completedAt (set on complete, cleared on reopen), links (purely informational URL string array with no machine semantics), and branch (a dedicated string field serving as the dispatch-ledger marker written by project-start; state markers get their own field rather than overloading links with load-bearing heuristics). Make file order canonical for display instead of createdAt sort, add move up/down mutations, and build the goal-board sort cycle here on top of file order (moved out of tui-polish so it is built once instead of reworked one goal later). Backfill the captured plan goals by migrating their prose Group: description lines into the real group field and deleting the migrated prose lines, so prose and fields cannot drift apart. Keep PROJECT_WORKLIST_VERSION at 1; fields are optional and additive. Touch typebox schema, project-mutations validation, canonicalChangedFields, cli-contract docs, and the TUI detail view.",
-      "status": "open",
+      "description": "Depends on: slug-ids. One contract churn adding optional ProjectGoal fields: group (free-form section string; a group exists iff some goal names it), completedAt (set on complete, cleared on reopen), links (purely informational URL string array with no machine semantics), and branch (a dedicated string field serving as the dispatch-ledger marker written by project-start; state markers get their own field rather than overloading links with load-bearing heuristics). Make file order canonical for display instead of createdAt sort, add move up/down mutations, and build the goal-board sort cycle here on top of file order (moved out of tui-polish so it is built once instead of reworked one goal later). Backfill the captured plan goals by migrating their prose Group: description lines into the real group field and deleting the migrated prose lines, so prose and fields cannot drift apart. Keep PROJECT_WORKLIST_VERSION at 1; fields are optional and additive. Touch typebox schema, project-mutations validation, canonicalChangedFields, cli-contract docs, and the TUI detail view.",
+      "status": "done",
       "createdAt": "2026-08-04T02:37:08.070Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-04T20:09:28.380Z",
       "previousIds": [
         "goal-mse1s02u-ae3afbab"
-      ]
+      ],
+      "group": "Foundation",
+      "completedAt": "2026-08-04T20:09:28.380Z"
     },
     {
       "id": "dependency-graph-dependson-edges-with",
       "title": "dependency-graph: dependsOn edges with cycle checks and blocked state",
-      "description": "Group: Foundation. Depends on: slug-ids, schema-fields. Store only the forward direction (dependsOn: string[]) and derive blocks at read time. An edge means must-land-before, whether the reason is logical or file overlap; a dependency is satisfied when its target is done or archived. DFS cycle check at mutation time with a new dependency-cycle error code; reject self references and unknown IDs; strip edges to a deleted goal inside the same atomic mutation. Blocked is a derived display state, not a status: dim blocked goals in the board and warn rather than refuse on set_active. Show depends-on and blocks in project show; repeatable --depends-on flag on add and update. Backfill the captured plan goals by migrating their prose Depends on: description lines into real dependsOn edges and deleting the migrated prose lines, so prose and edges cannot drift apart. Document that file order is presentation and tiebreak while the DAG is the source of truth for what may start; the two are allowed to disagree and neither should be edited to mirror the other.",
+      "description": "Depends on: slug-ids, schema-fields. Store only the forward direction (dependsOn: string[]) and derive blocks at read time. An edge means must-land-before, whether the reason is logical or file overlap; a dependency is satisfied when its target is done or archived. DFS cycle check at mutation time with a new dependency-cycle error code; reject self references and unknown IDs; strip edges to a deleted goal inside the same atomic mutation. Blocked is a derived display state, not a status: dim blocked goals in the board and warn rather than refuse on set_active. Show depends-on and blocks in project show; repeatable --depends-on flag on add and update. Backfill the captured plan goals by migrating their prose Depends on: description lines into real dependsOn edges and deleting the migrated prose lines, so prose and edges cannot drift apart. Document that file order is presentation and tiebreak while the DAG is the source of truth for what may start; the two are allowed to disagree and neither should be edited to mirror the other.",
       "status": "open",
       "createdAt": "2026-08-04T02:37:25.384Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-04T20:06:58.032Z",
       "previousIds": [
         "goal-mse1sdfs-d2fbda2c"
-      ]
+      ],
+      "group": "Foundation"
     },
     {
       "id": "apply-plan-atomic-batch-import-of-a",
       "title": "apply-plan: atomic batch import of a JSON plan document",
-      "description": "Group: Capture. Depends on: slug-ids, schema-fields, dependency-graph. Read a JSON plan (array of goals with title, description, group, dependsOn) and apply it as one atomic mutation with one revision bump. Goals may reference each other and existing goals by slug before they exist. Pin the resolution order: a dependsOn reference matching a batch entry by pre-collision slug resolves to that batch entry deterministically, with a dry-run warning when it shadows an existing goal of the same slug; a reference matching no batch entry resolves against existing goals; a reference matching nothing anywhere, or two batch entries sharing a pre-collision slug, is a hard validation error. Without this rule a batch goal whose predicted slug collides with an existing goal (add-focus-mode becoming add-focus-mode-2) would silently wire its dependents to the wrong target. Validate everything before writing (cycles, unknown refs) and support a dry-run mode. The plan format stays a plain JSON mirror of the goal schema documented in the cli-contract docs; no custom markdown format.",
+      "description": "Depends on: slug-ids, schema-fields, dependency-graph. Read a JSON plan (array of goals with title, description, group, dependsOn) and apply it as one atomic mutation with one revision bump. Goals may reference each other and existing goals by slug before they exist. Pin the resolution order: a dependsOn reference matching a batch entry by pre-collision slug resolves to that batch entry deterministically, with a dry-run warning when it shadows an existing goal of the same slug; a reference matching no batch entry resolves against existing goals; a reference matching nothing anywhere, or two batch entries sharing a pre-collision slug, is a hard validation error. Without this rule a batch goal whose predicted slug collides with an existing goal (add-focus-mode becoming add-focus-mode-2) would silently wire its dependents to the wrong target. Validate everything before writing (cycles, unknown refs) and support a dry-run mode. The plan format stays a plain JSON mirror of the goal schema documented in the cli-contract docs; no custom markdown format.",
       "status": "open",
       "createdAt": "2026-08-04T02:37:25.489Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-04T20:06:58.128Z",
       "previousIds": [
         "goal-mse1sdip-fdcfc585"
-      ]
+      ],
+      "group": "Capture"
     },
     {
       "id": "sequencing-commands-project-next-ready",
       "title": "sequencing-commands: project next, ready, and waves",
-      "description": "Group: Workflow. Depends on: schema-fields, dependency-graph. Read commands over the DAG for humans and drivers: ready returns the full parallel frontier of open unblocked goals, excluding goals whose dedicated branch field is set (the dispatch marker written by project-start, never inferred from links); next returns the first entry of ready in file order, by definition, so a goal someone is already working on is never suggested; waves prints topological layers showing what can run in parallel and what each wave unblocks. All three support the --json envelope.",
+      "description": "Depends on: schema-fields, dependency-graph. Read commands over the DAG for humans and drivers: ready returns the full parallel frontier of open unblocked goals, excluding goals whose dedicated branch field is set (the dispatch marker written by project-start, never inferred from links); next returns the first entry of ready in file order, by definition, so a goal someone is already working on is never suggested; waves prints topological layers showing what can run in parallel and what each wave unblocks. All three support the --json envelope.",
       "status": "open",
       "createdAt": "2026-08-04T02:37:25.577Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-04T20:06:58.228Z",
       "previousIds": [
         "goal-mse1sdl6-dc932bd7"
-      ]
+      ],
+      "group": "Workflow"
     },
     {
       "id": "capture-skill-brainstorm-to-approved",
       "title": "capture-skill: brainstorm to approved plan to one apply",
-      "description": "Group: Capture. Depends on: apply-plan. Extend the worklist skill with a capture flow: draft a JSON plan document from a brainstorm session, show it for approval, then apply it with a single apply-plan call. Teach the skill to add a dependsOn edge between goals that will collide on the same modules even without a logical dependency, choosing the more natural order, since edges mean must-land-before.",
+      "description": "Depends on: apply-plan. Extend the worklist skill with a capture flow: draft a JSON plan document from a brainstorm session, show it for approval, then apply it with a single apply-plan call. Teach the skill to add a dependsOn edge between goals that will collide on the same modules even without a logical dependency, choosing the more natural order, since edges mean must-land-before.",
       "status": "open",
       "createdAt": "2026-08-04T02:37:25.671Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-04T20:06:58.358Z",
       "previousIds": [
         "goal-mse1sdnr-21dfc2f0"
-      ]
+      ],
+      "group": "Capture"
     },
     {
       "id": "tui-groups-collapsible-group-sections",
       "title": "tui-groups: collapsible group sections in the goal board",
-      "description": "Group: TUI. Depends on: schema-fields. Render goals under collapsible section headers with counts; ungrouped goals fall into an implicit last section. Collapse and expand on the header row with ephemeral per-run state initially. CLI: --group on add and update, list --group filter, group shown in project show.",
+      "description": "Depends on: schema-fields. Render goals under collapsible section headers with counts; ungrouped goals fall into an implicit last section. Collapse and expand on the header row with ephemeral per-run state initially. CLI: --group on add and update, list --group filter, group shown in project show.",
       "status": "open",
       "createdAt": "2026-08-04T02:37:39.763Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-04T20:06:58.452Z",
       "previousIds": [
         "goal-mse1soj7-f2b8683c"
-      ]
+      ],
+      "group": "TUI"
     },
     {
       "id": "project-start-mark-a-goal-in-flight-and",
       "title": "project-start: mark a goal in flight and record its branch",
-      "description": "Group: Workflow. Depends on: slug-ids, schema-fields. Add project start <id> [--branch <name>]: records the branch in the dedicated branch field (not links, which stays purely informational) as the started or dispatched marker and leaves active semantics untouched; single active remains the focus concept, and in-flight only appears when fan-out is used. Create the branch only when asked, since treehouse owns worktree and branch creation in fan-out flows. Define the full marker lifecycle so a claim always has a release: project complete clears the branch field, and a start --clear release action un-claims an abandoned dispatch, so a reopened or orphaned goal never stays invisible to ready forever. Because ready excludes goals with the branch field set, the marker doubles as a crash-safe dispatch ledger.",
+      "description": "Depends on: slug-ids, schema-fields. Add project start <id> [--branch <name>]: records the branch in the dedicated branch field (not links, which stays purely informational) as the started or dispatched marker and leaves active semantics untouched; single active remains the focus concept, and in-flight only appears when fan-out is used. Create the branch only when asked, since treehouse owns worktree and branch creation in fan-out flows. Define the full marker lifecycle so a claim always has a release: project complete clears the branch field, and a start --clear release action un-claims an abandoned dispatch, so a reopened or orphaned goal never stays invisible to ready forever. Because ready excludes goals with the branch field set, the marker doubles as a crash-safe dispatch ledger.",
       "status": "open",
       "createdAt": "2026-08-04T02:37:39.854Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-04T20:06:58.558Z",
       "previousIds": [
         "goal-mse1solq-31dcdc3e"
-      ]
+      ],
+      "group": "Workflow"
     },
     {
       "id": "root-session-recipe-herdr-treehouse",
       "title": "root-session-recipe: herdr/treehouse dispatch loop over the worklist",
-      "description": "Group: Automation. Depends on: apply-plan, sequencing-commands, project-start. A skill plus documented recipe implementing the fan-out loop purely as a consumer of the CLI contract; nothing in src/ knows about herdr or treehouse. Loop: apply-plan, then repeatedly read project ready --json, project start each dispatched goal, claim treehouse worktrees, open herdr panes running agent sessions with the goal as prompt, detect completion primarily via PR merge with herdr agent state for liveness, run project complete on main, and continue until the plan is done. Define the authorization model explicitly instead of quietly bypassing the --confirm guardrail: launching a root session on an approved plan constitutes standing consent to complete the goals of that plan when their PRs merge, scoped to plan goals with merge evidence only, and the CLI docs and worklist skill guardrails are updated to state this exception deliberately. A --max-parallel N knob sets concurrency per run; N=1 is a first-class auto-chain mode for serial projects. Worklist mutations happen on main only; the root session is the sole writer.",
+      "description": "Depends on: apply-plan, sequencing-commands, project-start. A skill plus documented recipe implementing the fan-out loop purely as a consumer of the CLI contract; nothing in src/ knows about herdr or treehouse. Loop: apply-plan, then repeatedly read project ready --json, project start each dispatched goal, claim treehouse worktrees, open herdr panes running agent sessions with the goal as prompt, detect completion primarily via PR merge with herdr agent state for liveness, run project complete on main, and continue until the plan is done. Define the authorization model explicitly instead of quietly bypassing the --confirm guardrail: launching a root session on an approved plan constitutes standing consent to complete the goals of that plan when their PRs merge, scoped to plan goals with merge evidence only, and the CLI docs and worklist skill guardrails are updated to state this exception deliberately. A --max-parallel N knob sets concurrency per run; N=1 is a first-class auto-chain mode for serial projects. Worklist mutations happen on main only; the root session is the sole writer.",
       "status": "open",
       "createdAt": "2026-08-04T02:37:39.944Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-04T20:06:58.654Z",
       "previousIds": [
         "goal-mse1soo9-697068d4"
-      ]
+      ],
+      "group": "Automation"
     },
     {
       "id": "focus-mode-show-only-session-tasks",
       "title": "focus-mode: show only Session Tasks linked to the active goal",
-      "description": "Group: Workflow. Depends on: none. Replaces earlier goal future-focus. Show only Session Tasks linked to the active Project Goal via SessionTask.goalId in the widget and dashboard, with a toggle to return to all tasks.",
+      "description": "Depends on: none. Replaces earlier goal future-focus. Show only Session Tasks linked to the active Project Goal via SessionTask.goalId in the widget and dashboard, with a toggle to return to all tasks.",
       "status": "open",
       "createdAt": "2026-08-04T02:37:40.036Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-04T20:06:58.757Z",
       "previousIds": [
         "goal-mse1soqs-0290e80a"
-      ]
+      ],
+      "group": "Workflow"
     },
     {
       "id": "task-promotion-promote-a-session-task",
       "title": "task-promotion: promote a Session Task into a Project Goal",
-      "description": "Group: Workflow. Depends on: slug-ids. Replaces earlier goal future-promote. Manually promote a Session Task into a Project Goal, carrying the title and recording promotedFrom provenance on the new goal.",
+      "description": "Depends on: slug-ids. Replaces earlier goal future-promote. Manually promote a Session Task into a Project Goal, carrying the title and recording promotedFrom provenance on the new goal.",
       "status": "open",
       "createdAt": "2026-08-04T02:37:40.130Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-04T20:06:58.853Z",
       "previousIds": [
         "goal-mse1sote-aa25f4e1"
-      ]
+      ],
+      "group": "Workflow"
     },
     {
       "id": "roadmap-md-generate-docs-roadmap-md",
       "title": "roadmap-md: generate docs/ROADMAP.md from the worklist",
-      "description": "Group: Visibility. Depends on: schema-fields. Render .pi/worklist.json to a committed docs/ROADMAP.md via the existing docs generator pipeline: sections by group, goals in file order, status and dependencies noted, so the roadmap reads on GitHub without the CLI.",
+      "description": "Depends on: schema-fields. Render .pi/worklist.json to a committed docs/ROADMAP.md via the existing docs generator pipeline: sections by group, goals in file order, status and dependencies noted, so the roadmap reads on GitHub without the CLI.",
       "status": "open",
       "createdAt": "2026-08-04T02:37:53.978Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-04T20:06:58.954Z",
       "previousIds": [
         "goal-mse1szi2-0010a190"
-      ]
+      ],
+      "group": "Visibility"
     },
     {
       "id": "project-stats-counts-throughput-and",
       "title": "project-stats: counts, throughput, and cycle time",
-      "description": "Group: Visibility. Depends on: schema-fields. Add project stats: open, active, done, and archived counts plus throughput and completion timing from createdAt and completedAt. Note the distinction honestly: createdAt to completedAt is lead time including backlog wait, not cycle time; decide at implementation whether to add a startedAt stamp (recorded when the branch marker is first set) so cycle time can measure work-start to done.",
+      "description": "Depends on: schema-fields. Add project stats: open, active, done, and archived counts plus throughput and completion timing from createdAt and completedAt. Note the distinction honestly: createdAt to completedAt is lead time including backlog wait, not cycle time; decide at implementation whether to add a startedAt stamp (recorded when the branch marker is first set) so cycle time can measure work-start to done.",
       "status": "open",
       "createdAt": "2026-08-04T02:37:54.068Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-04T20:06:59.047Z",
       "previousIds": [
         "goal-mse1szkl-3b102594"
-      ]
+      ],
+      "group": "Visibility"
     },
     {
       "id": "goal-checklist-acceptance-criteria",
       "title": "goal-checklist: acceptance criteria items per goal",
-      "description": "Group: Later. Depends on: schema-fields. Optional checklist items (text plus done flag) per goal as acceptance criteria, with CRUD subcommands, TUI detail rendering, and contract docs. Gives agent sessions a concrete definition of done.",
+      "description": "Depends on: schema-fields. Optional checklist items (text plus done flag) per goal as acceptance criteria, with CRUD subcommands, TUI detail rendering, and contract docs. Gives agent sessions a concrete definition of done.",
       "status": "open",
       "createdAt": "2026-08-04T02:37:54.181Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-04T20:06:59.144Z",
       "previousIds": [
         "goal-mse1sznp-3aa4937d"
-      ]
+      ],
+      "group": "Later"
     },
     {
       "id": "merge-driver-structural-git-merge-for",
       "title": "merge-driver: structural git merge for worklist.json",
-      "description": "Group: Later. Depends on: none. Custom git merge driver (pi-worklist merge-file registered via .gitattributes): union goals by ID; within a goal edited on both sides, union the array fields (dependsOn, links) and apply newest-updatedAt only to scalar fields, because goal-level last-writer-wins would drop a concurrent edit to a different aspect of the same goal; revision becomes max plus one. Only needed if branch sessions ever write the worklist; until then the root-session-on-main convention keeps merges conflict-free by construction.",
+      "description": "Depends on: none. Custom git merge driver (pi-worklist merge-file registered via .gitattributes): union goals by ID; within a goal edited on both sides, union the array fields (dependsOn, links) and apply newest-updatedAt only to scalar fields, because goal-level last-writer-wins would drop a concurrent edit to a different aspect of the same goal; revision becomes max plus one. Only needed if branch sessions ever write the worklist; until then the root-session-on-main convention keeps merges conflict-free by construction.",
       "status": "open",
       "createdAt": "2026-08-04T02:37:54.268Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-04T20:06:59.238Z",
       "previousIds": [
         "goal-mse1szq4-b1647c8b"
-      ]
+      ],
+      "group": "Later"
     },
     {
       "id": "branch-scoped-active-per-worktree",
       "title": "branch-scoped-active: per-worktree featured goal via links",
-      "description": "Group: Later. Depends on: schema-fields, project-start. In a worktree, derive the widget and dashboard featured goal from the current git branch matched against the dedicated branch field, falling back to the stored single active goal. Per-worktree focus without changing active semantics.",
+      "description": "Depends on: schema-fields, project-start. In a worktree, derive the widget and dashboard featured goal from the current git branch matched against the dedicated branch field, falling back to the stored single active goal. Per-worktree focus without changing active semantics.",
       "status": "open",
       "createdAt": "2026-08-04T02:37:54.359Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-04T20:06:59.333Z",
       "previousIds": [
         "goal-mse1szsn-91e2a9ee"
-      ]
+      ],
+      "group": "Later"
     },
     {
       "id": "mcp-server-expose-the-worklist-over-mcp",
       "title": "mcp-server: expose the worklist over MCP",
-      "description": "Group: Later. Depends on: apply-plan. Expose the WorklistApplicationService over MCP (pi-worklist mcp) so any agent can list, add, apply plans, and complete goals through the same contract. Deferred until apply-plan and capture-skill prove the workflow; revisit the surface-area commitment before building.",
+      "description": "Depends on: apply-plan. Expose the WorklistApplicationService over MCP (pi-worklist mcp) so any agent can list, add, apply plans, and complete goals through the same contract. Deferred until apply-plan and capture-skill prove the workflow; revisit the surface-area commitment before building.",
       "status": "open",
       "createdAt": "2026-08-04T02:37:54.454Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-04T20:06:59.428Z",
       "previousIds": [
         "goal-mse1szvb-65812ec4"
-      ]
+      ],
+      "group": "Later"
     },
     {
       "id": "archive-browsing-archived-goals-in-the",
       "title": "archive-browsing: archived goals in the Pi dashboard",
-      "description": "Group: Later. Depends on: none. Replaces earlier goal future-archive-ui. Re-scoped: the project ui board already has an archived filter, so the remaining gap is browsing archived goals inside the Pi dashboard, or closing this goal if that is not worth building.",
+      "description": "Depends on: none. Replaces earlier goal future-archive-ui. Re-scoped: the project ui board already has an archived filter, so the remaining gap is browsing archived goals inside the Pi dashboard, or closing this goal if that is not worth building.",
       "status": "open",
       "createdAt": "2026-08-04T02:37:54.548Z",
-      "updatedAt": "2026-08-04T18:23:23.174Z",
+      "updatedAt": "2026-08-04T20:06:59.527Z",
       "previousIds": [
         "goal-mse1szxx-daa779cc"
-      ]
+      ],
+      "group": "Later"
     }
   ],
-  "revision": 84
+  "revision": 128
 }

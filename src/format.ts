@@ -1,4 +1,3 @@
-import { sortGoals } from "./project-store.ts";
 import type { ProjectGoal, SessionTask } from "./types.ts";
 
 export function compactDescription(description: string): string {
@@ -18,7 +17,8 @@ export function formatSessionTasks(tasks: SessionTask[]): string {
 
 export function formatProjectGoals(goals: ProjectGoal[]): string {
 	if (goals.length === 0) return "No project goals.";
-	return sortGoals(goals)
+	// Canonical file order, unsorted: the array is the roadmap's own order.
+	return goals
 		.map(
 			(g) =>
 				`[${g.status}] ${g.id}: ${g.title}${g.description ? ` - ${compactDescription(g.description)}` : ""}`,

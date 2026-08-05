@@ -7,7 +7,9 @@ import {
 	addProjectGoal,
 	deleteProjectGoal,
 	migrateProjectGoalIds,
+	moveProjectGoal,
 	ProjectGoalActivationBlockedError,
+	ProjectGoalAnchorNotFoundError,
 	ProjectGoalNotFoundError,
 	readProjectGoals,
 	transitionProjectGoal,
@@ -24,7 +26,7 @@ describe("project mutation service", () => {
 	it("returns the post-mutation goal list computed under the lock", async () => {
 		const path = await tempPath();
 		const first = await addProjectGoal(path, "First");
-		const second = await addProjectGoal(path, "Second", "With description");
+		const second = await addProjectGoal(path, "Second", { description: "With description" });
 		expect(first.goals.map((goal) => goal.title)).toEqual(["First"]);
 		expect(first.revision).toBe("1");
 		expect(second.goals.map((goal) => goal.title)).toEqual(["First", "Second"]);
@@ -34,7 +36,7 @@ describe("project mutation service", () => {
 
 	it("appends a paragraph without replaying the stored description", async () => {
 		const path = await tempPath();
-		const { goal } = await addProjectGoal(path, "Stage E", "First paragraph.");
+		const { goal } = await addProjectGoal(path, "Stage E", { description: "First paragraph." });
 
 		const noted = await updateProjectGoal(path, goal.id, {
 			appendDescription: "Stale as of 2026-08-03.",
@@ -210,6 +212,135 @@ describe("project mutation service", () => {
 		// A migrated ID is as taken as any other, so a later goal cannot shadow it.
 		const added = await addProjectGoal(path, "Support goal templates");
 		expect(added.goal.id).toBe("support-goal-templates-2");
+	});
+
+	it("appends new goals and reorders them only when asked", async () => {
+		const path = await tempPath();
+		// A clock that runs backwards would resort a createdAt-ordered list, so the
+		// appended order is asserted against titles added out of chronological turn.
+		for (const title of ["First", "Second", "Third"]) await addProjectGoal(path, title);
+		const titles = async () => (await readProjectGoals(path)).goals.map((goal) => goal.title);
+		expect(await titles()).toEqual(["First", "Second", "Third"]);
+
+		expect((await moveProjectGoal(path, "third", { direction: "up" })).changed).toBe(true);
+		expect(await titles()).toEqual(["First", "Third", "Second"]);
+
+		expect((await moveProjectGoal(path, "third", { beforeId: "first" })).changed).toBe(true);
+		expect(await titles()).toEqual(["Third", "First", "Second"]);
+
+		expect((await moveProjectGoal(path, "third", { afterId: "second" })).changed).toBe(true);
+		expect(await titles()).toEqual(["First", "Second", "Third"]);
+	});
+
+	it("treats a move that changes nothing as a no-op instead of a write", async () => {
+		const path = await tempPath();
+		for (const title of ["First", "Second"]) await addProjectGoal(path, title);
+		const before = await readProjectGoals(path);
+
+		for (const placement of [
+			{ direction: "up" as const },
+			{ beforeId: "second" as const },
+			{ afterId: "first" as const },
+		]) {
+			// Each move is checked against the file the previous one left behind.
+			const outcome = await moveProjectGoal(path, "first", placement);
+			expect(outcome.changed, JSON.stringify(placement)).toBe(false);
+		}
+		expect((await moveProjectGoal(path, "second", { direction: "down" })).changed).toBe(false);
+		expect(await readProjectGoals(path)).toEqual(before);
+	});
+
+	it("leaves every goal's baseline untouched when only the order changes", async () => {
+		const path = await tempPath();
+		for (const title of ["First", "Second"]) await addProjectGoal(path, title);
+		const before = (await readProjectGoals(path)).goals;
+
+		const moved = await moveProjectGoal(path, "second", { direction: "up" });
+		expect(moved.revision).toBe("3");
+		expect(moved.goals.map((goal) => goal.id)).toEqual(["second", "first"]);
+		for (const goal of before) {
+			expect(moved.goals.find((candidate) => candidate.id === goal.id)).toEqual(goal);
+		}
+	});
+
+	it("reports a missing goal and a missing anchor separately", async () => {
+		const path = await tempPath();
+		await addProjectGoal(path, "Only");
+		await expect(moveProjectGoal(path, "missing", { direction: "up" })).rejects.toThrow(
+			ProjectGoalNotFoundError,
+		);
+		await expect(moveProjectGoal(path, "only", { beforeId: "missing" })).rejects.toThrow(
+			ProjectGoalAnchorNotFoundError,
+		);
+		expect((await readProjectGoals(path)).revision).toBe("1");
+	});
+
+	it("resolves former goal IDs at the locked mutation boundary", async () => {
+		const path = await tempPath();
+		const first = await addProjectGoal(path, "First");
+		const second = await addProjectGoal(path, "Second");
+		const current = await readProjectWorklist(path);
+		if (current.error) throw new Error(current.error);
+		await writeFile(
+			path,
+			`${JSON.stringify({
+				...current.data,
+				goals: current.data.goals.map((goal) => ({
+					...goal,
+					previousIds: [`former-${goal.id}`],
+				})),
+			})}\n`,
+			"utf8",
+		);
+
+		const moved = await moveProjectGoal(path, `former-${second.goal.id}`, {
+			beforeId: `former-${first.goal.id}`,
+		});
+		expect(moved.goals.map((goal) => goal.id)).toEqual([second.goal.id, first.goal.id]);
+		await expect(
+			updateProjectGoal(path, `former-${second.goal.id}`, { title: "Still reachable" }),
+		).resolves.toMatchObject({ goal: { id: second.goal.id, title: "Still reachable" } });
+	});
+
+	it("stamps a completion, clears it on reopen, and keeps it through archival", async () => {
+		const path = await tempPath();
+		const { goal } = await addProjectGoal(path, "Finish the migration");
+		expect(goal.completedAt).toBeUndefined();
+
+		const done = await transitionProjectGoal(path, goal.id, "done");
+		expect(done.goal.completedAt).toBe(done.goal.updatedAt);
+
+		const archived = await transitionProjectGoal(path, goal.id, "archived");
+		expect(archived.goal.completedAt).toBe(done.goal.completedAt);
+
+		const reopened = await transitionProjectGoal(path, goal.id, "open");
+		expect(reopened.goal.completedAt).toBeUndefined();
+		expect(Object.hasOwn(reopened.goal, "completedAt")).toBe(false);
+
+		// A goal completed before the field existed has an unknown completion
+		// moment, and completing it again is a no-op that must not invent one.
+		const legacy = await addProjectGoal(path, "Older work");
+		await transitionProjectGoal(path, legacy.goal.id, "done");
+		const untouched = await updateProjectGoal(path, legacy.goal.id, {});
+		expect(untouched.changed).toBe(false);
+	});
+
+	it("sets, keeps, and clears a goal's group", async () => {
+		const path = await tempPath();
+		const { goal } = await addProjectGoal(path, "Ship it", { group: "  Foundation  " });
+		expect(goal.group).toBe("Foundation");
+
+		const renamed = await updateProjectGoal(path, goal.id, { title: "Ship it soon" });
+		expect(renamed.goal.group).toBe("Foundation");
+
+		expect((await updateProjectGoal(path, goal.id, { group: "Foundation" })).changed).toBe(false);
+
+		const regrouped = await updateProjectGoal(path, goal.id, { group: "Later" });
+		expect(regrouped.goal.group).toBe("Later");
+
+		const cleared = await updateProjectGoal(path, goal.id, { group: "" });
+		expect(Object.hasOwn(cleared.goal, "group")).toBe(false);
+		expect((await updateProjectGoal(path, goal.id, { group: "" })).changed).toBe(false);
 	});
 
 	it("blocks activating done or archived goals with a typed error", async () => {

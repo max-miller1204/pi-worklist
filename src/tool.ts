@@ -55,6 +55,8 @@ function formatResult(operation: WorklistOperation, result: WorklistOperationRes
 				return formatProjectGoals(result.goals ?? []);
 			case "add":
 				return `Added project goal ${result.goal?.id}: ${result.goal?.title}`;
+			case "move":
+				return `Moved project goal ${result.goal?.id}`;
 			case "update":
 				return `Updated project goal ${result.goal?.id}`;
 			case "set_status":

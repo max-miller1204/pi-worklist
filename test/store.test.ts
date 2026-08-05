@@ -73,6 +73,43 @@ describe("project store", () => {
 		expect(isProjectWorklist({ version: 1, goals: [], retiredIds: ["deleted-goal", 1] })).toBe(false);
 	});
 
+	it("accepts the optional goal fields, and only in the shapes they declare", () => {
+		const goal = {
+			id: "goal-1",
+			title: "Guarded",
+			status: "open",
+			createdAt: "2026-05-04T09:12:31.004Z",
+			updatedAt: "2026-05-04T09:12:31.004Z",
+		};
+		const worklistWith = (overrides: Record<string, unknown>) => ({
+			version: 1,
+			goals: [{ ...goal, ...overrides }],
+		});
+
+		expect(
+			isProjectWorklist(
+				worklistWith({
+					group: "Foundation",
+					completedAt: "2026-05-05T09:12:31.004Z",
+					branch: "feat/guard",
+					links: ["https://example.test/pull/12"],
+				}),
+			),
+		).toBe(true);
+		// A goal carrying none of them is still valid: every field is additive.
+		expect(isProjectWorklist(worklistWith({}))).toBe(true);
+
+		for (const invalid of [
+			{ group: 1 },
+			{ completedAt: false },
+			{ branch: ["feat/guard"] },
+			{ links: "https://example.test/pull/12" },
+			{ links: [1] },
+		]) {
+			expect(isProjectWorklist(worklistWith(invalid)), JSON.stringify(invalid)).toBe(false);
+		}
+	});
+
 	it("refuses a mutation whose target goal moved after the caller read it", async () => {
 		const path = await tempPath();
 		await mkdir(join(path, ".."), { recursive: true });

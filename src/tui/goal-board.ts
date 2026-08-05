@@ -1,5 +1,5 @@
 import type { WorklistOperation } from "../application-service.ts";
-import { matchesGoalQuery } from "../goal-selection.ts";
+import { findGoalByStoredId, matchesGoalQuery } from "../goal-selection.ts";
 import type { ProjectGoal, ProjectGoalStatus } from "../types.ts";
 import type { KeyEvent } from "./keys.ts";
 import { isInterrupt } from "./keys.ts";
@@ -28,6 +28,23 @@ const FILTER_LABELS: Readonly<Record<GoalFilter, string>> = {
 	done: "Done",
 	archived: "Archived",
 	all: "All",
+};
+
+/**
+ * How the list is arranged, cycled with `o`.
+ *
+ * `file` is first and is the default because it is the roadmap's canonical
+ * order: it is what the file stores, what `move` edits, and what every other
+ * reader of the worklist sees. The other two are views over that same order,
+ * which stays their tiebreak, so switching back never loses the arrangement.
+ */
+export const GOAL_SORTS = ["file", "status", "recent"] as const;
+export type GoalSort = (typeof GOAL_SORTS)[number];
+
+const SORT_LABELS: Readonly<Record<GoalSort, string>> = {
+	file: "⇅ File",
+	status: "⇅ Status",
+	recent: "⇅ Recent",
 };
 
 /**
@@ -83,6 +100,13 @@ export interface BoardMessage {
 export type BoardIntent =
 	| { kind: "quit" }
 	| { kind: "reload" }
+	| {
+			kind: "reorder";
+			goalId: string;
+			delta: -1 | 1;
+			visibleGoalIds: string[];
+			success: string;
+	  }
 	| { kind: "operation"; operation: WorklistOperation; success: string }
 	| { kind: "edit-description"; goal: ProjectGoal };
 
@@ -148,6 +172,8 @@ const HELP_ENTRIES: readonly HelpEntry[] = [
 	{ keys: "c / r / x", description: "Complete, reopen, or archive (asks first)" },
 	{ keys: "d", description: "Delete permanently (asks first)" },
 	{ keys: "f", description: "Cycle the status filter" },
+	{ keys: "o", description: "Cycle the order: file, status, recent" },
+	{ keys: "K / J", description: "Move the selected goal up or down (file order only)" },
 	{ keys: "/", description: "Search titles and descriptions" },
 	{ keys: "R", description: "Reload from disk" },
 	{ keys: "?", description: "Show this help" },
@@ -161,20 +187,9 @@ function matchesFilter(goal: ProjectGoal, filter: GoalFilter): boolean {
 	return goal.status === "archived";
 }
 
-/** The one goal in flight, pinned above every other row whatever orders the rest. */
-function isPinned(goal: ProjectGoal): boolean {
+/** The one goal in flight, which every derived order lifts to the top. */
+function isActive(goal: ProjectGoal): boolean {
 	return goal.status === "active";
-}
-
-function compareGoals(left: ProjectGoal, right: ProjectGoal): number {
-	// The pin is deliberately its own comparison rather than a consequence of the
-	// status rank, so a later ordering change cannot quietly unpin the active goal.
-	if (isPinned(left) !== isPinned(right)) return isPinned(left) ? -1 : 1;
-	const rank = STATUS_RANK[left.status] - STATUS_RANK[right.status];
-	if (rank !== 0) return rank;
-	const created = Date.parse(left.createdAt) - Date.parse(right.createdAt);
-	if (Number.isFinite(created) && created !== 0) return created;
-	return left.id.localeCompare(right.id);
 }
 
 /**
@@ -204,6 +219,18 @@ function quoteTitle(title: string): string {
 	return `"${truncateToWidth(singleLine(title), MESSAGE_TITLE_LIMIT)}"`;
 }
 
+/**
+ * The reorder step a key asks for, or undefined when it asks for something else.
+ *
+ * Shift+arrows are the idiom the Pi dashboard already uses, and `K` and `J` are
+ * the fallback for the terminals that never report a modifier on an arrow key.
+ */
+function readReorderStep(key: KeyEvent): -1 | 1 | undefined {
+	if (key.char === "K" || (key.shift && key.name === "up")) return -1;
+	if (key.char === "J" || (key.shift && key.name === "down")) return 1;
+	return undefined;
+}
+
 function toCellArray(value: string): string[] {
 	return [...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(value)].map(
 		(entry) => entry.segment,
@@ -216,11 +243,13 @@ export class GoalBoard {
 	private readonly now: () => number;
 	private goals: ProjectGoal[];
 	private filter: GoalFilter = "open";
+	private sort: GoalSort = "file";
 	private query = "";
 	private selectedId: string | undefined;
 	private focus: "list" | "detail" = "list";
 	private listScroll = 0;
 	private detailScroll = 0;
+	private helpScroll = 0;
 	private mode: BoardMode = { kind: "browse" };
 	private message: BoardMessage | undefined;
 	/** Where the selection sat before a reload, so a deletion lands on a neighbor. */
@@ -250,14 +279,64 @@ export class GoalBoard {
 		this.message = { text, tone };
 	}
 
+	resolveReorder(intent: Extract<BoardIntent, { kind: "reorder" }>): WorklistOperation | undefined {
+		const visibleIds = new Set(
+			intent.visibleGoalIds.flatMap((id) => {
+				const goal = findGoalByStoredId(this.goals, id);
+				return goal ? [goal.id] : [];
+			}),
+		);
+		const visible = this.goals.filter((goal) => visibleIds.has(goal.id));
+		const source = findGoalByStoredId(this.goals, intent.goalId);
+		if (!source) {
+			return {
+				scope: "project",
+				action: "move",
+				id: intent.goalId,
+				direction: intent.delta < 0 ? "up" : "down",
+			};
+		}
+		const sourceIndex = visible.findIndex((goal) => goal.id === source.id);
+		const anchor = visible[sourceIndex + intent.delta];
+		if (!anchor) return undefined;
+		return {
+			scope: "project",
+			action: "move",
+			id: source.id,
+			...(intent.delta < 0 ? { beforeId: anchor.id } : { afterId: anchor.id }),
+		};
+	}
+
 	get selectedGoal(): ProjectGoal | undefined {
 		return this.visibleGoals()[this.selectedIndex()];
 	}
 
+	/**
+	 * The goals on screen, in the order the current sort puts them.
+	 *
+	 * File order is the tiebreak of every sort and the whole of the `file` sort,
+	 * so the arrangement a user built with `K` and `J` survives a trip through the
+	 * other views. The active goal is lifted to the top of the derived orders but
+	 * not of `file`: that view is a faithful picture of the file, which is exactly
+	 * what makes reordering in it land where the user watched it land.
+	 */
 	private visibleGoals(): ProjectGoal[] {
+		const fileOrder = new Map(this.goals.map((goal, index) => [goal.id, index]));
+		const rank = (goal: ProjectGoal): number => fileOrder.get(goal.id) ?? 0;
 		return this.goals
 			.filter((goal) => matchesFilter(goal, this.filter) && matchesGoalQuery(goal, this.query))
-			.sort(compareGoals);
+			.sort((left, right) => {
+				if (this.sort === "file") return rank(left) - rank(right);
+				if (isActive(left) !== isActive(right)) return isActive(left) ? -1 : 1;
+				if (this.sort === "status") {
+					const status = STATUS_RANK[left.status] - STATUS_RANK[right.status];
+					if (status !== 0) return status;
+				} else {
+					const updated = Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+					if (Number.isFinite(updated) && updated !== 0) return updated;
+				}
+				return rank(left) - rank(right);
+			});
 	}
 
 	private selectedIndex(): number {
@@ -295,9 +374,23 @@ export class GoalBoard {
 		return this.handleBrowseKey(key);
 	}
 
+	/**
+	 * Read the key map, which scrolls because it is longer than a short terminal.
+	 *
+	 * The overlay used to drop whatever did not fit, and what fell off the end was
+	 * the way out of it. Scrolling keeps every binding reachable at any height, so
+	 * the one screen a stuck user opens can always answer them.
+	 */
 	private handleHelpKey(key: KeyEvent): BoardIntent | undefined {
-		if (key.name === "escape" || key.name === "enter" || key.char === "?" || key.char === "q") {
+		if (key.name === "up" || key.char === "k") this.helpScroll = Math.max(0, this.helpScroll - 1);
+		else if (key.name === "down" || key.char === "j") this.helpScroll += 1;
+		else if (key.name === "pageup") this.helpScroll = Math.max(0, this.helpScroll - PAGE_STEP);
+		else if (key.name === "pagedown") this.helpScroll += PAGE_STEP;
+		else if (key.name === "home" || key.char === "g") this.helpScroll = 0;
+		else if (key.name === "end" || key.char === "G") this.helpScroll = Number.MAX_SAFE_INTEGER;
+		else {
 			this.mode = { kind: "browse" };
+			this.helpScroll = 0;
 		}
 		return undefined;
 	}
@@ -416,6 +509,10 @@ export class GoalBoard {
 
 	private handleBrowseKey(key: KeyEvent): BoardIntent | undefined {
 		this.message = undefined;
+		// Reordering is checked before navigation, because Shift+Up is still an
+		// up arrow and would otherwise be swallowed as a plain selection move.
+		const reorder = readReorderStep(key);
+		if (reorder !== undefined) return this.reorder(reorder);
 		const navigated = this.handleNavigationKey(key);
 		if (navigated) return undefined;
 
@@ -427,6 +524,10 @@ export class GoalBoard {
 		}
 		if (key.char === "f") {
 			this.cycleFilter();
+			return undefined;
+		}
+		if (key.char === "o") {
+			this.cycleSort();
 			return undefined;
 		}
 		if (key.char === "/") {
@@ -543,6 +644,43 @@ export class GoalBoard {
 		if (this.selectedIndex() < 0) this.selectIndex(0);
 	}
 
+	private cycleSort(): void {
+		const index = GOAL_SORTS.indexOf(this.sort);
+		this.sort = GOAL_SORTS[(index + 1) % GOAL_SORTS.length];
+		this.listScroll = 0;
+	}
+
+	/**
+	 * Move the selected goal one row through the list it is shown in.
+	 *
+	 * The anchor is the neighboring visible row rather than a file index, so a
+	 * move under a filter or a search lands beside the goal the user can actually
+	 * see instead of stepping over hidden ones. Only the `file` sort can reorder:
+	 * in a derived order the rows are not where the file puts them, so a move
+	 * would edit an arrangement the screen is not showing.
+	 */
+	private reorder(delta: -1 | 1): BoardIntent | undefined {
+		const goal = this.selectedGoal;
+		if (!goal) return undefined;
+		if (this.sort !== "file") {
+			this.message = { text: `Reorder in file order only. Press o until ${SORT_LABELS.file}.`, tone: "info" };
+			return undefined;
+		}
+		const visible = this.visibleGoals();
+		const anchor = visible[this.selectedIndex() + delta];
+		if (!anchor) {
+			this.message = { text: delta < 0 ? "Already first." : "Already last.", tone: "info" };
+			return undefined;
+		}
+		return {
+			kind: "reorder",
+			goalId: goal.id,
+			delta,
+			visibleGoalIds: visible.map((candidate) => candidate.id),
+			success: `Moved ${quoteTitle(goal.title)} ${delta < 0 ? "up" : "down"}`,
+		};
+	}
+
 	private openAddPrompt(): void {
 		this.mode = {
 			kind: "prompt",
@@ -651,7 +789,7 @@ export class GoalBoard {
 		const shown = this.visibleGoals().length;
 		const left = ` ${accent(bold("Project Goals"))} ${dim("·")} ${muted(this.repositoryLabel)}`;
 		const search = this.query === "" ? "" : ` ${dim("·")} ${accent(`/${singleLine(this.query)}`)}`;
-		const view = `${muted(FILTER_LABELS[this.filter])} ${dim("·")} ${muted(`${shown} of ${total}`)} `;
+		const view = `${muted(FILTER_LABELS[this.filter])} ${dim("·")} ${muted(SORT_LABELS[this.sort])} ${dim("·")} ${muted(`${shown} of ${total}`)} `;
 		const counts = this.renderStatusCounts();
 		const chips = counts === "" ? "" : `${counts}${dim(SEPARATOR)}`;
 		// Counts are the first thing dropped when the header runs out of room:
@@ -835,7 +973,7 @@ export class GoalBoard {
 		const emphasized = isSelected && this.focus === "list";
 		const settled = goal.status === "done" || goal.status === "archived";
 		const dimmed = this.filter === "all" && settled && !isSelected;
-		const label = isPinned(goal)
+		const label = isActive(goal)
 			? accent(emphasized ? bold(title) : title)
 			: emphasized
 				? bold(title)
@@ -860,14 +998,27 @@ export class GoalBoard {
 		const field = (label: string, value: string, style: Style) =>
 			`${muted(label.padEnd(DETAIL_LABEL_WIDTH))}${style(value)}`;
 		lines.push(field("STATUS", goal.status.toUpperCase(), this.statusStyle(goal.status)));
+		if (goal.group !== undefined) lines.push(field("GROUP", singleLine(goal.group), muted));
+		if (goal.branch !== undefined) lines.push(field("BRANCH", singleLine(goal.branch), accent));
 		// The badge in the list is only a number; spell out what it means here.
 		const stale = stalenessDays(goal, this.now());
 		const note = stale === undefined ? "" : `${SEPARATOR}${stale}d untouched`;
 		lines.push(field("UPDATED", formatTimestamp(goal.updatedAt), dim) + warning(note));
 		lines.push(field("CREATED", formatTimestamp(goal.createdAt), dim));
+		if (goal.completedAt !== undefined) {
+			lines.push(field("DONE", formatTimestamp(goal.completedAt), dim));
+		}
 		// The ID is what every CLI command takes, so it must be readable in full.
 		for (const [index, chunk] of wrapText(goal.id, Math.max(1, width - DETAIL_LABEL_WIDTH)).entries()) {
 			lines.push(index === 0 ? field("ID", chunk, dim) : `${" ".repeat(DETAIL_LABEL_WIDTH)}${dim(chunk)}`);
+		}
+		// Links are informational, so they are listed verbatim and wrapped rather
+		// than shortened: a URL cut in half is a URL nobody can follow.
+		for (const [index, link] of (goal.links ?? []).entries()) {
+			for (const [chunkIndex, chunk] of wrapText(link, Math.max(1, width - DETAIL_LABEL_WIDTH)).entries()) {
+				const leading = index === 0 && chunkIndex === 0;
+				lines.push(leading ? field("LINKS", chunk, dim) : `${" ".repeat(DETAIL_LABEL_WIDTH)}${dim(chunk)}`);
+			}
 		}
 		lines.push("");
 
@@ -903,10 +1054,15 @@ export class GoalBoard {
 			body.push(` ${accent(entry.keys.padEnd(keyWidth))}${muted(entry.description)}`);
 		}
 		body.push("");
-		body.push(` ${bold("Press any key to return.")}`);
+		body.push(` ${bold("Press esc to return, ↑ ↓ to scroll.")}`);
+		const maxScroll = Math.max(0, body.length - rows);
+		this.helpScroll = Math.min(this.helpScroll, maxScroll);
+		const visible = body.slice(this.helpScroll, this.helpScroll + rows);
 		for (let row = 0; row < rows; row += 1)
-			lines.push(border("│") + fitToWidth(body[row] ?? "", inner) + border("│"));
-		lines.push(border("╰") + border("─".repeat(inner)) + border("╯"));
+			lines.push(border("│") + fitToWidth(visible[row] ?? "", inner) + border("│"));
+		const remaining = maxScroll - this.helpScroll;
+		const hint = maxScroll > 0 ? ` ${this.helpScroll} above · ${remaining} below ` : "";
+		lines.push(border("╰") + this.renderBorderRule(inner, undefined, hint) + border("╯"));
 		return lines;
 	}
 
@@ -941,7 +1097,7 @@ export class GoalBoard {
 	 */
 	private idleSummary(): string {
 		if (this.goals.length === 0) return "No project goals yet. Press a to add one.";
-		const active = this.goals.find(isPinned);
+		const active = this.goals.find(isActive);
 		if (!active) return "No active goal. Press s to make one active.";
 		return `Active: ${singleLine(active.title)}`;
 	}
@@ -992,7 +1148,7 @@ export class GoalBoard {
 			return ` ${dim(truncateToWidth("y confirm · any other key cancels", Math.max(1, width - 2)))}`;
 		}
 		if (this.mode.kind === "help") {
-			return ` ${dim(truncateToWidth("esc close", Math.max(1, width - 2)))}`;
+			return ` ${dim(truncateToWidth("↑↓ scroll · esc close", Math.max(1, width - 2)))}`;
 		}
 		// `? keys` and `q quit` are the two hints a stuck user needs, so they are
 		// reserved first and the rest fill whatever width is left.
@@ -1005,6 +1161,8 @@ export class GoalBoard {
 			"e rename",
 			"E describe",
 			"f filter",
+			"o order",
+			"KJ reorder",
 			"/ search",
 		];
 		const available = Math.max(1, width - 2);
