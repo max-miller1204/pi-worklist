@@ -31,6 +31,15 @@ async function tempGitRepo(): Promise<string> {
 	return root;
 }
 
+/**
+ * The diagnostic a CLI failure prints, without the usage block appended to every
+ * one. Asserting against raw stderr would let the flag list in that block stand
+ * in for a hint the diagnostic never gave.
+ */
+function diagnostic(stderr: string): string {
+	return stderr.split("\n\nUsage:")[0];
+}
+
 async function readGoals(root: string): Promise<ProjectGoal[]> {
 	const raw = await readFile(join(root, ".pi", "worklist.json"), "utf8");
 	return (JSON.parse(raw) as ProjectWorklist).goals;
@@ -596,8 +605,8 @@ describe("project goal CLI", () => {
 
 		expect(swallowed.code).toBe(2);
 		expect(swallowed.stdout).toBe("");
-		expect(swallowed.stderr).toContain("--json came after --");
-		expect(swallowed.stderr).toContain("Use --description <text>");
+		expect(diagnostic(swallowed.stderr)).toContain("--json came after --");
+		expect(diagnostic(swallowed.stderr)).toContain("Use --description <text>");
 		expect(await readGoals(root)).toHaveLength(1);
 
 		const valueTakingFlag = await runCli(root, [
@@ -611,9 +620,26 @@ describe("project goal CLI", () => {
 			"--cwd",
 		]);
 		expect(valueTakingFlag.code).toBe(2);
-		expect(valueTakingFlag.stderr).toContain("--cwd came after --");
-		expect(valueTakingFlag.stderr).toContain("--description <text>");
+		expect(diagnostic(valueTakingFlag.stderr)).toContain("--cwd came after --");
+		expect(diagnostic(valueTakingFlag.stderr)).toContain("--description <text>");
 		expect(await readGoals(root)).toHaveLength(1);
+
+		const appending = await runCli(root, [
+			"project",
+			"update",
+			"existing-goal",
+			"--append",
+			"--",
+			"Blocked until",
+			"--json",
+			"lands",
+		]);
+		expect(appending.code).toBe(2);
+		expect(diagnostic(appending.stderr)).toContain("--json came after --");
+		// An append steered toward --description alone would overwrite the very prose
+		// the caller asked to keep, so the additive escape hatch has to be named too.
+		expect(diagnostic(appending.stderr)).toContain("--append-description <text>");
+		expect((await readGoals(root))[0].description).toBeUndefined();
 	});
 
 	it("keeps JSON failures parseable with a flag-looking description value", async () => {

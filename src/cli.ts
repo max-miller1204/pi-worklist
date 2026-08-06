@@ -108,7 +108,7 @@ function rejectMisplacedFlags(tokens: readonly string[]): void {
 	const noun = names.length === 1 ? "flag" : "flags";
 	fail(
 		`${names.join(", ")} came after --, where known flags are not accepted as description text.\n` +
-			`Use --description <text> when a description contains a standalone ${noun}; reserve -- for interactive prose.\n\n${USAGE}`,
+			`Use --description <text> to replace, or --append-description <text> to add, a description that contains a standalone ${noun}; reserve -- for interactive prose.\n\n${USAGE}`,
 		2,
 	);
 }
@@ -292,26 +292,18 @@ function parseArgs(argv: string[]): CliInvocation {
 	const parsed = parseCliHead(head);
 	const hasSeparatorDescription = separator !== -1;
 	validateDescriptionInputs(parsed, hasSeparatorDescription);
-	const [scope, action, ...rest] = parsed.positionals;
+	const { positionals, directDescription, dependsOn, ...carried } = parsed;
+	const [scope, action, ...rest] = positionals;
 	if (!scope || !action) fail(USAGE, 2);
 	return {
+		...carried,
 		scope,
 		action,
 		rest,
-		description:
-			parsed.directDescription ?? (hasSeparatorDescription ? descriptionTokens.join(" ") : undefined),
-		appendDescription: parsed.appendDescription,
-		append: parsed.append,
-		dryRun: parsed.dryRun,
-		group: parsed.group,
-		...(parsed.flagsUsed.has("--depends-on")
-			? { dependsOn: parsed.dependsOn.filter((entry) => entry.trim() !== "") }
+		description: directDescription ?? (hasSeparatorDescription ? descriptionTokens.join(" ") : undefined),
+		...(carried.flagsUsed.has("--depends-on")
+			? { dependsOn: dependsOn.filter((entry) => entry.trim() !== "") }
 			: {}),
-		expectedUpdatedAt: parsed.expectedUpdatedAt,
-		json: parsed.json,
-		confirm: parsed.confirm,
-		cwd: parsed.cwd,
-		flagsUsed: parsed.flagsUsed,
 	};
 }
 
