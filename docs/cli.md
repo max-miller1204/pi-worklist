@@ -51,6 +51,7 @@ Every `--json` result envelope reports the running package version as `meta.cliV
 ## Description input
 
 Programmatic callers and agents must use `--description <text>` for a replacement, passing the whole value in one argv token. The flag is order-independent, and its value may itself look like a known flag.
+Neither description flag combines with a title change on `update`: each carries exactly one argv token, so unquoted prose written after it would arrive as a rename. Change the title in a separate `update`, or write a title and a description together with the interactive `update <id> <title...> -- <description...>` form.
 Use `--append-description <text>` to add a paragraph without replaying stored prose. Replacing and appending are mutually exclusive, and an append cannot be combined with a title change.
 Reserve `-- <description...>` for a human typing unquoted prose interactively. A standalone known flag after the separator is a usage error with exit code 2; move a real flag before the separator or put flag-looking prose in `--description`.
 The legacy `--append -- <text>` interactive form remains supported, while agents and scripts use `--append-description <text>`.

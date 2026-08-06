@@ -144,7 +144,9 @@ npx -y pi-worklist@latest project list
 npx -y pi-worklist@latest project find templates
 npx -y pi-worklist@latest project show <id>
 npx -y pi-worklist@latest project add Support goal templates --description "Let teams share reusable goal outlines"
-npx -y pi-worklist@latest project update <id> Replace the title --description "Replace the description"
+npx -y pi-worklist@latest project update <id> Replace the title
+npx -y pi-worklist@latest project update <id> --description "Replace the description"
+npx -y pi-worklist@latest project update <id> Replace the title -- Replace the description
 npx -y pi-worklist@latest project update <id> --append-description "Add a note as a new paragraph"
 npx -y pi-worklist@latest project update <id> --expect-updated-at <updatedAt> --append-description "Add it only if nobody edited first"
 npx -y pi-worklist@latest project update <id> --group Foundation
@@ -163,7 +165,8 @@ The CLI routes every mutation through the same service, cross-process lock, and 
 `--depends-on <id>` on `add` and `update` records a goal that must land first and may be repeated, `--depends-on ''` alone clears every edge, and an update replaces the stored set rather than adding to it.
 Lifecycle actions (`complete`, `reopen`, `archive`, `delete`) require `--confirm`, mirroring the model tool's explicit-intent rule; an omitted flag exits with code 3 and changes nothing.
 External agents and scripts use the order-independent `--description <text>` replacement flag, passing the complete value in one argv token, and use `--append-description <text>` to add a paragraph without replaying stored prose.
-The `-- <description...>` separator and legacy `--append -- <text>` form remain available for a human typing unquoted prose interactively.
+Neither flag combines with a title change on `update`, because prose written unquoted after a flag that takes one argv token would otherwise land as a rename; change the title in a separate `update`.
+The `-- <description...>` separator and legacy `--append -- <text>` form remain available for a human typing unquoted prose interactively, and the separator form is the one that still writes a title and a description together.
 A standalone known flag after that separator is a usage error with exit code 2; flag-looking description text belongs in `--description`.
 `--expect-updated-at <timestamp>` carries the goal's `updatedAt` from the caller's own read, and applies to `update`, `set_active`, and the lifecycle actions.
 Without it, a mutation built on a stale read proceeds unreported; a full description replacement can silently overwrite newer prose because the cross-process lock serializes writes without tracking the caller's baseline.

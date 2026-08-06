@@ -746,6 +746,15 @@ async function run(invocation: CliInvocation): Promise<void> {
 			if (appendedText !== undefined && title !== undefined) {
 				fail(`project update cannot change the title while appending to the description\n\n${USAGE}`, 2);
 			}
+			// --description carries exactly one argv token, so unquoted prose spills
+			// into the positionals and would arrive here as a rename nobody asked for.
+			if (invocation.flagsUsed.has("--description") && title !== undefined) {
+				fail(
+					`project update cannot change the title while replacing the description with --description.\n` +
+						`Rename in a separate update, or write both at once as: project update <id> <title...> -- <description...>\n\n${USAGE}`,
+					2,
+				);
+			}
 			if (
 				title === undefined &&
 				invocation.description === undefined &&

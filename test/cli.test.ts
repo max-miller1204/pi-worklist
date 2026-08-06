@@ -137,6 +137,60 @@ describe("project goal CLI", () => {
 		expect((await readGoals(root))[0].description).toBe("");
 	});
 
+	it("refuses a title change beside --description rather than renaming silently", async () => {
+		const root = await tempGitRepo();
+		await runCli(root, ["project", "add", "Ship the parser", "--description", "Original prose"]);
+		const [goal] = await readGoals(root);
+
+		// Unquoted prose runs past the flag's single token, and the leftovers used to
+		// land as a title: exit 0, goal renamed to "long prose", description "Some".
+		const spilled = await runCli(root, [
+			"project",
+			"update",
+			goal.id,
+			"--description",
+			"Some",
+			"long",
+			"prose",
+		]);
+		expect(spilled.code).toBe(2);
+		expect(diagnostic(spilled.stderr)).toContain("cannot change the title while replacing the description");
+		expect((await readGoals(root))[0]).toMatchObject({
+			title: "Ship the parser",
+			description: "Original prose",
+		});
+
+		const combined = await runCli(root, [
+			"project",
+			"update",
+			goal.id,
+			"Renamed",
+			"--description",
+			"Replacement prose",
+		]);
+		expect(combined.code).toBe(2);
+		expect((await readGoals(root))[0]).toMatchObject({
+			title: "Ship the parser",
+			description: "Original prose",
+		});
+
+		// The separator swallows every trailing token, so it stays unambiguous and
+		// remains the way to write a title and a description in one invocation.
+		const viaSeparator = await runCli(root, [
+			"project",
+			"update",
+			goal.id,
+			"Renamed",
+			"--",
+			"Replacement prose",
+		]);
+		expect(viaSeparator.code).toBe(0);
+		expect((await readGoals(root))[0]).toMatchObject({
+			title: "Renamed",
+			description: "Replacement prose",
+		});
+	});
+
 	it("clears a description through the interactive separator alone", async () => {
 		const root = await tempGitRepo();
 		await runCli(root, ["project", "add", "Retire the importer", "--", "Prose a human typed"]);
@@ -358,6 +412,7 @@ describe("project goal CLI", () => {
 			// Appending and renaming in one invocation is refused for both input forms.
 			["project", "update", goal.id, "Renamed", "--append", "--", "note"],
 			["project", "update", goal.id, "Renamed", "--append-description", "note"],
+			["project", "update", goal.id, "Renamed", "--description", "note"],
 			["project", "update", goal.id, "--expect-updated-at"],
 		];
 		for (const args of misuses) {
