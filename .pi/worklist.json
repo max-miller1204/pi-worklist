@@ -240,9 +240,10 @@
       "title": "description-flag: order-independent description input and a strict misplaced-flag error",
       "description": "Remove the ordering hazard in the CLI's description input rather than continuing to warn about it. Today `--` is a terminator, so every token after it is description text and argument order becomes load-bearing: a known flag written after the separator silently becomes prose and only produces a stderr warning with exit 0, which a programmatic caller reading stdout never sees. A blanket refusal is not available as a fix, because flag-looking text in a description is common and legitimate: 10 of this repository's own 35 goal descriptions contain it, one of them quoting 'project add T -- D --json' verbatim. Land the escape hatch first, then the strictness. Phase one adds --description <text> and --append-description <text> as ordinary order-independent flags that carry the whole value in one argv token, keeping `--` for humans typing prose at a shell without quoting, and keeping the existing mutual exclusions between replacing and appending. Phase two upgrades the misplaced-flag warning to a hard usage error with exit code 2, naming --description in the message, which is only safe once prose containing a flag has an unambiguous home. Point the generated skill and agent guidance at --description for every programmatic caller and reserve the separator for interactive use. The change is additive and backwards compatible: no existing invocation stops working, and no stored description needs rewriting.",
       "group": "Foundation",
-      "status": "open",
+      "status": "done",
       "createdAt": "2026-08-05T14:19:37.823Z",
-      "updatedAt": "2026-08-05T14:19:37.823Z"
+      "updatedAt": "2026-08-06T00:59:36.290Z",
+      "completedAt": "2026-08-06T00:59:36.290Z"
     },
     {
       "id": "apply-plan-atomic-batch-import-of-a",
@@ -493,5 +494,5 @@
       "updatedAt": "2026-08-05T15:33:01.104Z"
     }
   ],
-  "revision": 193
+  "revision": 195
 }

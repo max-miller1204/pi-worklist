@@ -29,8 +29,8 @@ list
 show <id>
 find <text...>
 ui
-add <title...> [-- <description...>]
-update <id> [title...] [-- <description...>]
+add <title...> [--description <text> | -- <description...>]
+update <id> [title...] [--description <text> | -- <description...>]
 move <id> up|down|before <id>|after <id>
 set_active <id>
 complete <id> --confirm
@@ -46,7 +46,9 @@ Flags:
 - `--json` - Print the deterministic result envelope as JSON (stdout on success, stderr on failure).
 - `--confirm` - Acknowledge an action that requires confirmation; pass it only for an explicit user request.
 - `--cwd <dir>` - Resolve the git root from this directory instead of the working directory.
-- `--append` - Add the text after -- as a new paragraph instead of replacing the description; cannot be combined with a title change; only for project update.
+- `--description <text>` - Set the whole description from one argv token; order-independent and preferred for agents and scripts; only for project add and update.
+- `--append-description <text>` - Add one argv token as a new description paragraph without replacing stored prose; cannot be combined with a title change; only for project update.
+- `--append` - Interactive compatibility form that adds the text after -- as a new paragraph; cannot be combined with a title change; only for project update.
 - `--group <name>` - Put the goal in a free-form section, such as Foundation; an empty name clears it; only for project add and update.
 - `--depends-on <id>` - Require that goal to land first; repeat it to name several, and pass an empty id alone to clear every edge; only for project add and update.
 - `--expect-updated-at <timestamp>` - Refuse the change as a conflict unless the goal's updatedAt still matches this value; only for project update, set_active, complete, reopen, archive, and delete.
@@ -54,10 +56,11 @@ Flags:
 
 Prefer `--json` whenever you need to read IDs, statuses, or errors back rather than parsing human output.
 `list` output is compact and omits descriptions; use `show <id>` when you need a goal's complete description.
-Text after `--` becomes the goal description.
-Put every flag before `--`, because each token after it is description text. A known flag there remains in the description and triggers a warning: stderr for human output, or the JSON envelope's `warnings` array if `--json` was already enabled. A trailing `--json` therefore does not select JSON output; the command prints human output and still exits 0.
-`update <id> --` with nothing after the separator clears the description.
-`update <id> --append -- <text>` adds that text as a new paragraph instead, so recording a note never rewrites, and never risks losing, prose you did not author.
+Programmatic callers and agents must use `--description <text>` for a replacement, passing the whole value in one argv token. The flag is order-independent, and its value may itself look like a known flag.
+Use `--append-description <text>` to add a paragraph without replaying stored prose. Replacing and appending are mutually exclusive, and an append cannot be combined with a title change.
+Reserve `-- <description...>` for a human typing unquoted prose interactively. A standalone known flag after the separator is a usage error with exit code 2; move a real flag before the separator or put flag-looking prose in `--description`.
+The legacy `--append -- <text>` interactive form remains supported, while agents and scripts use `--append-description <text>`.
+Programmatic callers clear a description with `--description ''`; the interactive `update <id> --` form remains supported.
 `--expect-updated-at <updatedAt>`, copied from your own `show` of that goal, refuses the change when someone edited the goal after you read it.
 Pass it on every change you make to a goal you did not just create: without it, your mutation proceeds even if the goal changed after you read it.
 
@@ -65,13 +68,13 @@ Examples:
 
 ```sh
 npx -y pi-worklist@latest project list --json
-npx -y pi-worklist@latest project add Support goal templates -- Let teams share reusable goal outlines
+npx -y pi-worklist@latest project add Support goal templates --description "Let teams share reusable goal outlines"
 npx -y pi-worklist@latest project find templates --json
 npx -y pi-worklist@latest project show support-goal-templates --json
-npx -y pi-worklist@latest project update support-goal-templates -- Replace only the description
+npx -y pi-worklist@latest project update support-goal-templates --description "Replace only the description"
 npx -y pi-worklist@latest project update support-goal-templates Support shared goal templates
-npx -y pi-worklist@latest project update support-goal-templates --append -- Blocked on the template schema until it lands
-npx -y pi-worklist@latest project update support-goal-templates --expect-updated-at 2026-05-04T09:12:31.004Z --append -- Reviewed and still current
+npx -y pi-worklist@latest project update support-goal-templates --append-description "Blocked on the template schema until it lands"
+npx -y pi-worklist@latest project update support-goal-templates --expect-updated-at 2026-05-04T09:12:31.004Z --append-description "Reviewed and still current"
 npx -y pi-worklist@latest project update support-goal-templates --group Foundation
 npx -y pi-worklist@latest project add Retire the legacy importer --depends-on support-goal-templates --depends-on ship-the-new-parser
 npx -y pi-worklist@latest project update retire-the-legacy-importer --depends-on support-goal-templates

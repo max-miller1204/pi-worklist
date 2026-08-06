@@ -84,6 +84,7 @@ describe("single CLI command contract", () => {
 			[SKILL_PATH, renderSkillMarkdown()],
 		] as const;
 		const ruleSets = {
+			descriptionRules: CLI_COMMAND_CONTRACT.descriptionRules,
 			idRules: CLI_COMMAND_CONTRACT.idRules,
 			orderRules: CLI_COMMAND_CONTRACT.orderRules,
 			dependencyRules: CLI_COMMAND_CONTRACT.dependencyRules,
@@ -125,6 +126,15 @@ describe("single CLI command contract", () => {
 			).not.toContain(`${CLI_COMMAND_CONTRACT.scope} ${action.name} `);
 		}
 		expect(exampleBlock, "Examples must not demonstrate `--confirm`").not.toContain("--confirm");
+		expect(exampleBlock, "Programmatic description examples must use --description").toContain(
+			"--description",
+		);
+		expect(exampleBlock, "Programmatic append examples must use --append-description").toContain(
+			"--append-description",
+		);
+		expect(exampleBlock, "Programmatic examples must reserve the -- separator for humans").not.toMatch(
+			/\s--\s/,
+		);
 		for (const action of CLI_COMMAND_CONTRACT.actions) {
 			expect(skill, `SKILL.md is missing action usage \`${action.usage}\``).toContain(action.usage);
 		}

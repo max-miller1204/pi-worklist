@@ -85,6 +85,49 @@ describe("project goal CLI", () => {
 		expect((await readGoals(root))[0].status).toBe("active");
 	});
 
+	it("accepts order-independent description flags with flag-looking values", async () => {
+		const root = await tempGitRepo();
+
+		const added = await runCli(root, [
+			"project",
+			"add",
+			"--json",
+			"Flag-safe",
+			"goal",
+			"--description",
+			"--confirm",
+		]);
+		expect(added.code).toBe(0);
+		const created = JSON.parse(added.stdout) as { result: { goal: ProjectGoal } };
+		expect(created.result.goal).toMatchObject({ title: "Flag-safe goal", description: "--confirm" });
+
+		const replaced = await runCli(root, [
+			"project",
+			"update",
+			"--description",
+			"Replacement text mentions --json",
+			created.result.goal.id,
+			"--json",
+		]);
+		expect(replaced.code).toBe(0);
+		expect((await readGoals(root))[0].description).toBe("Replacement text mentions --json");
+
+		const appended = await runCli(root, [
+			"project",
+			"update",
+			"--json",
+			created.result.goal.id,
+			"--append-description",
+			"--json",
+		]);
+		expect(appended.code).toBe(0);
+		expect((await readGoals(root))[0].description).toBe("Replacement text mentions --json\n\n--json");
+
+		const cleared = await runCli(root, ["project", "update", created.result.goal.id, "--description", ""]);
+		expect(cleared.code).toBe(0);
+		expect((await readGoals(root))[0].description).toBe("");
+	});
+
 	it("keeps a single active goal", async () => {
 		const root = await tempGitRepo();
 		await runCli(root, ["project", "add", "First"]);
@@ -281,12 +324,19 @@ describe("project goal CLI", () => {
 
 		const misuses = [
 			["project", "list", "--expect-updated-at", stale],
+			["project", "list", "--description", "ignored"],
 			["project", "add", "Nope", "--append", "--", "text"],
+			["project", "add", "Nope", "--description", "first", "--", "second"],
 			["project", "update", goal.id, "--append"],
 			["project", "update", goal.id, "--append", "--"],
-			// --append takes no value, so text written as though it did would otherwise
-			// be read as a new title and silently rename the goal.
+			["project", "update", goal.id, "--description"],
+			["project", "update", goal.id, "--append-description", ""],
+			["project", "update", goal.id, "--description", "replace", "--append-description", "add"],
+			["project", "update", goal.id, "--append", "--description", "note"],
+			["project", "update", goal.id, "--append-description", "first", "--", "second"],
+			// Appending and renaming in one invocation is refused for both input forms.
 			["project", "update", goal.id, "Renamed", "--append", "--", "note"],
+			["project", "update", goal.id, "Renamed", "--append-description", "note"],
 			["project", "update", goal.id, "--expect-updated-at"],
 		];
 		for (const args of misuses) {
@@ -527,12 +577,12 @@ describe("project goal CLI", () => {
 		expect((await readGoals(root))[0].title).toBe("From elsewhere");
 	});
 
-	it("warns when a flag is written after the description separator", async () => {
+	it("rejects a known flag after the interactive description separator", async () => {
 		const root = await tempGitRepo();
+		await runCli(root, ["project", "add", "Existing goal"]);
 
-		// The exact mistake this warning exists for: --json after the separator
-		// silently becomes description text, so stdout is human output and the
-		// command still exits 0.
+		// This is the original ordering hazard: --json is no longer swallowed into
+		// prose with a success exit code and human stdout.
 		const swallowed = await runCli(root, [
 			"project",
 			"add",
@@ -544,64 +594,50 @@ describe("project goal CLI", () => {
 			"--json",
 		]);
 
-		expect(swallowed.code).toBe(0);
-		expect(swallowed.stderr).toContain("--json came after -- and became description text");
-		expect(swallowed.stderr).toContain("Flags must come before the -- separator");
-		expect(swallowed.stdout).toContain("Added project goal");
-		// The separator's contract is unchanged: the text is still the description.
-		expect((await readGoals(root))[0].description).toBe("External agent access --json");
-
-		const correct = await runCli(root, [
-			"project",
-			"add",
-			"Ship",
-			"it",
-			"properly",
-			"--json",
-			"--",
-			"External agent access",
-		]);
-		expect(correct.stderr).toBe("");
-		expect(JSON.parse(correct.stdout).ok).toBe(true);
+		expect(swallowed.code).toBe(2);
+		expect(swallowed.stdout).toBe("");
+		expect(swallowed.stderr).toContain("--json came after --");
+		expect(swallowed.stderr).toContain("Use --description <text>");
+		expect(await readGoals(root)).toHaveLength(1);
 
 		const valueTakingFlag = await runCli(root, [
 			"project",
 			"add",
 			"Check",
 			"cwd",
-			"warning",
+			"strictness",
 			"--",
 			"Description",
 			"--cwd",
 		]);
-		expect(valueTakingFlag.code).toBe(0);
-		expect(valueTakingFlag.stderr).toContain(
-			"pi-worklist project <action> [arguments] --cwd <dir> -- <description>",
-		);
+		expect(valueTakingFlag.code).toBe(2);
+		expect(valueTakingFlag.stderr).toContain("--cwd came after --");
+		expect(valueTakingFlag.stderr).toContain("--description <text>");
+		expect(await readGoals(root)).toHaveLength(1);
 	});
 
-	it("keeps JSON failures parseable when description text contains a flag", async () => {
+	it("keeps JSON failures parseable with a flag-looking description value", async () => {
 		const root = await tempGitRepo();
 		const result = await runCli(root, [
 			"project",
 			"update",
 			"goal-missing",
-			"--json",
-			"--",
-			"Description",
+			"--description",
 			"--confirm",
+			"--json",
 		]);
 
 		expect(result.code).toBe(1);
 		expect(result.stdout).toBe("");
-		expect(JSON.parse(result.stderr)).toMatchObject({
+		const payload = JSON.parse(result.stderr);
+		expect(payload).toMatchObject({
 			ok: false,
 			error: { code: "NOT_FOUND", details: { id: "goal-missing" } },
-			warnings: [{ code: "MISPLACED_GLOBAL_FLAG", flag: "--confirm", usage: "--confirm" }],
 		});
+		expect(payload).not.toHaveProperty("warnings");
 	});
 
-	it("does not warn about description prose that merely mentions a flag", async () => {
+	it("accepts interactive description prose that merely mentions a flag", async () => {
 		const root = await tempGitRepo();
 
 		const result = await runCli(root, [

@@ -81,13 +81,13 @@ export const CLI_COMMAND_CONTRACT = {
 		},
 		{
 			name: "add",
-			usage: "add <title...> [-- <description...>]",
+			usage: "add <title...> [--description <text> | -- <description...>]",
 			summary: "Add an open goal",
 		},
 		{
 			name: "update",
-			usage: "update <id> [title...] [-- <description...>]",
-			summary: 'Edit a goal; "-- " alone clears the description',
+			usage: "update <id> [title...] [--description <text> | -- <description...>]",
+			summary: "Edit a goal's title or description",
 		},
 		{
 			name: "move",
@@ -152,10 +152,24 @@ export const CLI_COMMAND_CONTRACT = {
 			summary: "Resolve the git root from this directory instead of the working directory",
 		},
 		{
+			name: "--description",
+			usage: "--description <text>",
+			summary:
+				"Set the whole description from one argv token; order-independent and preferred for agents and scripts",
+			actions: ["add", "update"],
+		},
+		{
+			name: "--append-description",
+			usage: "--append-description <text>",
+			summary:
+				"Add one argv token as a new description paragraph without replacing stored prose; cannot be combined with a title change",
+			actions: ["update"],
+		},
+		{
 			name: "--append",
 			usage: "--append",
 			summary:
-				"Add the text after -- as a new paragraph instead of replacing the description; cannot be combined with a title change",
+				"Interactive compatibility form that adds the text after -- as a new paragraph; cannot be combined with a title change",
 			actions: ["update"],
 		},
 		{
@@ -184,12 +198,13 @@ export const CLI_COMMAND_CONTRACT = {
 			actions: ["migrate_ids"],
 		},
 	] satisfies CliFlagContract[],
-	/**
-	 * A rule that is easy to violate silently, so every generated surface
-	 * states it rather than leaving it implied by the separator's definition.
-	 */
-	separatorRule:
-		"Put every flag before `--`, because each token after it is description text. A known flag there remains in the description and triggers a warning: stderr for human output, or the JSON envelope's `warnings` array if `--json` was already enabled. A trailing `--json` therefore does not select JSON output; the command prints human output and still exits 0.",
+	/** Description input rules rendered onto every generated caller surface. */
+	descriptionRules: [
+		"Programmatic callers and agents must use `--description <text>` for a replacement, passing the whole value in one argv token. The flag is order-independent, and its value may itself look like a known flag.",
+		"Use `--append-description <text>` to add a paragraph without replaying stored prose. Replacing and appending are mutually exclusive, and an append cannot be combined with a title change.",
+		"Reserve `-- <description...>` for a human typing unquoted prose interactively. A standalone known flag after the separator is a usage error with exit code 2; move a real flag before the separator or put flag-looking prose in `--description`.",
+		"The legacy `--append -- <text>` interactive form remains supported, while agents and scripts use `--append-description <text>`.",
+	],
 	/**
 	 * How an ID comes to exist and how a caller names one.
 	 *
@@ -248,7 +263,8 @@ export const CLI_COMMAND_CONTRACT = {
 	] satisfies CliExitCodeContract[],
 	agentGuidelines: [
 		"Prefer --json and read the deterministic result envelope instead of parsing human output.",
-		"Write every flag before the -- separator, and read the CLI's own exit code rather than a shell pipeline's, so a swallowed flag cannot look like a failure or a success.",
+		"Use --description <text> and --append-description <text> for every programmatic description input; reserve the -- separator for a human typing prose interactively.",
+		"Read the CLI's own exit code rather than a shell pipeline's; a known flag after the description separator is a usage error with exit code 2.",
 		"Never run ui: it is an interactive board for a human, it holds the terminal until they quit, and it refuses to start without one.",
 		"Never pass --confirm for complete, reopen, archive, delete, or migrate_ids unless the user explicitly requested that exact action.",
 		"Treat exit code 3 as a request for explicit user confirmation, not as a retryable failure.",
@@ -256,7 +272,7 @@ export const CLI_COMMAND_CONTRACT = {
 		"Use list for orientation, find <text> to locate a goal by wording, and show <id> when you need a goal's complete description.",
 		"Pass a full ID or a prefix long enough to be unique; an ambiguous prefix is refused with candidates rather than resolved by guesswork.",
 		"Run migrate_ids only when the user explicitly asks for it; it rewrites stored IDs, though every old ID keeps resolving afterwards.",
-		"Add a note with --append instead of resending a description you did not write, so nothing in the existing text can be lost in transcription.",
+		"Add a note with --append-description instead of resending a description you did not write, so nothing in the existing text can be lost in transcription.",
 		"Group related goals with --group <name> on add or update, and leave the file order alone unless the user asked for a different sequence.",
 		"Record a real must-land-before relationship with --depends-on <id>, including one that exists only because two goals would collide in the same files; do not add an edge merely to justify the order the file happens to be in.",
 		"Send the complete set of edges on every --depends-on update, because it replaces the stored set rather than adding to it.",
@@ -349,13 +365,13 @@ export function renderSkillMarkdown(): string {
 	const exampleUpdatedAt = "2026-05-04T09:12:31.004Z";
 	const examples = [
 		"list --json",
-		"add Support goal templates -- Let teams share reusable goal outlines",
+		'add Support goal templates --description "Let teams share reusable goal outlines"',
 		"find templates --json",
 		`show ${exampleId} --json`,
-		`update ${exampleId} -- Replace only the description`,
+		`update ${exampleId} --description "Replace only the description"`,
 		`update ${exampleId} Support shared goal templates`,
-		`update ${exampleId} --append -- Blocked on the template schema until it lands`,
-		`update ${exampleId} --expect-updated-at ${exampleUpdatedAt} --append -- Reviewed and still current`,
+		`update ${exampleId} --append-description "Blocked on the template schema until it lands"`,
+		`update ${exampleId} --expect-updated-at ${exampleUpdatedAt} --append-description "Reviewed and still current"`,
 		`update ${exampleId} --group Foundation`,
 		`add Retire the legacy importer --depends-on ${exampleId} --depends-on ${secondDependencyId}`,
 		`update ${anchorExampleId} --depends-on ${exampleId}`,
@@ -401,10 +417,8 @@ export function renderSkillMarkdown(): string {
 		"",
 		"Prefer `--json` whenever you need to read IDs, statuses, or errors back rather than parsing human output.",
 		"`list` output is compact and omits descriptions; use `show <id>` when you need a goal's complete description.",
-		"Text after `--` becomes the goal description.",
-		contract.separatorRule,
-		"`update <id> --` with nothing after the separator clears the description.",
-		"`update <id> --append -- <text>` adds that text as a new paragraph instead, so recording a note never rewrites, and never risks losing, prose you did not author.",
+		...contract.descriptionRules,
+		"Programmatic callers clear a description with `--description ''`; the interactive `update <id> --` form remains supported.",
 		"`--expect-updated-at <updatedAt>`, copied from your own `show` of that goal, refuses the change when someone edited the goal after you read it.",
 		"Pass it on every change you make to a goal you did not just create: without it, your mutation proceeds even if the goal changed after you read it.",
 		"",
@@ -502,7 +516,9 @@ export function renderCliGuide(): string {
 		"| --- | --- |",
 		...flagRows,
 		"",
-		contract.separatorRule,
+		"## Description input",
+		"",
+		...contract.descriptionRules,
 		"",
 		"## Goal IDs",
 		"",
