@@ -165,7 +165,7 @@ The CLI routes every mutation through the same service, cross-process lock, and 
 `--depends-on <id>` on `add` and `update` records a goal that must land first and may be repeated, `--depends-on ''` alone clears every edge, and an update replaces the stored set rather than adding to it.
 Lifecycle actions (`complete`, `reopen`, `archive`, `delete`) require `--confirm`, mirroring the model tool's explicit-intent rule; an omitted flag exits with code 3 and changes nothing.
 External agents and scripts use the order-independent `--description <text>` replacement flag, passing the complete value in one argv token, and use `--append-description <text>` to add a paragraph without replaying stored prose.
-A new title goes before `--description` rather than after its single argv token: on `update` a trailing word that would become a title exits with code 2 instead of renaming the goal, and on `add` it joins the title, so quote the whole description.
+A new title goes before `--description` rather than after its single argv token: on `update` a trailing word that would become a title exits with code 2 instead of renaming the goal, and on `add` prose that spills past the value and splits the title across it exits the same way, so quote the whole description.
 The `-- <description...>` separator and legacy `--append -- <text>` form remain available for a human typing unquoted prose interactively.
 A standalone known flag after that separator is a usage error with exit code 2; flag-looking description text belongs in `--description`.
 `--expect-updated-at <timestamp>` carries the goal's `updatedAt` from the caller's own read, and applies to `update`, `set_active`, and the lifecycle actions.
