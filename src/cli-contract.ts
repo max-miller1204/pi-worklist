@@ -320,6 +320,20 @@ function flagSummary(flag: CliFlagContract): string {
 	return `${flag.summary}; only for ${CLI_COMMAND_CONTRACT.scope} ${joinWithAnd(flag.actions)}`;
 }
 
+/**
+ * A GFM table whose cells survive the contract's own wording.
+ *
+ * A row is split on every unescaped `|` before its cells are parsed as
+ * Markdown, so a code span is no shelter: a usage string that spells
+ * alternatives with a pipe would otherwise render as extra columns with the
+ * code span torn across them.
+ */
+function markdownTable(headers: readonly string[], rows: readonly (readonly string[])[]): string[] {
+	const renderRow = (cells: readonly string[]) =>
+		`| ${cells.map((cell) => cell.replaceAll("|", "\\|")).join(" | ")} |`;
+	return [renderRow(headers), `| ${headers.map(() => "---").join(" | ")} |`, ...rows.map(renderRow)];
+}
+
 export function renderCliUsage(): string {
 	const contract = CLI_COMMAND_CONTRACT;
 	const flagColumn = Math.max(...contract.flags.map((flag) => flag.usage.length)) + 2;
@@ -482,10 +496,10 @@ export function renderCliGuide(): string {
 			action.confirmRequired ? ". Requires explicit user confirmation" : "",
 			action.interactive ? ". Requires a terminal; not for scripts or agents" : "",
 		].join("");
-		return `| \`npx -y ${publishedBinary} ${contract.scope} ${action.usage}\` | ${action.summary}${notes} |`;
+		return [`\`npx -y ${publishedBinary} ${contract.scope} ${action.usage}\``, `${action.summary}${notes}`];
 	});
-	const flagRows = contract.flags.map((flag) => `| \`${flag.usage}\` | ${flagSummary(flag)} |`);
-	const exitCodeRows = contract.exitCodes.map((exitCode) => `| \`${exitCode.code}\` | ${exitCode.meaning} |`);
+	const flagRows = contract.flags.map((flag) => [`\`${flag.usage}\``, flagSummary(flag)]);
+	const exitCodeRows = contract.exitCodes.map((exitCode) => [`\`${exitCode.code}\``, exitCode.meaning]);
 	const guidelineLines = contract.agentGuidelines.map((guideline) => `- ${guideline}`);
 	return [
 		`<!-- Generated from src/cli-contract.ts by ${GENERATOR_PATH}. Do not edit manually. -->`,
@@ -506,15 +520,11 @@ export function renderCliGuide(): string {
 		"",
 		"## Commands",
 		"",
-		"| Command | Description |",
-		"| --- | --- |",
-		...actionRows,
+		...markdownTable(["Command", "Description"], actionRows),
 		"",
 		"## Flags",
 		"",
-		"| Flag | Description |",
-		"| --- | --- |",
-		...flagRows,
+		...markdownTable(["Flag", "Description"], flagRows),
 		"",
 		"## Description input",
 		"",
@@ -535,9 +545,7 @@ export function renderCliGuide(): string {
 		"",
 		"## Exit codes",
 		"",
-		"| Code | Meaning |",
-		"| --- | --- |",
-		...exitCodeRows,
+		...markdownTable(["Code", "Meaning"], exitCodeRows),
 		"",
 		"## Agent guidance",
 		"",

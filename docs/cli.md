@@ -22,9 +22,9 @@ Every `--json` result envelope reports the running package version as `meta.cliV
 | `npx -y pi-worklist@latest project show <id>` | Show one goal with its full description |
 | `npx -y pi-worklist@latest project find <text...>` | List the goals whose title or description contains the text |
 | `npx -y pi-worklist@latest project ui` | Open the interactive goal board for a human at the keyboard. Requires a terminal; not for scripts or agents |
-| `npx -y pi-worklist@latest project add <title...> [--description <text> | -- <description...>]` | Add an open goal |
-| `npx -y pi-worklist@latest project update <id> [title...] [--description <text> | -- <description...>]` | Edit a goal's title or description |
-| `npx -y pi-worklist@latest project move <id> up|down|before <id>|after <id>` | Reorder a goal in the roadmap's canonical file order |
+| `npx -y pi-worklist@latest project add <title...> [--description <text> \| -- <description...>]` | Add an open goal |
+| `npx -y pi-worklist@latest project update <id> [title...] [--description <text> \| -- <description...>]` | Edit a goal's title or description |
+| `npx -y pi-worklist@latest project move <id> up\|down\|before <id>\|after <id>` | Reorder a goal in the roadmap's canonical file order |
 | `npx -y pi-worklist@latest project set_active <id>` | Make a goal the single active goal |
 | `npx -y pi-worklist@latest project complete <id> --confirm` | Mark a goal done. Requires explicit user confirmation |
 | `npx -y pi-worklist@latest project reopen <id> --confirm` | Reopen a done or archived goal. Requires explicit user confirmation |
