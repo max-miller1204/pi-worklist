@@ -37,8 +37,11 @@ interface CliInvocation {
 	scope: string;
 	action: string;
 	rest: string[];
+	/** Replacement text from --description or the interactive `--` separator. */
 	description?: string;
-	/** Treat the text after `--` as an addition to the description rather than a replacement. */
+	/** Additive text carried directly by --append-description. */
+	appendDescription?: string;
+	/** Treat text after the interactive `--` separator as an addition rather than a replacement. */
 	append: boolean;
 	/** Free-form section name; the empty string clears the goal's group. */
 	group?: string;
@@ -52,13 +55,10 @@ interface CliInvocation {
 	cwd: string;
 	/** Flag names as written, so action-scoped flags can be refused where they would be ignored. */
 	flagsUsed: ReadonlySet<string>;
-	warnings: CliWarning[];
-}
-
-interface CliWarning {
-	code: "MISPLACED_GLOBAL_FLAG";
-	flag: string;
-	usage: string;
+	/** Positionals written after the --description value, which a title must not be built from. */
+	positionalsAfterDescription: number;
+	/** Positionals written after the --append-description value, which a title must not be built from. */
+	positionalsAfterAppendDescription: number;
 }
 
 interface CliResultMeta extends WorklistResultMeta {
@@ -67,7 +67,6 @@ interface CliResultMeta extends WorklistResultMeta {
 
 type CliResultEnvelope = WorklistApplicationResult & {
 	meta: CliResultMeta;
-	warnings?: CliWarning[];
 };
 
 function fail(message: string, code: number): never {
@@ -86,31 +85,35 @@ const GLOBAL_FLAGS_BY_NAME: ReadonlyMap<string, CliFlagContract> = new Map(
 );
 
 /**
- * Warns when a known flag was written after the `--` separator.
- *
- * Every token after the separator is description text, so a trailing `--json`
- * silently becomes part of the description instead of selecting JSON output,
- * and the caller gets human output it never asked for. The flag still stays
- * description text, because letting a description contain anything at all is
- * the separator's whole purpose; only the silence is a defect. A flag before
- * the separator is already validated strictly, so this closes the asymmetry.
+ * Find the interactive description separator without mistaking a literal `--`
+ * carried by a description flag for that separator.
  */
-function findMisplacedFlagWarnings(tokens: readonly string[]): CliWarning[] {
-	const misplaced = [...new Set(tokens)].flatMap((token) => {
-		const flag = GLOBAL_FLAGS_BY_NAME.get(token);
-		return flag ? [{ code: "MISPLACED_GLOBAL_FLAG" as const, flag: flag.name, usage: flag.usage }] : [];
-	});
-	return misplaced;
+function findDescriptionSeparator(argv: readonly string[]): number {
+	for (let index = 0; index < argv.length; index++) {
+		const part = argv[index];
+		if (part === "--description" || part === "--append-description") {
+			index++;
+			continue;
+		}
+		if (part === "--") return index;
+	}
+	return -1;
 }
 
-function warnMisplacedFlags(warnings: readonly CliWarning[]): void {
-	if (warnings.length === 0) return;
-	const binary = CLI_COMMAND_CONTRACT.binary;
-	const names = warnings.map((warning) => warning.flag);
-	process.stderr.write(
-		`Warning: ${names.join(", ")} came after -- and became description text, not ${names.length === 1 ? "a flag" : "flags"}.\n` +
-			`Flags must come before the -- separator, for example:\n` +
-			`  ${binary} ${CLI_COMMAND_CONTRACT.scope} <action> [arguments] ${warnings[0].usage} -- <description>\n`,
+/**
+ * Rejects a known flag after the interactive `--` separator.
+ *
+ * Standalone flag-looking prose remains valid through --description and
+ * --append-description, where one argv token is unambiguously the value.
+ */
+function rejectMisplacedFlags(tokens: readonly string[]): void {
+	const names = [...new Set(tokens)].filter((token) => GLOBAL_FLAGS_BY_NAME.has(token));
+	if (names.length === 0) return;
+	const subject = names.length === 1 ? "a standalone flag" : "standalone flags";
+	fail(
+		`${names.join(", ")} came after --, where known flags are not accepted as description text.\n` +
+			`Use --description <text> to replace, or --append-description <text> to add, a description that contains ${subject}; reserve -- for interactive prose.\n\n${USAGE}`,
+		2,
 	);
 }
 
@@ -137,6 +140,13 @@ function readFlagValue(head: readonly string[], index: number, flag: string, exp
 	return value;
 }
 
+/** A whole description carried in exactly one argv token, even when it looks like a flag. */
+function readDescriptionFlagValue(head: readonly string[], index: number, flag: string): string {
+	const value = head[index + 1];
+	if (value === undefined) fail(`${flag} requires one text argument\n\n${USAGE}`, 2);
+	return value;
+}
+
 /**
  * A flag value that may be empty, which is how a caller clears the field.
  *
@@ -154,13 +164,26 @@ function readClearableFlagValue(
 	return value;
 }
 
-function parseArgs(argv: string[]): CliInvocation {
-	const separator = argv.indexOf("--");
-	const head = separator === -1 ? argv : argv.slice(0, separator);
-	const descriptionTokens = separator === -1 ? [] : argv.slice(separator + 1);
-	const description = separator === -1 ? undefined : descriptionTokens.join(" ");
-	const warnings = findMisplacedFlagWarnings(descriptionTokens);
+interface ParsedCliHead {
+	positionals: string[];
+	flagsUsed: Set<string>;
+	dependsOn: string[];
+	/** Positionals written after the --description value, which a title must not be built from. */
+	positionalsAfterDescription: number;
+	/** Positionals written after the --append-description value, which a title must not be built from. */
+	positionalsAfterAppendDescription: number;
+	directDescription?: string;
+	appendDescription?: string;
+	append: boolean;
+	dryRun: boolean;
+	group?: string;
+	expectedUpdatedAt?: string;
+	json: boolean;
+	confirm: boolean;
+	cwd: string;
+}
 
+function parseCliHead(head: readonly string[]): ParsedCliHead {
 	const positionals: string[] = [];
 	const flagsUsed = new Set<string>();
 	const dependsOn: string[] = [];
@@ -168,9 +191,12 @@ function parseArgs(argv: string[]): CliInvocation {
 	let confirm = false;
 	let append = false;
 	let dryRun = false;
+	let directDescription: string | undefined;
+	let appendDescription: string | undefined;
 	let group: string | undefined;
 	let expectedUpdatedAt: string | undefined;
 	let cwd = process.cwd();
+	const positionalsBeforeFlag = new Map<string, number>();
 	for (let index = 0; index < head.length; index++) {
 		const part = head[index];
 		if (!part.startsWith("--")) {
@@ -178,23 +204,52 @@ function parseArgs(argv: string[]): CliInvocation {
 			continue;
 		}
 		flagsUsed.add(part);
-		if (part === "--json") json = true;
-		else if (part === "--confirm") confirm = true;
-		else if (part === "--append") append = true;
-		else if (part === "--dry-run") dryRun = true;
-		else if (part === "--cwd") {
-			cwd = readFlagValue(head, index, part, "a directory");
-			index++;
-		} else if (part === "--group") {
-			group = readClearableFlagValue(head, index, part, "a section name, or '' to clear it");
-			index++;
-		} else if (part === "--depends-on") {
-			dependsOn.push(readClearableFlagValue(head, index, part, "a goal id, or '' to clear every edge"));
-			index++;
-		} else if (part === "--expect-updated-at") {
-			expectedUpdatedAt = readFlagValue(head, index, part, "a timestamp");
-			index++;
-		} else fail(`Unknown flag ${part}\n\n${USAGE}`, 2);
+		switch (part) {
+			case "--json":
+				json = true;
+				break;
+			case "--confirm":
+				confirm = true;
+				break;
+			case "--append":
+				append = true;
+				break;
+			case "--dry-run":
+				dryRun = true;
+				break;
+			case "--description":
+				if (directDescription !== undefined) fail(`--description may be provided only once\n\n${USAGE}`, 2);
+				directDescription = readDescriptionFlagValue(head, index, part);
+				positionalsBeforeFlag.set(part, positionals.length);
+				index++;
+				break;
+			case "--append-description":
+				if (appendDescription !== undefined) {
+					fail(`--append-description may be provided only once\n\n${USAGE}`, 2);
+				}
+				appendDescription = readDescriptionFlagValue(head, index, part);
+				positionalsBeforeFlag.set(part, positionals.length);
+				index++;
+				break;
+			case "--cwd":
+				cwd = readFlagValue(head, index, part, "a directory");
+				index++;
+				break;
+			case "--group":
+				group = readClearableFlagValue(head, index, part, "a section name, or '' to clear it");
+				index++;
+				break;
+			case "--depends-on":
+				dependsOn.push(readClearableFlagValue(head, index, part, "a goal id, or '' to clear every edge"));
+				index++;
+				break;
+			case "--expect-updated-at":
+				expectedUpdatedAt = readFlagValue(head, index, part, "a timestamp");
+				index++;
+				break;
+			default:
+				fail(`Unknown flag ${part}\n\n${USAGE}`, 2);
+		}
 	}
 
 	// An empty id means "no dependencies at all", which contradicts naming one, so
@@ -203,23 +258,69 @@ function parseArgs(argv: string[]): CliInvocation {
 	if (dependsOn.some((entry) => entry.trim() === "") && dependsOn.length > 1) {
 		fail(`--depends-on '' clears every edge and cannot be combined with another --depends-on\n\n${USAGE}`, 2);
 	}
-	const [scope, action, ...rest] = positionals;
-	if (!scope || !action) fail(USAGE, 2);
+	const positionalsAfter = (flag: string): number => {
+		const before = positionalsBeforeFlag.get(flag);
+		return before === undefined ? 0 : positionals.length - before;
+	};
 	return {
-		scope,
-		action,
-		rest,
-		description,
+		positionals,
+		flagsUsed,
+		dependsOn,
+		positionalsAfterDescription: positionalsAfter("--description"),
+		positionalsAfterAppendDescription: positionalsAfter("--append-description"),
+		directDescription,
+		appendDescription,
 		append,
 		dryRun,
 		group,
-		...(flagsUsed.has("--depends-on") ? { dependsOn: dependsOn.filter((entry) => entry.trim() !== "") } : {}),
 		expectedUpdatedAt,
 		json,
 		confirm,
 		cwd,
-		flagsUsed,
-		warnings,
+	};
+}
+
+function validateDescriptionInputs(parsed: ParsedCliHead, hasSeparatorDescription: boolean): void {
+	if (parsed.directDescription !== undefined && hasSeparatorDescription) {
+		fail(`--description cannot be combined with description text after --\n\n${USAGE}`, 2);
+	}
+	if (parsed.appendDescription !== undefined && hasSeparatorDescription) {
+		fail(`--append-description cannot be combined with description text after --\n\n${USAGE}`, 2);
+	}
+	if (parsed.directDescription !== undefined && parsed.appendDescription !== undefined) {
+		fail(`--description and --append-description are mutually exclusive\n\n${USAGE}`, 2);
+	}
+	if (parsed.append && parsed.directDescription !== undefined) {
+		fail(`--append cannot be combined with --description; use --append-description <text>\n\n${USAGE}`, 2);
+	}
+	if (parsed.append && parsed.appendDescription !== undefined) {
+		fail(
+			`--append and --append-description are alternative append forms and cannot be combined\n\n${USAGE}`,
+			2,
+		);
+	}
+}
+
+function parseArgs(argv: string[]): CliInvocation {
+	const separator = findDescriptionSeparator(argv);
+	const head = separator === -1 ? argv : argv.slice(0, separator);
+	const descriptionTokens = separator === -1 ? [] : argv.slice(separator + 1);
+	rejectMisplacedFlags(descriptionTokens);
+	const parsed = parseCliHead(head);
+	const hasSeparatorDescription = separator !== -1;
+	validateDescriptionInputs(parsed, hasSeparatorDescription);
+	const { positionals, directDescription, dependsOn, ...carried } = parsed;
+	const [scope, action, ...rest] = positionals;
+	if (!scope || !action) fail(USAGE, 2);
+	return {
+		...carried,
+		scope,
+		action,
+		rest,
+		description: directDescription ?? (hasSeparatorDescription ? descriptionTokens.join(" ") : undefined),
+		...(carried.flagsUsed.has("--depends-on")
+			? { dependsOn: dependsOn.filter((entry) => entry.trim() !== "") }
+			: {}),
 	};
 }
 
@@ -416,19 +517,17 @@ function readEnvelope(
 
 function report(invocation: CliInvocation, envelope: WorklistApplicationResult, message: string): void {
 	if (invocation.json) {
-		process.stdout.write(`${JSON.stringify(withCliMetadata(invocation, envelope), null, 2)}\n`);
+		process.stdout.write(`${JSON.stringify(withCliMetadata(envelope), null, 2)}\n`);
 		return;
 	}
 	process.stdout.write(`${message}\n`);
 }
 
-function withCliMetadata(invocation: CliInvocation, envelope: WorklistApplicationResult): CliResultEnvelope {
-	const cliEnvelope = {
+function withCliMetadata(envelope: WorklistApplicationResult): CliResultEnvelope {
+	return {
 		...envelope,
 		meta: { ...envelope.meta, cliVersion: packageVersion },
 	};
-	if (invocation.warnings.length === 0) return cliEnvelope;
-	return { ...cliEnvelope, warnings: invocation.warnings };
 }
 
 async function runLifecycle(
@@ -617,6 +716,18 @@ async function run(invocation: CliInvocation): Promise<void> {
 		case "add": {
 			const title = invocation.rest.join(" ").trim();
 			if (!title) fail(`project add requires a title\n\n${USAGE}`, 2);
+			// A title written on both sides of the --description value is prose that ran
+			// past the flag's single token, never a title someone split on purpose.
+			if (
+				invocation.positionalsAfterDescription > 0 &&
+				invocation.positionalsAfterDescription < invocation.rest.length
+			) {
+				fail(
+					`project add reads the words after a --description value as more of the title, so this would split the title across the flag.\n` +
+						`Keep the whole title on one side of --description, and pass the whole description as one argument.\n\n${USAGE}`,
+					2,
+				);
+			}
 			const description = invocation.description?.trim() || undefined;
 			const envelope = await executeCliOperation(service, {
 				scope: "project",
@@ -651,25 +762,44 @@ async function run(invocation: CliInvocation): Promise<void> {
 		case "update": {
 			const id = requireId(invocation);
 			const title = invocation.rest.slice(1).join(" ").trim() || undefined;
-			if (invocation.append) {
-				if (!invocation.description?.trim()) {
-					fail(`project update --append requires the text to append after --\n\n${USAGE}`, 2);
+			const appendedText =
+				invocation.appendDescription ?? (invocation.append ? invocation.description : undefined);
+			if (invocation.append && !invocation.description?.trim()) {
+				fail(`project update --append requires the text to append after --\n\n${USAGE}`, 2);
+			}
+			if (invocation.appendDescription !== undefined && !invocation.appendDescription.trim()) {
+				fail(`project update --append-description requires non-empty text\n\n${USAGE}`, 2);
+			}
+			// Appending is intentionally description-only. Mixing it with a rename
+			// makes a caller's intent ambiguous and breaks the additive primitive.
+			if (appendedText !== undefined && title !== undefined) {
+				if (invocation.positionalsAfterAppendDescription > 0) {
+					fail(
+						`project update reads the words after an --append-description value as a new title, so this would rename the goal.\n` +
+							`Pass the whole note as one argument; appending never changes the title.\n\n${USAGE}`,
+						2,
+					);
 				}
-				// --append takes no value of its own, so text written as though it did
-				// arrives here as a title. Refusing the combination turns that mistake
-				// into a usage error instead of a silent rename.
-				if (title !== undefined) {
-					fail(`project update cannot change the title while appending to the description\n\n${USAGE}`, 2);
-				}
+				fail(`project update cannot change the title while appending to the description\n\n${USAGE}`, 2);
+			}
+			// --description carries exactly one argv token, so unquoted prose runs past
+			// it into the positionals and would arrive here as a rename nobody asked for.
+			if (title !== undefined && invocation.positionalsAfterDescription > 0) {
+				fail(
+					`project update reads the words after a --description value as a new title, so this would rename the goal.\n` +
+						`Write a new title before --description, and pass the whole description as one argument.\n\n${USAGE}`,
+					2,
+				);
 			}
 			if (
 				title === undefined &&
 				invocation.description === undefined &&
+				invocation.appendDescription === undefined &&
 				invocation.group === undefined &&
 				invocation.dependsOn === undefined
 			) {
 				fail(
-					`project update requires a new title, a -- description, --group, or --depends-on\n\n${USAGE}`,
+					`project update requires a new title, --description, --append-description, --group, or --depends-on\n\n${USAGE}`,
 					2,
 				);
 			}
@@ -680,8 +810,8 @@ async function run(invocation: CliInvocation): Promise<void> {
 				title,
 				group: invocation.group,
 				dependsOn: invocation.dependsOn,
-				...(invocation.append
-					? { appendDescription: invocation.description }
+				...(appendedText !== undefined
+					? { appendDescription: appendedText }
 					: { description: invocation.description }),
 				expectedUpdatedAt: invocation.expectedUpdatedAt,
 			});
@@ -705,14 +835,13 @@ async function run(invocation: CliInvocation): Promise<void> {
 }
 
 const invocation = parseArgs(process.argv.slice(2));
-if (!invocation.json) warnMisplacedFlags(invocation.warnings);
 try {
 	await run(invocation);
 } catch (error) {
 	if (error instanceof WorklistCliFailure) {
 		const code = exitCodeForError(error.envelope.error.code);
 		if (invocation.json) {
-			process.stderr.write(`${JSON.stringify(withCliMetadata(invocation, error.envelope), null, 2)}\n`);
+			process.stderr.write(`${JSON.stringify(withCliMetadata(error.envelope), null, 2)}\n`);
 			process.exit(code);
 		}
 		if (error.envelope.error.code === WORKLIST_ERROR_CODES.APPROVAL_REQUIRED) {

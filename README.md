@@ -143,10 +143,12 @@ The published package ships a compiled `pi-worklist` bin, so no development chec
 npx -y pi-worklist@latest project list
 npx -y pi-worklist@latest project find templates
 npx -y pi-worklist@latest project show <id>
-npx -y pi-worklist@latest project add Support goal templates -- Let teams share reusable goal outlines
+npx -y pi-worklist@latest project add Support goal templates --description "Let teams share reusable goal outlines"
+npx -y pi-worklist@latest project update <id> Replace the title --description "Replace the description"
+npx -y pi-worklist@latest project update <id> --description "Replace only the description"
 npx -y pi-worklist@latest project update <id> Replace the title -- Replace the description
-npx -y pi-worklist@latest project update <id> --append -- Add a note as a new paragraph
-npx -y pi-worklist@latest project update <id> --expect-updated-at <updatedAt> --append -- Add it only if nobody edited first
+npx -y pi-worklist@latest project update <id> --append-description "Add a note as a new paragraph"
+npx -y pi-worklist@latest project update <id> --expect-updated-at <updatedAt> --append-description "Add it only if nobody edited first"
 npx -y pi-worklist@latest project update <id> --group Foundation
 npx -y pi-worklist@latest project update <id> --depends-on <other-id> --depends-on <third-id>
 npx -y pi-worklist@latest project move <id> up
@@ -162,7 +164,10 @@ The CLI routes every mutation through the same service, cross-process lock, and 
 `--group <name>` on `add` and `update` files a goal under a free-form section, and `--group ''` clears it; a group exists exactly when some goal names it, so there is no separate list to keep in step.
 `--depends-on <id>` on `add` and `update` records a goal that must land first and may be repeated, `--depends-on ''` alone clears every edge, and an update replaces the stored set rather than adding to it.
 Lifecycle actions (`complete`, `reopen`, `archive`, `delete`) require `--confirm`, mirroring the model tool's explicit-intent rule; an omitted flag exits with code 3 and changes nothing.
-`--append` adds the text after `--` as a new paragraph instead of replacing the description, so recording a note never re-sends, and never risks losing, prose the caller did not write.
+External agents and scripts use the order-independent `--description <text>` replacement flag, passing the complete value in one argv token, and use `--append-description <text>` to add a paragraph without replaying stored prose.
+A new title goes before `--description` rather than after its single argv token: on `update` a trailing word that would become a title exits with code 2 instead of renaming the goal, and on `add` prose that spills past the value and splits the title across it exits the same way, so quote the whole description.
+The `-- <description...>` separator and legacy `--append -- <text>` form remain available for a human typing unquoted prose interactively.
+A standalone known flag after that separator is a usage error with exit code 2; flag-looking description text belongs in `--description`.
 `--expect-updated-at <timestamp>` carries the goal's `updatedAt` from the caller's own read, and applies to `update`, `set_active`, and the lifecycle actions.
 Without it, a mutation built on a stale read proceeds unreported; a full description replacement can silently overwrite newer prose because the cross-process lock serializes writes without tracking the caller's baseline.
 Exit code 4 reports a concurrent-change conflict, whether the file-wide revision or a single goal moved; nothing is written, so re-read current state, rebuild the change on it, and retry.

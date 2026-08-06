@@ -15,6 +15,38 @@ import {
 
 const execFileAsync = promisify(execFile);
 
+/** Split a GFM table row into its cells: on unescaped pipes only, as a renderer does. */
+function tableCells(row: string): string[] {
+	const cells: string[] = [];
+	let cell = "";
+	for (let index = 0; index < row.length; index += 1) {
+		if (row[index] === "\\" && row[index + 1] === "|") {
+			cell += "|";
+			index += 1;
+			continue;
+		}
+		if (row[index] === "|") {
+			cells.push(cell);
+			cell = "";
+			continue;
+		}
+		cell += row[index];
+	}
+	cells.push(cell);
+	// The leading and trailing pipes bound the row rather than opening cells.
+	return cells.slice(1, -1).map((entry) => entry.trim());
+}
+
+/** The body rows of the table under a `## heading`, parsed into cells. */
+function tableRowsUnder(markdown: string, heading: string): string[][] {
+	const section = markdown.split(`\n## ${heading}\n`)[1]?.split("\n## ")[0] ?? "";
+	return section
+		.split("\n")
+		.filter((line) => line.startsWith("|"))
+		.slice(2)
+		.map(tableCells);
+}
+
 describe("single CLI command contract", () => {
 	it("keeps the generated docs/cli.md guide in sync with the contract", async () => {
 		const generated = await readFile(resolve(DOCS_PATH), "utf8");
@@ -24,14 +56,16 @@ describe("single CLI command contract", () => {
 	it("derives help output, the skill guide, and agent guidance from one contract", async () => {
 		const usage = renderCliUsage();
 		const guide = renderCliGuide();
+		const commands = tableRowsUnder(guide, "Commands").map((cells) => cells[0]);
+		const flags = tableRowsUnder(guide, "Flags").map((cells) => cells[0]);
 		for (const action of CLI_COMMAND_CONTRACT.actions) {
 			expect(usage).toContain(action.usage);
 			expect(usage).toContain(action.summary);
-			expect(guide).toContain(`npx -y pi-worklist@latest project ${action.usage}`);
+			expect(commands).toContain(`\`npx -y pi-worklist@latest project ${action.usage}\``);
 		}
 		for (const flag of CLI_COMMAND_CONTRACT.flags) {
 			expect(usage).toContain(flag.usage);
-			expect(guide).toContain(flag.usage);
+			expect(flags).toContain(`\`${flag.usage}\``);
 		}
 		for (const exitCode of CLI_COMMAND_CONTRACT.exitCodes) {
 			expect(usage).toContain(`${exitCode.code} ${exitCode.meaning}`);
@@ -51,6 +85,30 @@ describe("single CLI command contract", () => {
 				confirmGuidance.some((guideline) => guideline.includes(action.name)),
 				`agent guidance never names the confirm-gated action \`${action.name}\``,
 			).toBe(true);
+		}
+	});
+
+	it("keeps every guide table two columns wide despite pipes in the contract's own wording", () => {
+		// `move <id> up|down|...` and the description alternatives spell their choices
+		// with a pipe, which GFM reads as a cell delimiter even inside a code span.
+		const guide = renderCliGuide();
+		const tables = {
+			Commands: CLI_COMMAND_CONTRACT.actions.map(
+				(action) => `\`npx -y pi-worklist@latest project ${action.usage}\``,
+			),
+			Flags: CLI_COMMAND_CONTRACT.flags.map((flag) => `\`${flag.usage}\``),
+			"Exit codes": CLI_COMMAND_CONTRACT.exitCodes.map((exitCode) => `\`${exitCode.code}\``),
+		};
+		for (const [heading, expectedFirstCells] of Object.entries(tables)) {
+			const rows = tableRowsUnder(guide, heading);
+			expect(rows.length, `the ${heading} table rendered no rows`).toBe(expectedFirstCells.length);
+			for (const cells of rows) {
+				expect(
+					cells,
+					`a ${heading} row splits into ${cells.length} cells: ${cells.join(" / ")}`,
+				).toHaveLength(2);
+			}
+			expect(rows.map((cells) => cells[0])).toEqual(expectedFirstCells);
 		}
 	});
 
@@ -84,6 +142,7 @@ describe("single CLI command contract", () => {
 			[SKILL_PATH, renderSkillMarkdown()],
 		] as const;
 		const ruleSets = {
+			descriptionRules: CLI_COMMAND_CONTRACT.descriptionRules,
 			idRules: CLI_COMMAND_CONTRACT.idRules,
 			orderRules: CLI_COMMAND_CONTRACT.orderRules,
 			dependencyRules: CLI_COMMAND_CONTRACT.dependencyRules,
@@ -125,6 +184,15 @@ describe("single CLI command contract", () => {
 			).not.toContain(`${CLI_COMMAND_CONTRACT.scope} ${action.name} `);
 		}
 		expect(exampleBlock, "Examples must not demonstrate `--confirm`").not.toContain("--confirm");
+		expect(exampleBlock, "Programmatic description examples must use --description").toContain(
+			"--description",
+		);
+		expect(exampleBlock, "Programmatic append examples must use --append-description").toContain(
+			"--append-description",
+		);
+		expect(exampleBlock, "Programmatic examples must reserve the -- separator for humans").not.toMatch(
+			/\s--\s/,
+		);
 		for (const action of CLI_COMMAND_CONTRACT.actions) {
 			expect(skill, `SKILL.md is missing action usage \`${action.usage}\``).toContain(action.usage);
 		}

@@ -22,9 +22,9 @@ Every `--json` result envelope reports the running package version as `meta.cliV
 | `npx -y pi-worklist@latest project show <id>` | Show one goal with its full description |
 | `npx -y pi-worklist@latest project find <text...>` | List the goals whose title or description contains the text |
 | `npx -y pi-worklist@latest project ui` | Open the interactive goal board for a human at the keyboard. Requires a terminal; not for scripts or agents |
-| `npx -y pi-worklist@latest project add <title...> [-- <description...>]` | Add an open goal |
-| `npx -y pi-worklist@latest project update <id> [title...] [-- <description...>]` | Edit a goal; "-- " alone clears the description |
-| `npx -y pi-worklist@latest project move <id> up|down|before <id>|after <id>` | Reorder a goal in the roadmap's canonical file order |
+| `npx -y pi-worklist@latest project add <title...> [--description <text> \| -- <description...>]` | Add an open goal |
+| `npx -y pi-worklist@latest project update <id> [title...] [--description <text> \| -- <description...>]` | Edit a goal's title or description |
+| `npx -y pi-worklist@latest project move <id> up\|down\|before <id>\|after <id>` | Reorder a goal in the roadmap's canonical file order |
 | `npx -y pi-worklist@latest project set_active <id>` | Make a goal the single active goal |
 | `npx -y pi-worklist@latest project complete <id> --confirm` | Mark a goal done. Requires explicit user confirmation |
 | `npx -y pi-worklist@latest project reopen <id> --confirm` | Reopen a done or archived goal. Requires explicit user confirmation |
@@ -40,13 +40,22 @@ Every `--json` result envelope reports the running package version as `meta.cliV
 | `--json` | Print the deterministic result envelope as JSON (stdout on success, stderr on failure) |
 | `--confirm` | Acknowledge an action that requires confirmation; pass it only for an explicit user request |
 | `--cwd <dir>` | Resolve the git root from this directory instead of the working directory |
-| `--append` | Add the text after -- as a new paragraph instead of replacing the description; cannot be combined with a title change; only for project update |
+| `--description <text>` | Set the whole description from one argv token; order-independent and preferred for agents and scripts; a new update title must come before it, and an add title must not straddle it; only for project add and update |
+| `--append-description <text>` | Add one argv token as a new description paragraph without replacing stored prose; cannot be combined with a title change; only for project update |
+| `--append` | Interactive compatibility form that adds the text after -- as a new paragraph; cannot be combined with a title change; only for project update |
 | `--group <name>` | Put the goal in a free-form section, such as Foundation; an empty name clears it; only for project add and update |
 | `--depends-on <id>` | Require that goal to land first; repeat it to name several, and pass an empty id alone to clear every edge; only for project add and update |
 | `--expect-updated-at <timestamp>` | Refuse the change as a conflict unless the goal's updatedAt still matches this value; only for project update, set_active, complete, reopen, archive, and delete |
 | `--dry-run` | Report the ID rewrites without writing them, and without needing --confirm; only for project migrate_ids |
 
-Put every flag before `--`, because each token after it is description text. A known flag there remains in the description and triggers a warning: stderr for human output, or the JSON envelope's `warnings` array if `--json` was already enabled. A trailing `--json` therefore does not select JSON output; the command prints human output and still exits 0.
+## Description input
+
+Programmatic callers and agents must use `--description <text>` for a replacement, passing the whole value in one argv token. The flag is order-independent, and its value may itself look like a known flag.
+Write a new title before `--description` rather than after its value: on `update`, a trailing word that would become a title is refused with exit code 2 instead of renaming the goal, and on `add` a title split across the value is refused the same way. `add` otherwise folds words after the value into the title rather than failing, so quote the whole description there. `update <id> <title...> --description <text>` still replaces a title and a description at once.
+Use `--append-description <text>` to add a paragraph without replaying stored prose. Replacing and appending are mutually exclusive, and an append cannot be combined with a title change.
+Reserve `-- <description...>` for a human typing unquoted prose interactively. A standalone known flag after the separator is a usage error with exit code 2; move a real flag before the separator or put flag-looking prose in `--description`.
+The legacy `--append -- <text>` interactive form remains supported, while agents and scripts use `--append-description <text>`.
+Programmatic callers clear a description with `--description ''`; the interactive `update <id> --` form remains supported.
 
 ## Goal IDs
 
@@ -92,7 +101,8 @@ Put every flag before `--`, because each token after it is description text. A k
 ## Agent guidance
 
 - Prefer --json and read the deterministic result envelope instead of parsing human output.
-- Write every flag before the -- separator, and read the CLI's own exit code rather than a shell pipeline's, so a swallowed flag cannot look like a failure or a success.
+- Use --description <text> and --append-description <text> for every programmatic description input; reserve the -- separator for a human typing prose interactively.
+- Read the CLI's own exit code rather than a shell pipeline's; a known flag after the description separator is a usage error with exit code 2.
 - Never run ui: it is an interactive board for a human, it holds the terminal until they quit, and it refuses to start without one.
 - Never pass --confirm for complete, reopen, archive, delete, or migrate_ids unless the user explicitly requested that exact action.
 - Treat exit code 3 as a request for explicit user confirmation, not as a retryable failure.
@@ -100,7 +110,7 @@ Put every flag before `--`, because each token after it is description text. A k
 - Use list for orientation, find <text> to locate a goal by wording, and show <id> when you need a goal's complete description.
 - Pass a full ID or a prefix long enough to be unique; an ambiguous prefix is refused with candidates rather than resolved by guesswork.
 - Run migrate_ids only when the user explicitly asks for it; it rewrites stored IDs, though every old ID keeps resolving afterwards.
-- Add a note with --append instead of resending a description you did not write, so nothing in the existing text can be lost in transcription.
+- Add a note with --append-description instead of resending a description you did not write, so nothing in the existing text can be lost in transcription.
 - Group related goals with --group <name> on add or update, and leave the file order alone unless the user asked for a different sequence.
 - Record a real must-land-before relationship with --depends-on <id>, including one that exists only because two goals would collide in the same files; do not add an edge merely to justify the order the file happens to be in.
 - Send the complete set of edges on every --depends-on update, because it replaces the stored set rather than adding to it.
