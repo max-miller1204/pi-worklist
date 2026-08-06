@@ -40,7 +40,7 @@ Every `--json` result envelope reports the running package version as `meta.cliV
 | `--json` | Print the deterministic result envelope as JSON (stdout on success, stderr on failure) |
 | `--confirm` | Acknowledge an action that requires confirmation; pass it only for an explicit user request |
 | `--cwd <dir>` | Resolve the git root from this directory instead of the working directory |
-| `--description <text>` | Set the whole description from one argv token; order-independent and preferred for agents and scripts; only for project add and update |
+| `--description <text>` | Set the whole description from one argv token; order-independent and preferred for agents and scripts; a new update title must come before it, and an add title must not straddle it; only for project add and update |
 | `--append-description <text>` | Add one argv token as a new description paragraph without replacing stored prose; cannot be combined with a title change; only for project update |
 | `--append` | Interactive compatibility form that adds the text after -- as a new paragraph; cannot be combined with a title change; only for project update |
 | `--group <name>` | Put the goal in a free-form section, such as Foundation; an empty name clears it; only for project add and update |
@@ -51,7 +51,7 @@ Every `--json` result envelope reports the running package version as `meta.cliV
 ## Description input
 
 Programmatic callers and agents must use `--description <text>` for a replacement, passing the whole value in one argv token. The flag is order-independent, and its value may itself look like a known flag.
-Neither description flag combines with a title change on `update`: each carries exactly one argv token, so unquoted prose written after it would arrive as a rename. Change the title in a separate `update`, or write a title and a description together with the interactive `update <id> <title...> -- <description...>` form.
+Write a new title before `--description`, never after its value: the flag takes exactly one argv token, so trailing words are refused with exit code 2 rather than read as a rename on `update` or folded into the title on `add`. `update <id> <title...> --description <text>` still replaces a title and a description at once.
 Use `--append-description <text>` to add a paragraph without replaying stored prose. Replacing and appending are mutually exclusive, and an append cannot be combined with a title change.
 Reserve `-- <description...>` for a human typing unquoted prose interactively. A standalone known flag after the separator is a usage error with exit code 2; move a real flag before the separator or put flag-looking prose in `--description`.
 The legacy `--append -- <text>` interactive form remains supported, while agents and scripts use `--append-description <text>`.

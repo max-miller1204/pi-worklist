@@ -55,6 +55,8 @@ interface CliInvocation {
 	cwd: string;
 	/** Flag names as written, so action-scoped flags can be refused where they would be ignored. */
 	flagsUsed: ReadonlySet<string>;
+	/** Positionals written after the --description value, which a title must not be built from. */
+	positionalsAfterDescription: number;
 }
 
 interface CliResultMeta extends WorklistResultMeta {
@@ -105,10 +107,10 @@ function findDescriptionSeparator(argv: readonly string[]): number {
 function rejectMisplacedFlags(tokens: readonly string[]): void {
 	const names = [...new Set(tokens)].filter((token) => GLOBAL_FLAGS_BY_NAME.has(token));
 	if (names.length === 0) return;
-	const noun = names.length === 1 ? "flag" : "flags";
+	const subject = names.length === 1 ? "a standalone flag" : "standalone flags";
 	fail(
 		`${names.join(", ")} came after --, where known flags are not accepted as description text.\n` +
-			`Use --description <text> to replace, or --append-description <text> to add, a description that contains a standalone ${noun}; reserve -- for interactive prose.\n\n${USAGE}`,
+			`Use --description <text> to replace, or --append-description <text> to add, a description that contains ${subject}; reserve -- for interactive prose.\n\n${USAGE}`,
 		2,
 	);
 }
@@ -164,6 +166,8 @@ interface ParsedCliHead {
 	positionals: string[];
 	flagsUsed: Set<string>;
 	dependsOn: string[];
+	/** Positionals written after the --description value, which a title must not be built from. */
+	positionalsAfterDescription: number;
 	directDescription?: string;
 	appendDescription?: string;
 	append: boolean;
@@ -188,6 +192,7 @@ function parseCliHead(head: readonly string[]): ParsedCliHead {
 	let group: string | undefined;
 	let expectedUpdatedAt: string | undefined;
 	let cwd = process.cwd();
+	let positionalsBeforeDescription: number | undefined;
 	for (let index = 0; index < head.length; index++) {
 		const part = head[index];
 		if (!part.startsWith("--")) {
@@ -211,6 +216,7 @@ function parseCliHead(head: readonly string[]): ParsedCliHead {
 			case "--description":
 				if (directDescription !== undefined) fail(`--description may be provided only once\n\n${USAGE}`, 2);
 				directDescription = readDescriptionFlagValue(head, index, part);
+				positionalsBeforeDescription = positionals.length;
 				index++;
 				break;
 			case "--append-description":
@@ -251,6 +257,8 @@ function parseCliHead(head: readonly string[]): ParsedCliHead {
 		positionals,
 		flagsUsed,
 		dependsOn,
+		positionalsAfterDescription:
+			positionalsBeforeDescription === undefined ? 0 : positionals.length - positionalsBeforeDescription,
 		directDescription,
 		appendDescription,
 		append,
@@ -699,6 +707,18 @@ async function run(invocation: CliInvocation): Promise<void> {
 		case "add": {
 			const title = invocation.rest.join(" ").trim();
 			if (!title) fail(`project add requires a title\n\n${USAGE}`, 2);
+			// A title written on both sides of the --description value is prose that ran
+			// past the flag's single token, never a title someone split on purpose.
+			if (
+				invocation.positionalsAfterDescription > 0 &&
+				invocation.positionalsAfterDescription < invocation.rest.length
+			) {
+				fail(
+					`project add reads the words after a --description value as more of the title, so this would split the title across the flag.\n` +
+						`Keep the whole title on one side of --description, and pass the whole description as one argument.\n\n${USAGE}`,
+					2,
+				);
+			}
 			const description = invocation.description?.trim() || undefined;
 			const envelope = await executeCliOperation(service, {
 				scope: "project",
@@ -746,12 +766,12 @@ async function run(invocation: CliInvocation): Promise<void> {
 			if (appendedText !== undefined && title !== undefined) {
 				fail(`project update cannot change the title while appending to the description\n\n${USAGE}`, 2);
 			}
-			// --description carries exactly one argv token, so unquoted prose spills
-			// into the positionals and would arrive here as a rename nobody asked for.
-			if (invocation.flagsUsed.has("--description") && title !== undefined) {
+			// --description carries exactly one argv token, so unquoted prose runs past
+			// it into the positionals and would arrive here as a rename nobody asked for.
+			if (title !== undefined && invocation.positionalsAfterDescription > 0) {
 				fail(
-					`project update cannot change the title while replacing the description with --description.\n` +
-						`Rename in a separate update, or write both at once as: project update <id> <title...> -- <description...>\n\n${USAGE}`,
+					`project update reads the words after a --description value as a new title, so this would rename the goal.\n` +
+						`Write a new title before --description, and pass the whole description as one argument.\n\n${USAGE}`,
 					2,
 				);
 			}

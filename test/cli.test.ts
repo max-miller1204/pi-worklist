@@ -137,7 +137,7 @@ describe("project goal CLI", () => {
 		expect((await readGoals(root))[0].description).toBe("");
 	});
 
-	it("refuses a title change beside --description rather than renaming silently", async () => {
+	it("refuses words trailing a --description value instead of renaming silently", async () => {
 		const root = await tempGitRepo();
 		await runCli(root, ["project", "add", "Ship the parser", "--description", "Original prose"]);
 		const [goal] = await readGoals(root);
@@ -154,12 +154,28 @@ describe("project goal CLI", () => {
 			"prose",
 		]);
 		expect(spilled.code).toBe(2);
-		expect(diagnostic(spilled.stderr)).toContain("cannot change the title while replacing the description");
+		expect(diagnostic(spilled.stderr)).toContain("as a new title");
 		expect((await readGoals(root))[0]).toMatchObject({
 			title: "Ship the parser",
 			description: "Original prose",
 		});
 
+		// A title written after the value is the same argv shape as that spill.
+		const titleAfterValue = await runCli(root, [
+			"project",
+			"update",
+			goal.id,
+			"--description",
+			"Replacement prose",
+			"Renamed",
+		]);
+		expect(titleAfterValue.code).toBe(2);
+		expect((await readGoals(root))[0]).toMatchObject({
+			title: "Ship the parser",
+			description: "Original prose",
+		});
+
+		// Nothing trails the value here, so the combined form stays a single write.
 		const combined = await runCli(root, [
 			"project",
 			"update",
@@ -168,26 +184,57 @@ describe("project goal CLI", () => {
 			"--description",
 			"Replacement prose",
 		]);
-		expect(combined.code).toBe(2);
+		expect(combined.code).toBe(0);
 		expect((await readGoals(root))[0]).toMatchObject({
-			title: "Ship the parser",
-			description: "Original prose",
+			title: "Renamed",
+			description: "Replacement prose",
 		});
 
-		// The separator swallows every trailing token, so it stays unambiguous and
-		// remains the way to write a title and a description in one invocation.
 		const viaSeparator = await runCli(root, [
 			"project",
 			"update",
 			goal.id,
-			"Renamed",
+			"Renamed again",
 			"--",
-			"Replacement prose",
+			"Separator prose",
 		]);
 		expect(viaSeparator.code).toBe(0);
 		expect((await readGoals(root))[0]).toMatchObject({
-			title: "Renamed",
-			description: "Replacement prose",
+			title: "Renamed again",
+			description: "Separator prose",
+		});
+	});
+
+	it("refuses an add title split across a --description value but keeps flag order free", async () => {
+		const root = await tempGitRepo();
+
+		const spilled = await runCli(root, [
+			"project",
+			"add",
+			"My",
+			"Goal",
+			"--description",
+			"Some",
+			"long",
+			"prose",
+		]);
+		expect(spilled.code).toBe(2);
+		expect(diagnostic(spilled.stderr)).toContain("more of the title");
+		const listed = await runCli(root, ["project", "list", "--json"]);
+		expect(JSON.parse(listed.stdout).result.goals).toEqual([]);
+
+		const flagFirst = await runCli(root, [
+			"project",
+			"add",
+			"--description",
+			"Prose written first",
+			"My",
+			"Goal",
+		]);
+		expect(flagFirst.code).toBe(0);
+		expect((await readGoals(root))[0]).toMatchObject({
+			title: "My Goal",
+			description: "Prose written first",
 		});
 	});
 
@@ -412,7 +459,8 @@ describe("project goal CLI", () => {
 			// Appending and renaming in one invocation is refused for both input forms.
 			["project", "update", goal.id, "Renamed", "--append", "--", "note"],
 			["project", "update", goal.id, "Renamed", "--append-description", "note"],
-			["project", "update", goal.id, "Renamed", "--description", "note"],
+			// Words trailing a --description value would arrive as a rename.
+			["project", "update", goal.id, "--description", "note", "Renamed"],
 			["project", "update", goal.id, "--expect-updated-at"],
 		];
 		for (const args of misuses) {
@@ -707,6 +755,23 @@ describe("project goal CLI", () => {
 		// the caller asked to keep, so the additive escape hatch has to be named too.
 		expect(diagnostic(appending.stderr)).toContain("--append-description <text>");
 		expect((await readGoals(root))[0].description).toBeUndefined();
+
+		const severalFlags = await runCli(root, [
+			"project",
+			"add",
+			"Count",
+			"the",
+			"flags",
+			"--",
+			"Prose",
+			"--json",
+			"--confirm",
+		]);
+		expect(severalFlags.code).toBe(2);
+		expect(diagnostic(severalFlags.stderr)).toContain("--json, --confirm came after --");
+		expect(diagnostic(severalFlags.stderr)).toContain("contains standalone flags");
+		expect(diagnostic(severalFlags.stderr)).not.toContain("a standalone flags");
+		expect(await readGoals(root)).toHaveLength(1);
 	});
 
 	it("keeps JSON failures parseable with a flag-looking description value", async () => {
