@@ -57,6 +57,8 @@ interface CliInvocation {
 	flagsUsed: ReadonlySet<string>;
 	/** Positionals written after the --description value, which a title must not be built from. */
 	positionalsAfterDescription: number;
+	/** Positionals written after the --append-description value, which a title must not be built from. */
+	positionalsAfterAppendDescription: number;
 }
 
 interface CliResultMeta extends WorklistResultMeta {
@@ -168,6 +170,8 @@ interface ParsedCliHead {
 	dependsOn: string[];
 	/** Positionals written after the --description value, which a title must not be built from. */
 	positionalsAfterDescription: number;
+	/** Positionals written after the --append-description value, which a title must not be built from. */
+	positionalsAfterAppendDescription: number;
 	directDescription?: string;
 	appendDescription?: string;
 	append: boolean;
@@ -192,7 +196,7 @@ function parseCliHead(head: readonly string[]): ParsedCliHead {
 	let group: string | undefined;
 	let expectedUpdatedAt: string | undefined;
 	let cwd = process.cwd();
-	let positionalsBeforeDescription: number | undefined;
+	const positionalsBeforeFlag = new Map<string, number>();
 	for (let index = 0; index < head.length; index++) {
 		const part = head[index];
 		if (!part.startsWith("--")) {
@@ -216,7 +220,7 @@ function parseCliHead(head: readonly string[]): ParsedCliHead {
 			case "--description":
 				if (directDescription !== undefined) fail(`--description may be provided only once\n\n${USAGE}`, 2);
 				directDescription = readDescriptionFlagValue(head, index, part);
-				positionalsBeforeDescription = positionals.length;
+				positionalsBeforeFlag.set(part, positionals.length);
 				index++;
 				break;
 			case "--append-description":
@@ -224,6 +228,7 @@ function parseCliHead(head: readonly string[]): ParsedCliHead {
 					fail(`--append-description may be provided only once\n\n${USAGE}`, 2);
 				}
 				appendDescription = readDescriptionFlagValue(head, index, part);
+				positionalsBeforeFlag.set(part, positionals.length);
 				index++;
 				break;
 			case "--cwd":
@@ -253,12 +258,16 @@ function parseCliHead(head: readonly string[]): ParsedCliHead {
 	if (dependsOn.some((entry) => entry.trim() === "") && dependsOn.length > 1) {
 		fail(`--depends-on '' clears every edge and cannot be combined with another --depends-on\n\n${USAGE}`, 2);
 	}
+	const positionalsAfter = (flag: string): number => {
+		const before = positionalsBeforeFlag.get(flag);
+		return before === undefined ? 0 : positionals.length - before;
+	};
 	return {
 		positionals,
 		flagsUsed,
 		dependsOn,
-		positionalsAfterDescription:
-			positionalsBeforeDescription === undefined ? 0 : positionals.length - positionalsBeforeDescription,
+		positionalsAfterDescription: positionalsAfter("--description"),
+		positionalsAfterAppendDescription: positionalsAfter("--append-description"),
 		directDescription,
 		appendDescription,
 		append,
@@ -764,6 +773,13 @@ async function run(invocation: CliInvocation): Promise<void> {
 			// Appending is intentionally description-only. Mixing it with a rename
 			// makes a caller's intent ambiguous and breaks the additive primitive.
 			if (appendedText !== undefined && title !== undefined) {
+				if (invocation.positionalsAfterAppendDescription > 0) {
+					fail(
+						`project update reads the words after an --append-description value as a new title, so this would rename the goal.\n` +
+							`Pass the whole note as one argument; appending never changes the title.\n\n${USAGE}`,
+						2,
+					);
+				}
 				fail(`project update cannot change the title while appending to the description\n\n${USAGE}`, 2);
 			}
 			// --description carries exactly one argv token, so unquoted prose runs past

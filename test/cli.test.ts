@@ -236,6 +236,23 @@ describe("project goal CLI", () => {
 			title: "My Goal",
 			description: "Prose written first",
 		});
+
+		// Supporting the form above means unquoted prose written the same way is
+		// argv-identical to it, so add folds the leftovers into the title instead of
+		// refusing. The generated guidance states exactly this; keep the two in step.
+		const unquotedFlagFirst = await runCli(root, [
+			"project",
+			"add",
+			"--description",
+			"Some",
+			"more",
+			"words",
+		]);
+		expect(unquotedFlagFirst.code).toBe(0);
+		expect((await readGoals(root)).at(-1)).toMatchObject({
+			title: "more words",
+			description: "Some",
+		});
 	});
 
 	it("clears a description through the interactive separator alone", async () => {
@@ -351,6 +368,39 @@ describe("project goal CLI", () => {
 		const deleted = await runCli(root, ["project", "delete", goal.id, "--confirm"]);
 		expect(deleted.code).toBe(0);
 		expect(await readGoals(root)).toHaveLength(0);
+	});
+
+	it("blames the spill, not a rename, when --append-description prose runs unquoted", async () => {
+		const root = await tempGitRepo();
+		await runCli(root, ["project", "add", "Ship it", "--description", "Original prose"]);
+		const [goal] = await readGoals(root);
+
+		const spilled = await runCli(root, [
+			"project",
+			"update",
+			goal.id,
+			"--append-description",
+			"Blocked",
+			"on",
+			"parser",
+		]);
+		expect(spilled.code).toBe(2);
+		expect(diagnostic(spilled.stderr)).toContain("after an --append-description value");
+		expect(diagnostic(spilled.stderr)).toContain("Pass the whole note as one argument");
+		expect((await readGoals(root))[0].description).toBe("Original prose");
+
+		// A caller who really did write a title still gets the combination refused.
+		const renaming = await runCli(root, [
+			"project",
+			"update",
+			goal.id,
+			"Renamed",
+			"--append-description",
+			"A note",
+		]);
+		expect(renaming.code).toBe(2);
+		expect(diagnostic(renaming.stderr)).toContain("cannot change the title while appending");
+		expect((await readGoals(root))[0]).toMatchObject({ title: "Ship it", description: "Original prose" });
 	});
 
 	it("appends a paragraph and refuses a change built on a stale read", async () => {
