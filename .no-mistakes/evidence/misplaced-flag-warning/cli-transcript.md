@@ -1,5 +1,10 @@
 # Misplaced global flag CLI evidence
 
+> **Superseded, kept as a historical record.**
+> This transcript verifies the behavior of the change that introduced the misplaced-flag warning, and it is left exactly as it was recorded.
+> The exit-0 warning it shows is no longer how the CLI behaves: a standalone known flag after `--` is now a usage error with exit code 2, and `--description`/`--append-description` carry a whole description in one argv token.
+> `docs/cli.md` owns the current description-input rules; the superseding evidence is `.no-mistakes/evidence/feat/description-flag-strictness/cli-description-flags-e2e.txt`.
+
 The development entry point `node <checkout>/src/cli.ts` was invoked from a fresh temporary Git repository. For readability, it is displayed below using the shipped binary name, `pi-worklist`.
 
 ```console
