@@ -204,6 +204,7 @@ export const CLI_COMMAND_CONTRACT = {
 		"Use `--append-description <text>` to add a paragraph without replaying stored prose. Replacing and appending are mutually exclusive, and an append cannot be combined with a title change.",
 		"Reserve `-- <description...>` for a human typing unquoted prose interactively. A standalone known flag after the separator is a usage error with exit code 2; move a real flag before the separator or put flag-looking prose in `--description`.",
 		"The legacy `--append -- <text>` interactive form remains supported, while agents and scripts use `--append-description <text>`.",
+		"Programmatic callers clear a description with `--description ''`; the interactive `update <id> --` form remains supported.",
 	],
 	/**
 	 * How an ID comes to exist and how a caller names one.
@@ -432,7 +433,6 @@ export function renderSkillMarkdown(): string {
 		"Prefer `--json` whenever you need to read IDs, statuses, or errors back rather than parsing human output.",
 		"`list` output is compact and omits descriptions; use `show <id>` when you need a goal's complete description.",
 		...contract.descriptionRules,
-		"Programmatic callers clear a description with `--description ''`; the interactive `update <id> --` form remains supported.",
 		"`--expect-updated-at <updatedAt>`, copied from your own `show` of that goal, refuses the change when someone edited the goal after you read it.",
 		"Pass it on every change you make to a goal you did not just create: without it, your mutation proceeds even if the goal changed after you read it.",
 		"",

@@ -54,6 +54,7 @@ Programmatic callers and agents must use `--description <text>` for a replacemen
 Use `--append-description <text>` to add a paragraph without replaying stored prose. Replacing and appending are mutually exclusive, and an append cannot be combined with a title change.
 Reserve `-- <description...>` for a human typing unquoted prose interactively. A standalone known flag after the separator is a usage error with exit code 2; move a real flag before the separator or put flag-looking prose in `--description`.
 The legacy `--append -- <text>` interactive form remains supported, while agents and scripts use `--append-description <text>`.
+Programmatic callers clear a description with `--description ''`; the interactive `update <id> --` form remains supported.
 
 ## Goal IDs
 

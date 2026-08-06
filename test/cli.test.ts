@@ -137,6 +137,18 @@ describe("project goal CLI", () => {
 		expect((await readGoals(root))[0].description).toBe("");
 	});
 
+	it("clears a description through the interactive separator alone", async () => {
+		const root = await tempGitRepo();
+		await runCli(root, ["project", "add", "Retire the importer", "--", "Prose a human typed"]);
+		const [goal] = await readGoals(root);
+		expect(goal.description).toBe("Prose a human typed");
+
+		const cleared = await runCli(root, ["project", "update", goal.id, "--"]);
+		expect(cleared.code).toBe(0);
+		expect((await readGoals(root))[0].description).toBe("");
+		expect((await readGoals(root))[0].title).toBe("Retire the importer");
+	});
+
 	it("keeps a single active goal", async () => {
 		const root = await tempGitRepo();
 		await runCli(root, ["project", "add", "First"]);
