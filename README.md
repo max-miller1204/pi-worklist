@@ -184,7 +184,6 @@ Session Tasks are intentionally unavailable here because they live inside a Pi s
 
 `project apply-plan <plan.json>` adds an approved batch of Project Goals through one locked mutation, one atomic file replacement, and one revision increment.
 The `worklist` model tool exposes the same operation as project action `apply-plan`, with the parsed array in `plan` and optional `dryRun=true`.
-The plan path is resolved from the process working directory, while `--cwd` independently selects the target Git repository.
 The document is a plain JSON array whose entries allow exactly `title`, `description`, `group`, and `dependsOn`:
 
 ```json
@@ -202,21 +201,11 @@ The document is a plain JSON array whose entries allow exactly `title`, `descrip
 ]
 ```
 
-`title` is a required non-empty string.
-`description` and `group` are optional strings, and `dependsOn` is an optional array of non-empty strings.
-Unknown fields are rejected rather than ignored.
+A `dependsOn` reference names either the pre-collision slug of another entry in the same batch or an existing goal, so a plan may point forward as well as backward.
+Batch entries are matched first, which keeps a collision from wiring an edge to the wrong goal: if `add-focus-mode` already exists, a batch goal with the same predicted slug is minted as `add-focus-mode-2`, and another entry naming `add-focus-mode` depends on that new goal rather than the existing one.
+Everything the plan claims is validated before anything is written, so a rejected plan leaves the worklist byte-identical, and `--dry-run` reports the predicted IDs and any such shadowed reference without writing at all.
 
-A dependency reference first matches the exact pre-collision slug of a goal in the same batch.
-If no batch entry has that slug, it must exactly match the current or former ID of an existing goal; plan references never use CLI prefix matching.
-Two batch entries with the same pre-collision slug, an unknown reference, or a dependency cycle are hard validation errors, and the worklist remains byte-identical.
-
-Batch-first resolution prevents a collision from wiring an edge to the wrong goal.
-If `add-focus-mode` already exists, a batch goal with the same predicted slug is minted as `add-focus-mode-2`, but another batch entry naming `add-focus-mode` still depends on the new `add-focus-mode-2` goal.
-A dry run reports a warning for that shadow instead of silently choosing the existing goal.
-
-Use `--dry-run` to perform the same locked validation and ID projection without writing or incrementing the revision.
-The preview is exact for the snapshot held under the lock, but advisory after the command exits because another writer may change the worklist before the later apply.
-An empty plan is valid and changes nothing.
+The plan schema, reference resolution, validation failures, and dry-run guarantees are specified in [docs/cli.md](docs/cli.md#json-plans), generated from the same contract as the CLI help.
 
 ## Goal identifiers
 
