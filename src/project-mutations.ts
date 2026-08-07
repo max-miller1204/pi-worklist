@@ -1,4 +1,4 @@
-import { findDependencyCycle, formatDependencyCycle } from "./dependencies.ts";
+import { findDependencyCycleFromRoots, formatDependencyCycle } from "./dependencies.ts";
 import {
 	findGoalByStoredId,
 	generateGoalId,
@@ -196,11 +196,15 @@ function sameDependsOn(left: string[] | undefined, right: string[] | undefined):
  *
  * The check runs over the goals as the mutation would leave them, under the same
  * lock that writes them, so a cycle cannot be closed by two writers who each saw
- * only their own half of it. Walking from the changed goal is enough: every
+ * only their own half of it. Walking from the changed goals is enough: every
  * other goal's edges were already acyclic, so only the new ones can close a loop.
  */
-function assertAcyclic(goals: readonly ProjectGoal[], goalId: string, retiredIds: readonly string[]): void {
-	const cycle = findDependencyCycle(goals, goalId, retiredIds);
+function assertAcyclic(
+	goals: readonly ProjectGoal[],
+	goalIds: readonly string[],
+	retiredIds: readonly string[],
+): void {
+	const cycle = findDependencyCycleFromRoots(goals, goalIds, retiredIds);
 	if (cycle) throw new ProjectGoalDependencyCycleError(cycle);
 }
 
@@ -411,7 +415,7 @@ export async function addProjectGoal(
 			const goals = [...worklist.goals, goal];
 			// A freshly minted ID cannot be its own dependency, so the only cycle a new
 			// goal can reach is one a hand edit already left in the file.
-			assertAcyclic(goals, goal.id, worklist.retiredIds ?? []);
+			assertAcyclic(goals, [goal.id], worklist.retiredIds ?? []);
 			return { worklist: { ...worklist, goals }, result: { goal, goals } };
 		},
 		options,
@@ -433,16 +437,16 @@ export async function applyProjectPlan(
 	plan: readonly ProjectGoalPlanEntry[],
 	options: ProjectMutationOptions & { dryRun?: boolean } = {},
 ): Promise<ProjectPlanOutcome> {
+	if (options.dryRun !== undefined && typeof options.dryRun !== "boolean") {
+		throw new ProjectGoalPlanValidationError("Project plan dryRun must be a boolean.", {
+			fields: ["dryRun"],
+			resolution: "provide-boolean-dry-run",
+		});
+	}
 	const now = new Date().toISOString();
 	const result = await mutateProjectWorklist(
 		path,
 		(worklist) => {
-			if (options.dryRun !== undefined && typeof options.dryRun !== "boolean") {
-				throw new ProjectGoalPlanValidationError("Project plan dryRun must be a boolean.", {
-					fields: ["dryRun"],
-					resolution: "provide-boolean-dry-run",
-				});
-			}
 			const entries = normalizeProjectPlan(plan);
 			const taken = takenGoalIds(worklist);
 			const staged = entries.map((entry) => {
@@ -498,7 +502,11 @@ export async function applyProjectPlan(
 				};
 			});
 			const goals = [...worklist.goals, ...addedGoals];
-			for (const goal of addedGoals) assertAcyclic(goals, goal.id, worklist.retiredIds ?? []);
+			assertAcyclic(
+				goals,
+				addedGoals.map((goal) => goal.id),
+				worklist.retiredIds ?? [],
+			);
 			const changed = !options.dryRun && addedGoals.length > 0;
 			return {
 				worklist: changed ? { ...worklist, goals } : worklist,
@@ -562,7 +570,7 @@ export async function updateProjectGoal(
 			);
 			const goals = [...worklist.goals];
 			goals[index] = updated;
-			assertAcyclic(goals, updated.id, worklist.retiredIds ?? []);
+			assertAcyclic(goals, [updated.id], worklist.retiredIds ?? []);
 			return { worklist: { ...worklist, goals }, result: { goal: updated, goals } };
 		},
 		options,

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	dependentGoals,
 	findDependencyCycle,
+	findDependencyCycleFromRoots,
 	formatDependencyCycle,
 	isGoalBlocked,
 	resolveDependencies,
@@ -109,5 +110,21 @@ describe("project goal dependency graph", () => {
 
 	it("reports nothing for a goal that does not exist", () => {
 		expect(findDependencyCycle([goal({ id: "only" })], "missing")).toBeUndefined();
+	});
+
+	it("searches every changed goal, including one whose cycle an earlier root cannot reach", () => {
+		// The roots share `base`, which the first walk clears, so a search that
+		// carried that verdict too far would miss the loop the last root closes.
+		const goals = [
+			goal({ id: "base" }),
+			goal({ id: "left", dependsOn: ["base"] }),
+			goal({ id: "right", dependsOn: ["base"] }),
+			goal({ id: "trailer", dependsOn: ["base", "loop"] }),
+			goal({ id: "loop", dependsOn: ["trailer"] }),
+		];
+		expect(findDependencyCycleFromRoots(goals, ["left", "right"])).toBeUndefined();
+		expect(findDependencyCycleFromRoots(goals, ["left", "right", "trailer"])).toEqual(["trailer", "loop"]);
+		expect(findDependencyCycleFromRoots(goals, [])).toBeUndefined();
+		expect(findDependencyCycleFromRoots(goals, ["missing"])).toBeUndefined();
 	});
 });

@@ -499,6 +499,22 @@ describe("project mutation service", () => {
 		expect((refused as Error).message).toContain("one -> three -> two -> one");
 	});
 
+	it("refuses a batch cycle that only a later entry reaches", async () => {
+		const path = await tempPath();
+		const existing = await addProjectGoal(path, "Shared foundation");
+
+		const refused = await applyProjectPlan(path, [
+			{ title: "Leader", dependsOn: [existing.goal.id] },
+			{ title: "Follower", dependsOn: [existing.goal.id, "leader"] },
+			{ title: "Trailer", dependsOn: ["loop"] },
+			{ title: "Loop", dependsOn: ["trailer"] },
+		]).catch((error: unknown) => error);
+
+		expect(refused).toBeInstanceOf(ProjectGoalDependencyCycleError);
+		expect((refused as ProjectGoalDependencyCycleError).cycle).toEqual(["trailer", "loop"]);
+		expect((await readProjectGoals(path)).goals.map((goal) => goal.id)).toEqual(["shared-foundation"]);
+	});
+
 	it("strips edges to a deleted goal inside the same mutation", async () => {
 		const path = await tempPath();
 		await addProjectGoal(path, "Slug ids");

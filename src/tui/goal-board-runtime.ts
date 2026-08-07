@@ -124,6 +124,7 @@ export async function runGoalBoard(options: GoalBoardRuntimeOptions): Promise<vo
 	let parentWatcher: FSWatcher | undefined;
 	let reloadTimer: NodeJS.Timeout | undefined;
 	let reloadPoller: NodeJS.Timeout | undefined;
+	let reloadQueued = false;
 	let finish: () => void = () => {};
 	const finished = new Promise<void>((resolvePromise) => {
 		finish = resolvePromise;
@@ -255,11 +256,22 @@ export async function runGoalBoard(options: GoalBoardRuntimeOptions): Promise<vo
 	terminal.open();
 	draw();
 
+	// A reload already queued behind other work reads the file when it finally
+	// runs, so it covers every change requested before then and further requests
+	// would only re-read the same state. Coalescing them keeps work that holds the
+	// chain for a long time, such as an editor session, from stacking up one
+	// redundant read per poll tick.
 	const scheduleReload = (): void => {
+		if (reloadQueued) return;
 		if (reloadTimer) clearTimeout(reloadTimer);
 		reloadTimer = setTimeout(() => {
+			reloadTimer = undefined;
+			reloadQueued = true;
 			work = work
-				.then(reload)
+				.then(() => {
+					reloadQueued = false;
+					return reload();
+				})
 				.catch(() => {})
 				.finally(scheduleRender);
 		}, RELOAD_DEBOUNCE_MS);
