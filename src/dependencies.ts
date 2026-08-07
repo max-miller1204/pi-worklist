@@ -113,8 +113,23 @@ export function findDependencyCycle(
 	startId: string,
 	retiredIds: readonly string[] = [],
 ): string[] | undefined {
-	const start = findGoalByStoredId(goals, startId, retiredIds);
-	if (!start) return undefined;
+	return findDependencyCycleFromRoots(goals, [startId], retiredIds);
+}
+
+/**
+ * The first dependency cycle reachable from any of the goals a mutation changed.
+ *
+ * A batch mutation adds many goals at once and every one of them can close a
+ * loop, so all of them are roots. One walk covers them all: a goal the walk has
+ * already left behind reaches no cycle in this graph, and that stays true
+ * whichever root arrived at it, so the roots share a single settled set instead
+ * of re-walking the graph once per root under the write lock.
+ */
+export function findDependencyCycleFromRoots(
+	goals: readonly ProjectGoal[],
+	startIds: readonly string[],
+	retiredIds: readonly string[] = [],
+): string[] | undefined {
 	const path: string[] = [];
 	const onPath = new Set<string>();
 	const settled = new Set<string>();
@@ -135,7 +150,13 @@ export function findDependencyCycle(
 		return undefined;
 	};
 
-	return walk(start);
+	for (const startId of startIds) {
+		const start = findGoalByStoredId(goals, startId, retiredIds);
+		if (!start || settled.has(start.id)) continue;
+		const cycle = walk(start);
+		if (cycle) return cycle;
+	}
+	return undefined;
 }
 
 /** Render a cycle as the chain it is, so an error names the whole loop. */

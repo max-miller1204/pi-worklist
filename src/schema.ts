@@ -8,6 +8,7 @@ const ScopeSchema: TUnsafe<"session" | "project"> = StringEnum(["session", "proj
 const ActionSchema: TUnsafe<
 	| "list"
 	| "add"
+	| "apply-plan"
 	| "move"
 	| "update"
 	| "set_status"
@@ -20,6 +21,7 @@ const ActionSchema: TUnsafe<
 	[
 		"list",
 		"add",
+		"apply-plan",
 		"move",
 		"update",
 		"set_status",
@@ -31,7 +33,7 @@ const ActionSchema: TUnsafe<
 	] as const,
 	{
 		description:
-			"Action to perform. 'move' reorders a Session Task in its queue or a Project Goal in the roadmap. 'complete', 'reopen', 'archive', and 'delete' on project goals require confirm=true.",
+			"Action to perform. 'apply-plan' validates or atomically adds a project plan. 'move' reorders a Session Task in its queue or a Project Goal in the roadmap. 'complete', 'reopen', 'archive', and 'delete' on project goals require confirm=true.",
 	},
 );
 
@@ -54,6 +56,20 @@ const StatusSchema: TUnsafe<"todo" | "doing" | "done" | "open" | "active" | "arc
 		description:
 			"Target status for set_status. Project set_status only accepts active; lifecycle actions use complete, reopen, and archive.",
 	},
+);
+
+const ProjectGoalPlanEntrySchema = Type.Object(
+	{
+		title: Type.String({ description: "Required non-empty Project Goal title." }),
+		description: Type.Optional(Type.String({ description: "Optional full goal description." })),
+		group: Type.Optional(Type.String({ description: "Optional free-form goal section." })),
+		dependsOn: Type.Optional(
+			Type.Array(Type.String(), {
+				description: "Exact pre-collision batch slugs or exact current/former IDs of existing goals.",
+			}),
+		),
+	},
+	{ additionalProperties: false },
 );
 
 export const WorklistParamsSchema = Type.Object({
@@ -81,6 +97,17 @@ export const WorklistParamsSchema = Type.Object({
 		Type.Array(Type.String(), {
 			description:
 				"Existing project goal IDs that must land before this one, for project goal add/update. Add resolves these before minting the new goal ID, so read IDs back instead of guessing the new slug; update rejects the goal's own ID as a dependency cycle. Replaces the whole set, so send every edge the goal should end up with; an empty array clears them. An edge means must-land-before, whether the reason is logical or two goals colliding in the same files.",
+		}),
+	),
+	plan: Type.Optional(
+		Type.Array(ProjectGoalPlanEntrySchema, {
+			description:
+				"Plain JSON goal array for project apply-plan. Batch references resolve by exact pre-collision slug before exact existing current/former IDs.",
+		}),
+	),
+	dryRun: Type.Optional(
+		Type.Boolean({
+			description: "For project apply-plan, validate and project the batch without writing it.",
 		}),
 	),
 	status: Type.Optional(StatusSchema),

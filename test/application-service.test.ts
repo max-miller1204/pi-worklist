@@ -20,6 +20,94 @@ function createSessionStore() {
 }
 
 describe("worklist application service", () => {
+	it("projects and applies JSON plans through the canonical service boundary", async () => {
+		const projectPath = join(
+			await mkdtemp(join(tmpdir(), "pi-worklist-application-plan-")),
+			".pi",
+			"worklist.json",
+		);
+		const service = new WorklistApplicationService({ projectPath });
+		const plan = [{ title: "Plan foundation" }, { title: "Plan feature", dependsOn: ["plan-foundation"] }];
+
+		const preview = await service.execute(
+			{ scope: "project", action: "apply-plan", plan, dryRun: true },
+			{ source: "cli" },
+		);
+		expect(preview).toMatchObject({
+			ok: true,
+			result: {
+				dryRun: true,
+				addedGoals: [{ id: "plan-foundation" }, { id: "plan-feature", dependsOn: ["plan-foundation"] }],
+			},
+			meta: {
+				changed: false,
+				semanticNoOp: false,
+				changedFields: [],
+				revisions: { project: "0" },
+			},
+		});
+		expect(await service.getProjectGoals()).toEqual([]);
+
+		const applied = await service.execute(
+			{ scope: "project", action: "apply-plan", plan },
+			{ source: "cli" },
+		);
+		expect(applied).toMatchObject({
+			ok: true,
+			result: { dryRun: false },
+			meta: {
+				changed: true,
+				semanticNoOp: false,
+				changedFields: ["/goals"],
+				changedEntities: {
+					projectGoalIds: ["plan-feature", "plan-foundation"],
+					sessionTaskIds: [],
+				},
+				revisions: { project: "1" },
+			},
+		});
+
+		const invalid = await service.execute(
+			{
+				scope: "project",
+				action: "apply-plan",
+				plan: [{ title: "Unsupported", status: "open" }],
+			},
+			{ source: "cli" },
+		);
+		expect(invalid).toMatchObject({
+			ok: false,
+			error: {
+				code: WORKLIST_ERROR_CODES.VALIDATION_FAILED,
+				details: { fields: ["plan/0/status"] },
+			},
+			meta: { changed: false },
+		});
+
+		const invalidDryRun = await service.execute(
+			{ scope: "project", action: "apply-plan", plan: [], dryRun: "false" as never },
+			{ source: "tool" },
+		);
+		expect(invalidDryRun).toMatchObject({
+			ok: false,
+			error: {
+				code: WORKLIST_ERROR_CODES.VALIDATION_FAILED,
+				details: { fields: ["dryRun"], resolution: "provide-boolean-dry-run" },
+			},
+		});
+
+		const empty = await service.execute(
+			{ scope: "project", action: "apply-plan", plan: [] },
+			{ source: "cli" },
+		);
+		expect(empty).toMatchObject({
+			ok: true,
+			result: { addedGoals: [] },
+			meta: { changed: false, semanticNoOp: true, revisions: { project: "1" } },
+		});
+		expect(await service.getProjectGoals()).toHaveLength(2);
+	});
+
 	it("rejects stale Project Goal mutations with the current persisted revision", async () => {
 		const projectPath = join(
 			await mkdtemp(join(tmpdir(), "pi-worklist-application-revision-")),

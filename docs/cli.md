@@ -23,6 +23,7 @@ Every `--json` result envelope reports the running package version as `meta.cliV
 | `npx -y pi-worklist@latest project find <text...>` | List the goals whose title or description contains the text |
 | `npx -y pi-worklist@latest project ui` | Open the interactive goal board for a human at the keyboard. Requires a terminal; not for scripts or agents |
 | `npx -y pi-worklist@latest project add <title...> [--description <text> \| -- <description...>]` | Add an open goal |
+| `npx -y pi-worklist@latest project apply-plan <plan.json>` | Validate and atomically add every goal in a JSON plan |
 | `npx -y pi-worklist@latest project update <id> [title...] [--description <text> \| -- <description...>]` | Edit a goal's title or description |
 | `npx -y pi-worklist@latest project move <id> up\|down\|before <id>\|after <id>` | Reorder a goal in the roadmap's canonical file order |
 | `npx -y pi-worklist@latest project set_active <id>` | Make a goal the single active goal |
@@ -46,7 +47,7 @@ Every `--json` result envelope reports the running package version as `meta.cliV
 | `--group <name>` | Put the goal in a free-form section, such as Foundation; an empty name clears it; only for project add and update |
 | `--depends-on <id>` | Require that goal to land first; repeat it to name several, and pass an empty id alone to clear every edge; only for project add and update |
 | `--expect-updated-at <timestamp>` | Refuse the change as a conflict unless the goal's updatedAt still matches this value; only for project update, set_active, complete, reopen, archive, and delete |
-| `--dry-run` | Report the ID rewrites without writing them, and without needing --confirm; only for project migrate_ids |
+| `--dry-run` | Validate and report an apply-plan projection or ID migration without writing; only for project apply-plan and migrate_ids |
 
 ## Description input
 
@@ -56,6 +57,16 @@ Use `--append-description <text>` to add a paragraph without replaying stored pr
 Reserve `-- <description...>` for a human typing unquoted prose interactively. A standalone known flag after the separator is a usage error with exit code 2; move a real flag before the separator or put flag-looking prose in `--description`.
 The legacy `--append -- <text>` interactive form remains supported, while agents and scripts use `--append-description <text>`.
 Programmatic callers clear a description with `--description ''`; the interactive `update <id> --` form remains supported.
+
+## JSON plans
+
+- `apply-plan <plan.json>` reads a plain JSON array whose entries allow exactly `title`, `description`, `group`, and `dependsOn`; `title` is a required non-empty string, `description` and `group` are optional strings, and `dependsOn` is an optional array of non-empty strings.
+- Each `dependsOn` reference first matches an exact pre-collision slug of a goal in the same batch, then an exact current or former ID of an existing goal; prefixes are not accepted in plans.
+- Two batch entries with the same pre-collision slug, an unknown reference, or any dependency cycle are hard validation errors and write nothing.
+- Batch-first resolution is deterministic even when a predicted slug is already taken: the batch goal receives a collision suffix, dependents point to that suffixed ID, and `--dry-run` warns that the batch reference shadows the existing goal.
+- A non-empty plan appends every goal in document order through one locked atomic replacement and increments the project revision exactly once; an empty plan is a valid no-op.
+- `apply-plan --dry-run` performs the same locked validation and ID projection without writing or incrementing the revision; its prediction is advisory after the command exits because another writer may change the worklist before a later apply.
+- The plan path is resolved from the process working directory, independently of `--cwd`, which only selects the target Git repository.
 
 ## Goal IDs
 
@@ -115,4 +126,5 @@ Programmatic callers clear a description with `--description ''`; the interactiv
 - Record a real must-land-before relationship with --depends-on <id>, including one that exists only because two goals would collide in the same files; do not add an edge merely to justify the order the file happens to be in.
 - Send the complete set of edges on every --depends-on update, because it replaces the stored set rather than adding to it.
 - Pass --expect-updated-at with the updatedAt from your own read whenever you change a goal, so your mutation conflicts if the goal changed in the meantime.
+- Use apply-plan for an approved JSON goal batch, and run it with --dry-run first when the user needs to review predicted IDs, dependencies, or shadow warnings.
 - Broad outcomes belong in Project Goals; do not mirror your internal step-by-step plan into them.

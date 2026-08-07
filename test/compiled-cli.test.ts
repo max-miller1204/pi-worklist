@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { glob, mkdtemp, readFile } from "node:fs/promises";
+import { glob, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -138,6 +138,49 @@ describe("compiled pi-worklist CLI bin", () => {
 			action: "show",
 			result: { goal: { id: goalId, description: "Full detail" } },
 			meta: { cliVersion: manifest.version },
+		});
+
+		const planPath = join(root, "plan.json");
+		await writeFile(
+			planPath,
+			`${JSON.stringify([
+				{ title: "Compiled foundation" },
+				{ title: "Compiled batch goal", dependsOn: ["compiled-foundation", goalId] },
+			])}\n`,
+			"utf8",
+		);
+		const beforePlan = await readFile(join(root, ".pi", "worklist.json"), "utf8");
+		const previewedPlan = await runCompiledCli(root, [
+			"project",
+			"apply-plan",
+			planPath,
+			"--dry-run",
+			"--json",
+		]);
+		expect(previewedPlan.code).toBe(0);
+		expect(parseJson(previewedPlan.stdout)).toMatchObject({
+			ok: true,
+			action: "apply-plan",
+			result: { dryRun: true, addedGoals: [{ id: "compiled-foundation" }, { id: "compiled-batch-goal" }] },
+			meta: { changed: false, semanticNoOp: false },
+		});
+		expect(await readFile(join(root, ".pi", "worklist.json"), "utf8")).toBe(beforePlan);
+
+		const appliedPlan = await runCompiledCli(root, ["project", "apply-plan", planPath, "--json"]);
+		expect(appliedPlan.code).toBe(0);
+		expect(parseJson(appliedPlan.stdout)).toMatchObject({
+			ok: true,
+			action: "apply-plan",
+			result: {
+				addedGoals: [
+					{ id: "compiled-foundation" },
+					{
+						id: "compiled-batch-goal",
+						dependsOn: ["compiled-foundation", goalId],
+					},
+				],
+			},
+			meta: { changed: true },
 		});
 
 		const refused = await runCompiledCli(root, ["project", "delete", `${goalId}`]);

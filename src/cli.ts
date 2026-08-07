@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { basename } from "node:path";
 import {
@@ -11,10 +12,21 @@ import {
 import { CLI_COMMAND_CONTRACT, type CliFlagContract, renderCliUsage } from "./cli-contract.ts";
 import { dependentGoals, type GoalDependency, isGoalBlocked, resolveDependencies } from "./dependencies.ts";
 import { getWorklistPath, resolveGitRoot } from "./git.ts";
-import { matchesGoalQuery, planGoalIdMigration, resolveGoalSelector } from "./goal-selection.ts";
+import {
+	matchesGoalQuery,
+	planGoalIdMigration,
+	resolveGoalSelector,
+	slugifyGoalTitle,
+} from "./goal-selection.ts";
 import { WORKLIST_ERROR_CODES, type WorklistErrorCode, type WorklistResultMeta } from "./result-envelope.ts";
 import { runGoalBoard } from "./tui/goal-board-runtime.ts";
-import type { GoalIdMigration, ProjectGoal, ProjectGoalPlacement, WorklistOperationResult } from "./types.ts";
+import type {
+	GoalIdMigration,
+	ProjectGoal,
+	ProjectGoalPlacement,
+	ProjectPlanWarning,
+	WorklistOperationResult,
+} from "./types.ts";
 
 /**
  * Pi-free command line for Project Goals, so external agents and scripts can
@@ -440,6 +452,63 @@ function formatMigrations(migrations: readonly GoalIdMigration[], headline: stri
 	return [headline, ...migrations.map((migration) => `  ${migration.from} -> ${migration.to}`)].join("\n");
 }
 
+function planInputFailure(message: string, details: Record<string, unknown>): WorklistCliFailure {
+	return new WorklistCliFailure({
+		ok: false,
+		scope: "project",
+		action: "apply-plan",
+		error: {
+			code: WORKLIST_ERROR_CODES.VALIDATION_FAILED,
+			message,
+			retryable: false,
+			details,
+		},
+		meta: { changed: false, semanticNoOp: false, changedFields: [] },
+	});
+}
+
+async function readPlanDocument(path: string): Promise<unknown> {
+	let text: string;
+	try {
+		text = await readFile(path, "utf8");
+	} catch {
+		throw planInputFailure(`Cannot read project plan ${path}.`, {
+			path,
+			resolution: "provide-readable-json-plan",
+		});
+	}
+	try {
+		return JSON.parse(text) as unknown;
+	} catch {
+		throw planInputFailure(`Project plan ${path} is not valid JSON.`, {
+			path,
+			resolution: "fix-json-plan",
+		});
+	}
+}
+
+function formatPlanResult(
+	addedGoals: readonly ProjectGoal[],
+	dryRun: boolean,
+	revision: string | undefined,
+): string {
+	if (addedGoals.length === 0)
+		return dryRun ? "Plan is valid and would add no goals." : "Plan added no goals.";
+	const headline = dryRun
+		? `Would add ${addedGoals.length} project goal(s); revision ${revision ?? "unknown"} is unchanged:`
+		: `Applied ${addedGoals.length} project goal(s) at revision ${revision ?? "unknown"}:`;
+	return [headline, ...addedGoals.map((goal) => `  ${slugifyGoalTitle(goal.title)} -> ${goal.id}`)].join(
+		"\n",
+	);
+}
+
+function formatPlanWarning(warning: ProjectPlanWarning): string {
+	return (
+		`Warning: batch dependency ${warning.reference} resolves to new goal ${warning.batchGoalId}, ` +
+		`shadowing existing goal ${warning.existingGoalId}.`
+	);
+}
+
 /** A failed operation, carrying the full deterministic failure envelope for --json output. */
 class WorklistCliFailure extends Error {
 	readonly envelope: WorklistApplicationFailure;
@@ -550,6 +619,31 @@ async function runLifecycle(
 	const goal = envelope.ok ? envelope.result.goal : undefined;
 	if (!goal) throw new Error(`Project goal ${id} was not returned after ${action}`);
 	report(invocation, envelope, `Project goal ${goal.id} is now ${goal.status}`);
+}
+
+/** Read, validate, and project or atomically apply one plain JSON goal batch. */
+async function runApplyPlan(invocation: CliInvocation, service: WorklistApplicationService): Promise<void> {
+	if (invocation.rest.length !== 1) {
+		fail(`project apply-plan requires exactly one JSON plan path\n\n${USAGE}`, 2);
+	}
+	const plan = await readPlanDocument(invocation.rest[0]);
+	const envelope = await executeCliOperation(service, {
+		scope: "project",
+		action: "apply-plan",
+		plan,
+		dryRun: invocation.dryRun,
+	});
+	const result = envelope.ok ? envelope.result : undefined;
+	const addedGoals = result?.addedGoals ?? [];
+	const warnings = result?.warnings ?? [];
+	if (invocation.dryRun && !invocation.json) {
+		for (const warning of warnings) process.stderr.write(`${formatPlanWarning(warning)}\n`);
+	}
+	report(
+		invocation,
+		envelope,
+		formatPlanResult(addedGoals, invocation.dryRun, envelope.meta.revisions?.project),
+	);
 }
 
 /**
@@ -707,6 +801,10 @@ async function run(invocation: CliInvocation): Promise<void> {
 			const result = { scope: "project", action: "find", goals: matches } as const;
 			const message = matches.length === 0 ? `No project goals match ${query}.` : formatGoalList(matches);
 			report(invocation, readEnvelope("find", result, meta), message);
+			return;
+		}
+		case "apply-plan": {
+			await runApplyPlan(invocation, service);
 			return;
 		}
 		case "migrate_ids": {

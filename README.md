@@ -123,7 +123,7 @@ Project Goal operations are unavailable outside a Git repository, while Session 
 
 ## Model tool
 
-The `worklist` tool accepts `scope=session|project` and actions including `list`, `add`, `move`, `update`, `set_status`, `set_active`, `complete`, `reopen`, `archive`, and `delete`.
+The `worklist` tool accepts `scope=session|project` and actions including `list`, `add`, `apply-plan`, `move`, `update`, `set_status`, `set_active`, `complete`, `reopen`, `archive`, and `delete`.
 For Session Tasks, `add` optionally accepts exactly one of `beforeId` or `afterId`, while `move` requires exactly one.
 Project Goal `move` takes the same anchors and reorders the roadmap; `add` and `update` also accept a `group`, where an empty string clears it, and a `dependsOn` array that replaces the goal's edges, where an empty array clears them.
 Moves preserve the task ID, title, status, and Project Goal association.
@@ -144,6 +144,8 @@ npx -y pi-worklist@latest project list
 npx -y pi-worklist@latest project find templates
 npx -y pi-worklist@latest project show <id>
 npx -y pi-worklist@latest project add Support goal templates --description "Let teams share reusable goal outlines"
+npx -y pi-worklist@latest project apply-plan plan.json --dry-run --json
+npx -y pi-worklist@latest project apply-plan plan.json --json
 npx -y pi-worklist@latest project update <id> Replace the title --description "Replace the description"
 npx -y pi-worklist@latest project update <id> --description "Replace only the description"
 npx -y pi-worklist@latest project update <id> Replace the title -- Replace the description
@@ -177,6 +179,33 @@ The complete command reference in [docs/cli.md](docs/cli.md) is generated from `
 In a development checkout, `node src/cli.ts project <action>` runs the same CLI; running the TypeScript entry point directly requires Node 22.18 or newer (for example Node 24), which strips types natively.
 On older Node versions, including the Node 20 floor of the package's `engines` range, the TypeScript entry point fails with an `Unknown file extension ".ts"` error, while the compiled bin has no such requirement.
 Session Tasks are intentionally unavailable here because they live inside a Pi session tree.
+
+## JSON goal plans
+
+`project apply-plan <plan.json>` adds an approved batch of Project Goals through one locked mutation, one atomic file replacement, and one revision increment.
+The `worklist` model tool exposes the same operation as project action `apply-plan`, with the parsed array in `plan` and optional `dryRun=true`.
+The document is a plain JSON array whose entries allow exactly `title`, `description`, `group`, and `dependsOn`:
+
+```json
+[
+  {
+    "title": "Add shared parser",
+    "description": "Build the parser before its consumers.",
+    "group": "Foundation"
+  },
+  {
+    "title": "Adopt shared parser",
+    "group": "Workflow",
+    "dependsOn": ["add-shared-parser", "existing-goal-id"]
+  }
+]
+```
+
+A `dependsOn` reference names either the pre-collision slug of another entry in the same batch or an existing goal, so a plan may point forward as well as backward.
+Batch entries are matched first, which keeps a collision from wiring an edge to the wrong goal: if `add-focus-mode` already exists, a batch goal with the same predicted slug is minted as `add-focus-mode-2`, and another entry naming `add-focus-mode` depends on that new goal rather than the existing one.
+Everything the plan claims is validated before anything is written, so a rejected plan leaves the worklist byte-identical, and `--dry-run` reports the predicted IDs and any such shadowed reference without writing at all.
+
+The plan schema, reference resolution, validation failures, and dry-run guarantees are specified in [docs/cli.md](docs/cli.md#json-plans), generated from the same contract as the CLI help.
 
 ## Goal identifiers
 
@@ -276,7 +305,7 @@ The header shows per-status totals across the whole roadmap, so a filtered list 
 The key map scrolls, so a short terminal cannot hide the binding that closes it; any other key returns to the board.
 
 Every change routes through the same application service, cross-process lock, and atomic replacement as `/tasks` and the rest of the CLI, so a Pi session may be open on the same repository at the same time.
-The board reloads automatically when another process writes the file.
+The board reloads automatically when another process writes the file, and a low-frequency re-read keeps that true where filesystem watches cannot be created or silently drop events.
 Completing, reopening, archiving, and deleting each ask for confirmation first, and only an explicit `y` proceeds; that answer is the explicit user intent the application service requires.
 The board is drawn with no runtime dependencies, so the compiled bin needs nothing installed but Node.
 It requires a terminal and refuses to start without one, which keeps `list` and `--json` the read path for scripts and agents.

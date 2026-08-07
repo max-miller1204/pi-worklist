@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
 	activateProjectGoal,
 	addProjectGoal,
+	applyProjectPlan,
 	deleteProjectGoal,
 	migrateProjectGoalIds,
 	moveProjectGoal,
@@ -34,6 +35,56 @@ describe("project mutation service", () => {
 		expect(second.goals.map((goal) => goal.title)).toEqual(["First", "Second"]);
 		expect(second.revision).toBe("2");
 		expect(second.goal.description).toBe("With description");
+	});
+
+	it("previews and applies a batch in one atomic revision", async () => {
+		const path = await tempPath();
+		const existing = await addProjectGoal(path, "Existing foundation");
+		const plan = [
+			{
+				title: "Batch feature",
+				description: "Depends on both new and existing work.",
+				dependsOn: ["batch-foundation", existing.goal.id],
+			},
+			{ title: "Batch foundation", group: "Capture" },
+		];
+		const before = await readProjectWorklist(path);
+
+		const preview = await applyProjectPlan(path, plan, { dryRun: true });
+		expect(preview).toMatchObject({ changed: false, revision: "1" });
+		expect(preview.addedGoals.map((goal) => goal.id)).toEqual(["batch-feature", "batch-foundation"]);
+		expect(preview.addedGoals[0].dependsOn).toEqual(["batch-foundation", "existing-foundation"]);
+		expect(await readProjectWorklist(path)).toEqual(before);
+
+		const applied = await applyProjectPlan(path, plan);
+		expect(applied).toMatchObject({ changed: true, revision: "2" });
+		expect(applied.addedGoals.map((goal) => goal.id)).toEqual(["batch-feature", "batch-foundation"]);
+		expect(new Set(applied.addedGoals.map((goal) => goal.createdAt))).toHaveLength(1);
+		expect((await readProjectGoals(path)).goals.map((goal) => goal.id)).toEqual([
+			"existing-foundation",
+			"batch-feature",
+			"batch-foundation",
+		]);
+	});
+
+	it("serializes concurrent plans without splitting either batch", async () => {
+		const path = await tempPath();
+		const [first, second] = await Promise.all([
+			applyProjectPlan(path, [{ title: "Shared title" }, { title: "First dependent" }]),
+			applyProjectPlan(path, [{ title: "Shared title" }, { title: "Second dependent" }]),
+		]);
+		expect([first.revision, second.revision].sort()).toEqual(["1", "2"]);
+		const goals = (await readProjectGoals(path)).goals;
+		expect(goals.map((goal) => goal.id).sort()).toEqual([
+			"first-dependent",
+			"second-dependent",
+			"shared-title",
+			"shared-title-2",
+		]);
+		const firstIds = first.addedGoals.map((goal) => goal.id);
+		const secondIds = second.addedGoals.map((goal) => goal.id);
+		expect(goals.slice(0, 2).map((goal) => goal.id)).toEqual(first.revision === "1" ? firstIds : secondIds);
+		expect(goals.slice(2).map((goal) => goal.id)).toEqual(first.revision === "2" ? firstIds : secondIds);
 	});
 
 	it("appends a paragraph without replaying the stored description", async () => {
@@ -446,6 +497,22 @@ describe("project mutation service", () => {
 		expect(refused).toBeInstanceOf(ProjectGoalDependencyCycleError);
 		expect((refused as ProjectGoalDependencyCycleError).cycle).toEqual(["one", "three", "two"]);
 		expect((refused as Error).message).toContain("one -> three -> two -> one");
+	});
+
+	it("refuses a batch cycle that only a later entry reaches", async () => {
+		const path = await tempPath();
+		const existing = await addProjectGoal(path, "Shared foundation");
+
+		const refused = await applyProjectPlan(path, [
+			{ title: "Leader", dependsOn: [existing.goal.id] },
+			{ title: "Follower", dependsOn: [existing.goal.id, "leader"] },
+			{ title: "Trailer", dependsOn: ["loop"] },
+			{ title: "Loop", dependsOn: ["trailer"] },
+		]).catch((error: unknown) => error);
+
+		expect(refused).toBeInstanceOf(ProjectGoalDependencyCycleError);
+		expect((refused as ProjectGoalDependencyCycleError).cycle).toEqual(["trailer", "loop"]);
+		expect((await readProjectGoals(path)).goals.map((goal) => goal.id)).toEqual(["shared-foundation"]);
 	});
 
 	it("strips edges to a deleted goal inside the same mutation", async () => {

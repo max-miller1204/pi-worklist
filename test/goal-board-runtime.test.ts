@@ -5,10 +5,34 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 import { promisify } from "node:util";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { WorklistApplicationService } from "../src/application-service.ts";
 import { parseEditorCommand, resolveEditorCommand, runGoalBoard } from "../src/tui/goal-board-runtime.ts";
 import type { ProjectGoal, ProjectWorklist } from "../src/types.ts";
+
+/**
+ * How `fs.watch` behaves for the board under test. `real` is the host's own
+ * watcher, `throw` is a host whose inotify instances are exhausted so no watcher
+ * can be created, and `error` is a watcher that is created and then fails, which
+ * stands in for the one that quietly stops delivering events too.
+ */
+const fsWatch = vi.hoisted(() => ({ mode: "real" as "real" | "throw" | "error" }));
+
+vi.mock("node:fs", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:fs")>();
+	const watch = (...args: Parameters<typeof actual.watch>) => {
+		if (fsWatch.mode === "real") return actual.watch(...args);
+		if (fsWatch.mode === "throw") {
+			const failure: NodeJS.ErrnoException = new Error("EMFILE: inotify instance limit reached");
+			failure.code = "EMFILE";
+			throw failure;
+		}
+		const watcher = Object.assign(new EventEmitter(), { close: () => {} });
+		setTimeout(() => watcher.emit("error", new Error("inotify watch was dropped")), 0);
+		return watcher as unknown as ReturnType<typeof actual.watch>;
+	};
+	return { ...actual, watch: watch as unknown as typeof actual.watch };
+});
 
 const execFileAsync = promisify(execFile);
 const cliPath = resolve("src/cli.ts");
@@ -58,10 +82,22 @@ async function seed(root: string, args: string[]): Promise<void> {
 	await execFileAsync(process.execPath, [cliPath, "project", ...args], { cwd: root });
 }
 
+function parseJson<T>(text: string): T {
+	try {
+		return JSON.parse(text) as T;
+	} catch (error) {
+		throw new Error("Expected valid JSON in goal board runtime test", { cause: error });
+	}
+}
+
 async function readGoals(root: string): Promise<ProjectGoal[]> {
-	const raw = await readFile(join(root, ".pi", "worklist.json"), "utf8").catch(() => null);
-	if (raw === null) return [];
-	return (JSON.parse(raw) as ProjectWorklist).goals;
+	try {
+		const raw = await readFile(join(root, ".pi", "worklist.json"), "utf8");
+		return parseJson<ProjectWorklist>(raw).goals;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+		throw error;
+	}
 }
 
 async function openBoard(root: string, env: NodeJS.ProcessEnv = {}): Promise<Harness> {
@@ -102,6 +138,10 @@ async function waitFor(check: () => boolean | Promise<boolean>, description: str
 }
 
 describe("goal board runtime", () => {
+	afterEach(() => {
+		fsWatch.mode = "real";
+	});
+
 	it("adds a goal through the prompt and writes it to the shared project file", async () => {
 		const root = await tempGitRepo();
 		const board = await openBoard(root);
@@ -288,6 +328,40 @@ describe("goal board runtime", () => {
 		await waitFor(
 			() => board.output.text.includes("Created after the board opened"),
 			"the first externally added goal to appear",
+		);
+
+		board.send("q");
+		await board.done;
+	});
+
+	it("picks up a change when no filesystem watcher can be created", async () => {
+		const root = await tempGitRepo();
+		await seed(root, ["add", "First goal"]);
+		fsWatch.mode = "throw";
+		const board = await openBoard(root);
+		await waitFor(() => board.output.text.includes("First goal"), "the initial render");
+
+		await seed(root, ["add", "Added with watches unavailable"]);
+		await waitFor(
+			() => board.output.text.includes("Added with watches unavailable"),
+			"the externally added goal to appear without any watcher",
+		);
+
+		board.send("q");
+		await board.done;
+	});
+
+	it("keeps picking up changes after a watcher fails and stops reporting", async () => {
+		const root = await tempGitRepo();
+		await seed(root, ["add", "First goal"]);
+		fsWatch.mode = "error";
+		const board = await openBoard(root);
+		await waitFor(() => board.output.text.includes("First goal"), "the initial render");
+
+		await seed(root, ["add", "Added after the watcher failed"]);
+		await waitFor(
+			() => board.output.text.includes("Added after the watcher failed"),
+			"the externally added goal to appear after the watcher failed",
 		);
 
 		board.send("q");

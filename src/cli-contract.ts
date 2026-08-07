@@ -50,7 +50,7 @@ export const CLI_COMMAND_CONTRACT = {
 	 * assume it was installed alongside this source tree.
 	 */
 	skillDescription:
-		"Manage pi-worklist Project Goals (the shared roadmap in a repo's .pi/worklist.json) from any Claude session. Use when the user asks to add, list, find, update, activate, complete, reopen, archive, or delete a project goal; migrate goal IDs; or capture brainstormed ideas or future goals on a project's worklist or roadmap.",
+		"Manage pi-worklist Project Goals (the shared roadmap in a repo's .pi/worklist.json) from any Claude session. Use when the user asks to add, list, find, update, activate, complete, reopen, archive, or delete a project goal; apply a JSON goal plan; migrate goal IDs; or capture brainstormed ideas or future goals on a project's worklist or roadmap.",
 	runtime: {
 		/** Node floor for the published compiled bin. Asserted against package.json engines.node. */
 		binaryNodeFloor: "20",
@@ -83,6 +83,11 @@ export const CLI_COMMAND_CONTRACT = {
 			name: "add",
 			usage: "add <title...> [--description <text> | -- <description...>]",
 			summary: "Add an open goal",
+		},
+		{
+			name: "apply-plan",
+			usage: "apply-plan <plan.json>",
+			summary: "Validate and atomically add every goal in a JSON plan",
 		},
 		{
 			name: "update",
@@ -194,8 +199,8 @@ export const CLI_COMMAND_CONTRACT = {
 		{
 			name: "--dry-run",
 			usage: "--dry-run",
-			summary: "Report the ID rewrites without writing them, and without needing --confirm",
-			actions: ["migrate_ids"],
+			summary: "Validate and report an apply-plan projection or ID migration without writing",
+			actions: ["apply-plan", "migrate_ids"],
 		},
 	] satisfies CliFlagContract[],
 	/** Description input rules rendered onto every generated caller surface. */
@@ -235,6 +240,16 @@ export const CLI_COMMAND_CONTRACT = {
 		"`move <id> up` and `move <id> down` step one place, while `move <id> before <anchor>` and `move <id> after <anchor>` land the goal beside a named one.",
 		"A move changes the roadmap's order without touching the moved goal's `updatedAt`, so rearranging the list never reads as editing the goals on it.",
 		"Reordering needs no confirmation, because it names no new state for a goal, only a new position among the others.",
+	],
+	/** The strict JSON batch contract and its deterministic reference resolution. */
+	planRules: [
+		"`apply-plan <plan.json>` reads a plain JSON array whose entries allow exactly `title`, `description`, `group`, and `dependsOn`; `title` is a required non-empty string, `description` and `group` are optional strings, and `dependsOn` is an optional array of non-empty strings.",
+		"Each `dependsOn` reference first matches an exact pre-collision slug of a goal in the same batch, then an exact current or former ID of an existing goal; prefixes are not accepted in plans.",
+		"Two batch entries with the same pre-collision slug, an unknown reference, or any dependency cycle are hard validation errors and write nothing.",
+		"Batch-first resolution is deterministic even when a predicted slug is already taken: the batch goal receives a collision suffix, dependents point to that suffixed ID, and `--dry-run` warns that the batch reference shadows the existing goal.",
+		"A non-empty plan appends every goal in document order through one locked atomic replacement and increments the project revision exactly once; an empty plan is a valid no-op.",
+		"`apply-plan --dry-run` performs the same locked validation and ID projection without writing or incrementing the revision; its prediction is advisory after the command exits because another writer may change the worklist before a later apply.",
+		"The plan path is resolved from the process working directory, independently of `--cwd`, which only selects the target Git repository.",
 	],
 	/**
 	 * What a dependency edge means, and what follows from it.
@@ -279,6 +294,7 @@ export const CLI_COMMAND_CONTRACT = {
 		"Record a real must-land-before relationship with --depends-on <id>, including one that exists only because two goals would collide in the same files; do not add an edge merely to justify the order the file happens to be in.",
 		"Send the complete set of edges on every --depends-on update, because it replaces the stored set rather than adding to it.",
 		"Pass --expect-updated-at with the updatedAt from your own read whenever you change a goal, so your mutation conflicts if the goal changed in the meantime.",
+		"Use apply-plan for an approved JSON goal batch, and run it with --dry-run first when the user needs to review predicted IDs, dependencies, or shadow warnings.",
 		"Broad outcomes belong in Project Goals; do not mirror your internal step-by-step plan into them.",
 	],
 } as const;
@@ -382,6 +398,8 @@ export function renderSkillMarkdown(): string {
 	const examples = [
 		"list --json",
 		'add Support goal templates --description "Let teams share reusable goal outlines"',
+		"apply-plan plan.json --dry-run --json",
+		"apply-plan plan.json --json",
 		"find templates --json",
 		`show ${exampleId} --json`,
 		`update ${exampleId} --description "Replace only the description"`,
@@ -444,6 +462,10 @@ export function renderSkillMarkdown(): string {
 		"```",
 		"",
 		`The full generated command reference lives in the package's \`${DOCS_PATH}\`, rendered from the same contract as this skill.`,
+		"",
+		"## JSON plans",
+		"",
+		...contract.planRules.map((rule) => `- ${rule}`),
 		"",
 		"## Goal IDs",
 		"",
@@ -530,6 +552,10 @@ export function renderCliGuide(): string {
 		"## Description input",
 		"",
 		...contract.descriptionRules,
+		"",
+		"## JSON plans",
+		"",
+		...contract.planRules.map((rule) => `- ${rule}`),
 		"",
 		"## Goal IDs",
 		"",
