@@ -123,7 +123,7 @@ Project Goal operations are unavailable outside a Git repository, while Session 
 
 ## Model tool
 
-The `worklist` tool accepts `scope=session|project` and actions including `list`, `add`, `move`, `update`, `set_status`, `set_active`, `complete`, `reopen`, `archive`, and `delete`.
+The `worklist` tool accepts `scope=session|project` and actions including `list`, `add`, `apply-plan`, `move`, `update`, `set_status`, `set_active`, `complete`, `reopen`, `archive`, and `delete`.
 For Session Tasks, `add` optionally accepts exactly one of `beforeId` or `afterId`, while `move` requires exactly one.
 Project Goal `move` takes the same anchors and reorders the roadmap; `add` and `update` also accept a `group`, where an empty string clears it, and a `dependsOn` array that replaces the goal's edges, where an empty array clears them.
 Moves preserve the task ID, title, status, and Project Goal association.
@@ -316,7 +316,7 @@ The header shows per-status totals across the whole roadmap, so a filtered list 
 The key map scrolls, so a short terminal cannot hide the binding that closes it; any other key returns to the board.
 
 Every change routes through the same application service, cross-process lock, and atomic replacement as `/tasks` and the rest of the CLI, so a Pi session may be open on the same repository at the same time.
-The board reloads automatically when another process writes the file.
+The board reloads automatically when another process writes the file, and a low-frequency re-read keeps that true where filesystem watches cannot be created or silently drop events.
 Completing, reopening, archiving, and deleting each ask for confirmation first, and only an explicit `y` proceeds; that answer is the explicit user intent the application service requires.
 The board is drawn with no runtime dependencies, so the compiled bin needs nothing installed but Node.
 It requires a terminal and refuses to start without one, which keeps `list` and `--json` the read path for scripts and agents.
