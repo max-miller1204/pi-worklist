@@ -35,6 +35,7 @@ export const WORKLIST_PROMPT_GUIDELINES = [
 	"Do not create one Session Task that merely restates the user's broad request or end goal. Broad outcomes belong in Project Goals; Session Tasks should name the next executable chunks.",
 	"Keep Session Task titles concise and self-contained. Session Tasks do not have descriptions.",
 	"Use worklist with scope=project only when the user asks to manage the project roadmap.",
+	"Use worklist project apply-plan for an approved JSON goal batch, and set dryRun=true first when predicted IDs, dependencies, or shadow warnings need review.",
 	"Never set worklist confirm=true for a project lifecycle action unless the user explicitly requested that exact completion, reopening, archival, or deletion.",
 ] as const;
 
@@ -432,7 +433,7 @@ export default function worklistExtension(pi: ExtensionAPI): void {
 			ctx.ui.notify(String(error), "error");
 		}
 	});
-	pi.on("before_agent_start", async (event) => {
+	pi.on("before_agent_start", (event) => {
 		const summary = buildPromptSummary(applicationService.getSessionTasks(), projectGoals);
 		if (!summary) return;
 		return { systemPrompt: `${event.systemPrompt}\n\n${summary}` };

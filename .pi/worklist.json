@@ -249,9 +249,9 @@
       "id": "apply-plan-atomic-batch-import-of-a",
       "title": "apply-plan: atomic batch import of a JSON plan document",
       "description": "Read a JSON plan (array of goals with title, description, group, dependsOn) and apply it as one atomic mutation with one revision bump. Goals may reference each other and existing goals by slug before they exist. Pin the resolution order: a dependsOn reference matching a batch entry by pre-collision slug resolves to that batch entry deterministically, with a dry-run warning when it shadows an existing goal of the same slug; a reference matching no batch entry resolves against existing goals; a reference matching nothing anywhere, or two batch entries sharing a pre-collision slug, is a hard validation error. Without this rule a batch goal whose predicted slug collides with an existing goal (add-focus-mode becoming add-focus-mode-2) would silently wire its dependents to the wrong target. Validate everything before writing (cycles, unknown refs) and support a dry-run mode. The plan format stays a plain JSON mirror of the goal schema documented in the cli-contract docs; no custom markdown format.",
-      "status": "open",
+      "status": "done",
       "createdAt": "2026-08-04T02:37:25.489Z",
-      "updatedAt": "2026-08-05T05:02:32.788Z",
+      "updatedAt": "2026-08-07T00:54:28.303Z",
       "previousIds": [
         "goal-mse1sdip-fdcfc585"
       ],
@@ -260,7 +260,8 @@
         "slug-ids-human-readable-goal-ids-and",
         "schema-fields-group-completedat-links",
         "dependency-graph-dependson-edges-with"
-      ]
+      ],
+      "completedAt": "2026-08-07T00:54:28.303Z"
     },
     {
       "id": "sequencing-commands-project-next-ready",
@@ -494,5 +495,5 @@
       "updatedAt": "2026-08-05T15:33:01.104Z"
     }
   ],
-  "revision": 195
+  "revision": 197
 }

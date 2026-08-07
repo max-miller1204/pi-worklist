@@ -1,6 +1,6 @@
 ---
 name: worklist
-description: "Manage pi-worklist Project Goals (the shared roadmap in a repo's .pi/worklist.json) from any Claude session. Use when the user asks to add, list, find, update, activate, complete, reopen, archive, or delete a project goal; migrate goal IDs; or capture brainstormed ideas or future goals on a project's worklist or roadmap."
+description: "Manage pi-worklist Project Goals (the shared roadmap in a repo's .pi/worklist.json) from any Claude session. Use when the user asks to add, list, find, update, activate, complete, reopen, archive, or delete a project goal; apply a JSON goal plan; migrate goal IDs; or capture brainstormed ideas or future goals on a project's worklist or roadmap."
 ---
 
 <!-- Generated from src/cli-contract.ts by scripts/generate-docs.ts. Do not edit manually. -->
@@ -30,6 +30,7 @@ show <id>
 find <text...>
 ui
 add <title...> [--description <text> | -- <description...>]
+apply-plan <plan.json>
 update <id> [title...] [--description <text> | -- <description...>]
 move <id> up|down|before <id>|after <id>
 set_active <id>
@@ -52,7 +53,7 @@ Flags:
 - `--group <name>` - Put the goal in a free-form section, such as Foundation; an empty name clears it; only for project add and update.
 - `--depends-on <id>` - Require that goal to land first; repeat it to name several, and pass an empty id alone to clear every edge; only for project add and update.
 - `--expect-updated-at <timestamp>` - Refuse the change as a conflict unless the goal's updatedAt still matches this value; only for project update, set_active, complete, reopen, archive, and delete.
-- `--dry-run` - Report the ID rewrites without writing them, and without needing --confirm; only for project migrate_ids.
+- `--dry-run` - Validate and report an apply-plan projection or ID migration without writing; only for project apply-plan and migrate_ids.
 
 Prefer `--json` whenever you need to read IDs, statuses, or errors back rather than parsing human output.
 `list` output is compact and omits descriptions; use `show <id>` when you need a goal's complete description.
@@ -70,6 +71,8 @@ Examples:
 ```sh
 npx -y pi-worklist@latest project list --json
 npx -y pi-worklist@latest project add Support goal templates --description "Let teams share reusable goal outlines"
+npx -y pi-worklist@latest project apply-plan plan.json --dry-run --json
+npx -y pi-worklist@latest project apply-plan plan.json --json
 npx -y pi-worklist@latest project find templates --json
 npx -y pi-worklist@latest project show support-goal-templates --json
 npx -y pi-worklist@latest project update support-goal-templates --description "Replace only the description"
@@ -86,6 +89,16 @@ npx -y pi-worklist@latest project set_active support-goal-templates
 ```
 
 The full generated command reference lives in the package's `docs/cli.md`, rendered from the same contract as this skill.
+
+## JSON plans
+
+- `apply-plan <plan.json>` reads a plain JSON array whose entries allow exactly `title`, `description`, `group`, and `dependsOn`; `title` is a required non-empty string, `description` and `group` are optional strings, and `dependsOn` is an optional array of non-empty strings.
+- Each `dependsOn` reference first matches an exact pre-collision slug of a goal in the same batch, then an exact current or former ID of an existing goal; prefixes are not accepted in plans.
+- Two batch entries with the same pre-collision slug, an unknown reference, or any dependency cycle are hard validation errors and write nothing.
+- Batch-first resolution is deterministic even when a predicted slug is already taken: the batch goal receives a collision suffix, dependents point to that suffixed ID, and `--dry-run` warns that the batch reference shadows the existing goal.
+- A non-empty plan appends every goal in document order through one locked atomic replacement and increments the project revision exactly once; an empty plan is a valid no-op.
+- `apply-plan --dry-run` performs the same locked validation and ID projection without writing or incrementing the revision; its prediction is advisory after the command exits because another writer may change the worklist before a later apply.
+- The plan path is resolved from the process working directory, independently of `--cwd`, which only selects the target Git repository.
 
 ## Goal IDs
 
@@ -128,7 +141,7 @@ The full generated command reference lives in the package's `docs/cli.md`, rende
 - Exit code 3 (confirmation required) means the command needs `--confirm`; stop and ask the user instead of retrying with the flag.
 - Exit code 4 (conflict) means a concurrent change conflicted with yours; re-read current state with `list` or `show` before retrying.
   A conflicting change wrote nothing at all, so rebuild it against the goal you just re-read and pass that goal's new `updatedAt`.
-- `list`, `show`, `find`, `add`, `update`, `move`, and `set_active` are safe to run whenever they serve the user's request.
+- `list`, `show`, `find`, `add`, `apply-plan`, `update`, `move`, and `set_active` are safe to run whenever they serve the user's request.
 - `ui` opens a full-screen board for the human at the keyboard, not for you.
   Never run it: it holds the terminal until the user quits, and it exits with an error when stdin or stdout is not a terminal.
   Suggest `npx -y pi-worklist@latest project ui` when the user wants to browse or edit goals themselves; read state with `list` and `show` instead.

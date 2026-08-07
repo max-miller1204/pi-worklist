@@ -7,6 +7,7 @@ import {
 import {
 	activateProjectGoal,
 	addProjectGoal,
+	applyProjectPlan,
 	deleteProjectGoal,
 	listProjectGoals,
 	migrateProjectGoalIds,
@@ -17,6 +18,7 @@ import {
 	ProjectGoalDependencyCycleError,
 	ProjectGoalDependencyNotFoundError,
 	ProjectGoalNotFoundError,
+	ProjectGoalPlanValidationError,
 	type ProjectGoalUpdate,
 	readProjectGoals,
 	transitionProjectGoal,
@@ -40,6 +42,7 @@ import type {
 	ProjectGoal,
 	ProjectGoalDirection,
 	ProjectGoalPlacement,
+	ProjectGoalPlanEntry,
 	ProjectGoalStatus,
 	SessionTask,
 	SessionTaskPlacement,
@@ -72,6 +75,10 @@ export interface WorklistOperation {
 	 * own existing ID as a dependency cycle.
 	 */
 	dependsOn?: string[];
+	/** Project apply-plan only: the parsed plain JSON document. */
+	plan?: unknown;
+	/** Project apply-plan only: validate and project without writing. */
+	dryRun?: boolean;
 	status?: SessionTaskStatus | ProjectGoalStatus;
 	goalId?: string;
 	beforeId?: string;
@@ -320,6 +327,8 @@ const PROJECT_ONLY_FIELDS = [
 	{ field: "appendDescription", resolution: "remove-append-description" },
 	{ field: "group", resolution: "remove-group" },
 	{ field: "dependsOn", resolution: "remove-depends-on" },
+	{ field: "plan", resolution: "use-project-apply-plan" },
+	{ field: "dryRun", resolution: "use-project-apply-plan" },
 	{ field: "expectedUpdatedAt", resolution: "remove-expected-updated-at" },
 ] as const;
 
@@ -405,6 +414,24 @@ const GOAL_SELECTOR_ACTIONS = new Set([...EXPECTED_UPDATED_AT_ACTIONS, "move", "
  * caller overwrite a concurrent edit.
  */
 function rejectUnsupportedProjectOptions(operation: WorklistOperation): void {
+	if (operation.plan !== undefined && operation.action !== "apply-plan") {
+		throw validationError("plan is only supported for project apply-plan.", {
+			fields: ["plan"],
+			resolution: "use-project-apply-plan",
+		});
+	}
+	if (operation.dryRun !== undefined && typeof operation.dryRun !== "boolean") {
+		throw validationError("dryRun must be a boolean.", {
+			fields: ["dryRun"],
+			resolution: "provide-boolean-dry-run",
+		});
+	}
+	if (operation.dryRun !== undefined && operation.action !== "apply-plan") {
+		throw validationError("dryRun is only supported for project apply-plan.", {
+			fields: ["dryRun"],
+			resolution: "use-project-apply-plan",
+		});
+	}
 	if (operation.appendDescription !== undefined && operation.action !== "update") {
 		throw validationError("appendDescription is only supported for project update.", {
 			fields: ["appendDescription"],
@@ -468,7 +495,7 @@ function metadataForSuccess(input: SuccessMetadataInput): WorklistResultMeta {
 		...(sessionRevision !== undefined ? { session: sessionRevision } : {}),
 		...(projectRevision !== undefined ? { project: projectRevision } : {}),
 	};
-	if (READ_ACTIONS.has(operation.action)) {
+	if (READ_ACTIONS.has(operation.action) || operation.dryRun === true) {
 		return {
 			...cloneEmptyResultMeta(),
 			...(Object.keys(revisions).length > 0 ? { revisions } : {}),
@@ -826,6 +853,8 @@ export class WorklistApplicationService {
 				typedError = notFoundError("project-goal-anchor", error.anchorId).toResultError();
 			} else if (error instanceof ProjectGoalDependencyNotFoundError) {
 				typedError = notFoundError("project-goal-dependency", error.dependencyId).toResultError();
+			} else if (error instanceof ProjectGoalPlanValidationError) {
+				typedError = validationError(error.message, error.details).toResultError();
 			} else if (error instanceof ProjectGoalDependencyCycleError) {
 				typedError = createApplicationError(
 					WORKLIST_ERROR_CODES.DEPENDENCY_CYCLE,
@@ -951,6 +980,32 @@ export class WorklistApplicationService {
 				const { goals, revision } = await readProjectGoals(projectPath);
 				return { result: { scope: "project", action: "list", goals }, revision, changed: false };
 			}
+			case "apply-plan": {
+				if (operation.plan === undefined) {
+					throw validationError("plan is required for project apply-plan.", {
+						fields: ["plan"],
+						resolution: "provide-json-goal-array",
+					});
+				}
+				const { addedGoals, goals, warnings, revision, changed } = await applyProjectPlan(
+					projectPath,
+					operation.plan as ProjectGoalPlanEntry[],
+					{ ...options, dryRun: operation.dryRun },
+				);
+				return {
+					result: {
+						scope: "project",
+						action: "apply-plan",
+						dryRun: operation.dryRun === true,
+						addedGoals,
+						goals,
+						warnings,
+					},
+					revision,
+					changed,
+					changedGoalIds: changed ? addedGoals.map((goal) => goal.id) : [],
+				};
+			}
 			case "add": {
 				if (!operation.title) {
 					throw validationError("title is required for project add.", {
@@ -1029,6 +1084,7 @@ export class WorklistApplicationService {
 					{
 						supportedActions: [
 							"add",
+							"apply-plan",
 							"archive",
 							"complete",
 							"delete",

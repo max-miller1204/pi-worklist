@@ -58,10 +58,22 @@ async function seed(root: string, args: string[]): Promise<void> {
 	await execFileAsync(process.execPath, [cliPath, "project", ...args], { cwd: root });
 }
 
+function parseJson<T>(text: string): T {
+	try {
+		return JSON.parse(text) as T;
+	} catch (error) {
+		throw new Error("Expected valid JSON in goal board runtime test", { cause: error });
+	}
+}
+
 async function readGoals(root: string): Promise<ProjectGoal[]> {
-	const raw = await readFile(join(root, ".pi", "worklist.json"), "utf8").catch(() => null);
-	if (raw === null) return [];
-	return (JSON.parse(raw) as ProjectWorklist).goals;
+	try {
+		const raw = await readFile(join(root, ".pi", "worklist.json"), "utf8");
+		return parseJson<ProjectWorklist>(raw).goals;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+		throw error;
+	}
 }
 
 async function openBoard(root: string, env: NodeJS.ProcessEnv = {}): Promise<Harness> {

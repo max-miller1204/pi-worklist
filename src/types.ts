@@ -27,6 +27,23 @@ export type ProjectGoalPlacement =
 	| SessionTaskPlacement
 	| { beforeId?: never; afterId?: never; direction: ProjectGoalDirection };
 
+/** One goal draft in a JSON plan consumed by `project apply-plan`. */
+export interface ProjectGoalPlanEntry {
+	title: string;
+	description?: string;
+	group?: string;
+	/** Exact batch pre-collision slugs or current/former IDs already in the worklist. */
+	dependsOn?: string[];
+}
+
+/** Advisory ambiguity surfaced by a plan preview without changing resolution. */
+export interface ProjectPlanWarning {
+	code: "BATCH_REFERENCE_SHADOWS_EXISTING";
+	reference: string;
+	existingGoalId: string;
+	batchGoalId: string;
+}
+
 export interface ProjectGoal {
 	id: string;
 	title: string;
@@ -124,6 +141,12 @@ export interface WorklistOperationResult {
 	retiredIds?: string[];
 	/** Project Goal ID rewrites, applied or planned, from an ID migration. */
 	migrations?: GoalIdMigration[];
+	/** Whether an apply-plan result is a projection rather than a persisted batch. */
+	dryRun?: boolean;
+	/** Goals added or proposed by one atomic plan application, in plan order. */
+	addedGoals?: ProjectGoal[];
+	/** Deterministic plan-resolution warnings, primarily shown during dry runs. */
+	warnings?: ProjectPlanWarning[];
 	/**
 	 * Unsatisfied dependencies of the goal that was just activated.
 	 *

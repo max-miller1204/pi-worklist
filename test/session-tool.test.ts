@@ -644,6 +644,35 @@ describe("session state and tool", () => {
 		expect(listed.details.goals?.find((goal) => goal.id === "dependency-graph")?.status).toBe("active");
 	});
 
+	it("previews and applies an atomic project plan through the model tool", async () => {
+		const projectPath = join(await mkdtemp(join(tmpdir(), "pi-worklist-tool-plan-")), ".pi", "worklist.json");
+		await executeWorklist({ scope: "project", action: "add", title: "Shared goal" }, ctx, {
+			projectPath,
+		});
+		const plan = [{ title: "Shared goal" }, { title: "Batch dependent", dependsOn: ["shared-goal"] }];
+
+		const preview = await executeWorklist(
+			{ scope: "project", action: "apply-plan", plan, dryRun: true },
+			ctx,
+			{ projectPath },
+		);
+		expect(preview.content).toContain("Would add 2 project goal(s) without writing.");
+		expect(preview.content).toContain(
+			"Warning: shared-goal resolves to new batch goal shared-goal-2, not existing goal shared-goal.",
+		);
+		expect(preview.details.addedGoals?.[1].dependsOn).toEqual(["shared-goal-2"]);
+		expect(
+			(await executeWorklist({ scope: "project", action: "list" }, ctx, { projectPath })).details.goals,
+		).toHaveLength(1);
+
+		const applied = await executeWorklist({ scope: "project", action: "apply-plan", plan }, ctx, {
+			projectPath,
+		});
+		expect(applied.content).toContain("Applied 2 project goal(s).");
+		expect(applied.details.addedGoals?.map((goal) => goal.id)).toEqual(["shared-goal-2", "batch-dependent"]);
+		expect(applied.details.goals).toHaveLength(3);
+	});
+
 	it("guards every destructive project lifecycle path", async () => {
 		const path = join(await mkdtemp(join(tmpdir(), "pi-worklist-tool-")), ".pi", "worklist.json");
 		const { api } = fakePi();
@@ -712,9 +741,12 @@ describe("registered model tool", () => {
 			properties: Record<string, { enum?: string[]; description?: string }>;
 		};
 		expect(parameters.properties.action.enum).toContain("move");
+		expect(parameters.properties.action.enum).toContain("apply-plan");
 		expect(parameters.properties.id.description).toContain("for move");
 		expect(parameters.properties.beforeId).toBeDefined();
 		expect(parameters.properties.afterId).toBeDefined();
+		expect(parameters.properties.plan).toBeDefined();
+		expect(parameters.properties.dryRun).toBeDefined();
 		expect(tool.description).toContain("Project move requires exactly one of beforeId or afterId");
 		expect(tool.description).not.toContain("Project Goals cannot be reordered");
 	});

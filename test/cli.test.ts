@@ -15,6 +15,14 @@ interface CliResult {
 	stderr: string;
 }
 
+function parseJson(text: string): ReturnType<typeof JSON.parse> {
+	try {
+		return JSON.parse(text);
+	} catch (error) {
+		throw new Error("Expected valid JSON in CLI test", { cause: error });
+	}
+}
+
 async function runCli(cwd: string, args: string[]): Promise<CliResult> {
 	try {
 		const { stdout, stderr } = await execFileAsync(process.execPath, [cliPath, ...args], { cwd });
@@ -42,7 +50,7 @@ function diagnostic(stderr: string): string {
 
 async function readGoals(root: string): Promise<ProjectGoal[]> {
 	const raw = await readFile(join(root, ".pi", "worklist.json"), "utf8");
-	return (JSON.parse(raw) as ProjectWorklist).goals;
+	return (parseJson(raw) as ProjectWorklist).goals;
 }
 
 describe("project goal CLI", () => {
@@ -76,7 +84,7 @@ describe("project goal CLI", () => {
 		const missingJson = await runCli(root, ["project", "show", "goal-missing", "--json"]);
 		expect(missingJson.code).toBe(1);
 		expect(missingJson.stdout).toBe("");
-		expect(JSON.parse(missingJson.stderr)).toMatchObject({
+		expect(parseJson(missingJson.stderr)).toMatchObject({
 			ok: false,
 			scope: "project",
 			action: "show",
@@ -107,7 +115,7 @@ describe("project goal CLI", () => {
 			"--confirm",
 		]);
 		expect(added.code).toBe(0);
-		const created = JSON.parse(added.stdout) as { result: { goal: ProjectGoal } };
+		const created = parseJson(added.stdout) as { result: { goal: ProjectGoal } };
 		expect(created.result.goal).toMatchObject({ title: "Flag-safe goal", description: "--confirm" });
 
 		const replaced = await runCli(root, [
@@ -221,7 +229,7 @@ describe("project goal CLI", () => {
 		expect(spilled.code).toBe(2);
 		expect(diagnostic(spilled.stderr)).toContain("more of the title");
 		const listed = await runCli(root, ["project", "list", "--json"]);
-		expect(JSON.parse(listed.stdout).result.goals).toEqual([]);
+		expect(parseJson(listed.stdout).result.goals).toEqual([]);
 
 		const flagFirst = await runCli(root, [
 			"project",
@@ -281,9 +289,9 @@ describe("project goal CLI", () => {
 
 	it("emits stable machine-readable result envelopes with --json", async () => {
 		const root = await tempGitRepo();
-		const manifest = JSON.parse(await readFile(resolve("package.json"), "utf8")) as { version: string };
+		const manifest = parseJson(await readFile(resolve("package.json"), "utf8")) as { version: string };
 		const added = await runCli(root, ["project", "add", "--json", "Automate", "--", "Via Claude"]);
-		const payload = JSON.parse(added.stdout) as {
+		const payload = parseJson(added.stdout) as {
 			ok: boolean;
 			scope: string;
 			action: string;
@@ -311,7 +319,7 @@ describe("project goal CLI", () => {
 		const refused = await runCli(root, ["project", "complete", payload.result.goal.id, "--json"]);
 		expect(refused.code).toBe(3);
 		expect(refused.stdout).toBe("");
-		const errorPayload = JSON.parse(refused.stderr) as {
+		const errorPayload = parseJson(refused.stderr) as {
 			ok: boolean;
 			scope: string;
 			action: string;
@@ -357,7 +365,7 @@ describe("project goal CLI", () => {
 		const blockedJson = await runCli(root, ["project", "set_active", goal.id, "--json"]);
 		expect(blockedJson.code).toBe(1);
 		expect(blockedJson.stdout).toBe("");
-		expect(JSON.parse(blockedJson.stderr)).toMatchObject({
+		expect(parseJson(blockedJson.stderr)).toMatchObject({
 			ok: false,
 			scope: "project",
 			action: "set_active",
@@ -433,7 +441,7 @@ describe("project goal CLI", () => {
 		const current = (await readGoals(root))[0];
 		expect(conflict.code).toBe(4);
 		expect(conflict.stdout).toBe("");
-		expect(JSON.parse(conflict.stderr)).toMatchObject({
+		expect(parseJson(conflict.stderr)).toMatchObject({
 			ok: false,
 			scope: "project",
 			action: "update",
@@ -549,7 +557,7 @@ describe("project goal CLI", () => {
 		const ambiguous = await runCli(root, ["project", "show", "support", "--json"]);
 		expect(ambiguous.code).toBe(1);
 		expect(ambiguous.stdout).toBe("");
-		expect(JSON.parse(ambiguous.stderr)).toMatchObject({
+		expect(parseJson(ambiguous.stderr)).toMatchObject({
 			ok: false,
 			scope: "project",
 			action: "show",
@@ -593,7 +601,7 @@ describe("project goal CLI", () => {
 
 		const byDescription = await runCli(root, ["project", "find", "external", "agent", "--json"]);
 		expect(byDescription.code).toBe(0);
-		expect(JSON.parse(byDescription.stdout)).toMatchObject({
+		expect(parseJson(byDescription.stdout)).toMatchObject({
 			ok: true,
 			scope: "project",
 			action: "find",
@@ -625,6 +633,155 @@ describe("project goal CLI", () => {
 		const staleMutation = await runCli(root, ["project", "update", "support-goal-templates", "Wrong target"]);
 		expect(staleMutation.code).toBe(1);
 		expect((await readGoals(root))[0].title).toBe("Support goal templates");
+	});
+
+	it("applies a JSON plan atomically with deterministic batch dependency resolution", async () => {
+		const root = await tempGitRepo();
+		await runCli(root, ["project", "add", "Add focus mode"]);
+		await runCli(root, ["project", "add", "Shared runtime"]);
+		const before = await readFile(join(root, ".pi", "worklist.json"), "utf8");
+		const beforeRevision = (parseJson(before) as ProjectWorklist).revision;
+		const planPath = join(root, "plan.json");
+		await writeFile(
+			planPath,
+			`${JSON.stringify([
+				{
+					title: "Batch foundation",
+					description: "Created first but referenced before the batch exists.",
+					group: "Capture",
+				},
+				{ title: "Add focus mode", dependsOn: ["batch-foundation"] },
+				{ title: "Dependent feature", dependsOn: ["add-focus-mode", "shared-runtime"] },
+			])}\n`,
+			"utf8",
+		);
+
+		const humanPreview = await runCli(root, ["project", "apply-plan", planPath, "--dry-run"]);
+		expect(humanPreview.code).toBe(0);
+		expect(humanPreview.stdout).toContain("Would add 3 project goal(s)");
+		expect(humanPreview.stderr).toContain(
+			"batch dependency add-focus-mode resolves to new goal add-focus-mode-2",
+		);
+		expect(await readFile(join(root, ".pi", "worklist.json"), "utf8")).toBe(before);
+
+		const planned = await runCli(root, ["project", "apply-plan", planPath, "--dry-run", "--json"]);
+		expect(planned.code).toBe(0);
+		expect(planned.stderr).toBe("");
+		const preview = parseJson(planned.stdout) as {
+			result: {
+				addedGoals: ProjectGoal[];
+				warnings: Array<Record<string, string>>;
+			};
+			meta: { changed: boolean; semanticNoOp: boolean; revisions: { project: string } };
+		};
+		expect(preview.result.addedGoals.map((goal) => goal.id)).toEqual([
+			"batch-foundation",
+			"add-focus-mode-2",
+			"dependent-feature",
+		]);
+		expect(preview.result.addedGoals[1].dependsOn).toEqual(["batch-foundation"]);
+		expect(preview.result.addedGoals[2].dependsOn).toEqual(["add-focus-mode-2", "shared-runtime"]);
+		expect(preview.result.warnings).toEqual([
+			{
+				code: "BATCH_REFERENCE_SHADOWS_EXISTING",
+				reference: "add-focus-mode",
+				existingGoalId: "add-focus-mode",
+				batchGoalId: "add-focus-mode-2",
+			},
+		]);
+		expect(preview.meta).toMatchObject({
+			changed: false,
+			semanticNoOp: false,
+			revisions: { project: String(beforeRevision) },
+		});
+		expect(await readFile(join(root, ".pi", "worklist.json"), "utf8")).toBe(before);
+
+		const applied = await runCli(root, ["project", "apply-plan", planPath, "--json"]);
+		expect(applied.code).toBe(0);
+		const result = parseJson(applied.stdout) as {
+			result: { addedGoals: ProjectGoal[]; goals: ProjectGoal[] };
+			meta: { changed: boolean; revisions: { project: string } };
+		};
+		expect(result.result.addedGoals.map((goal) => goal.id)).toEqual(
+			preview.result.addedGoals.map((goal) => goal.id),
+		);
+		expect(result.meta).toMatchObject({
+			changed: true,
+			revisions: { project: String(Number(beforeRevision) + 1) },
+		});
+		expect((await readGoals(root)).map((goal) => goal.id)).toEqual([
+			"add-focus-mode",
+			"shared-runtime",
+			"batch-foundation",
+			"add-focus-mode-2",
+			"dependent-feature",
+		]);
+	});
+
+	it("rejects an invalid JSON plan without changing the worklist", async () => {
+		const root = await tempGitRepo();
+		await runCli(root, ["project", "add", "Existing goal"]);
+		const worklistPath = join(root, ".pi", "worklist.json");
+		const before = await readFile(worklistPath, "utf8");
+		const cases = [
+			{
+				name: "duplicate pre-collision slug",
+				plan: [{ title: "Same slug" }, { title: "Same slug!" }],
+				code: "VALIDATION_FAILED",
+			},
+			{
+				name: "unknown reference",
+				plan: [{ title: "Unknown dependency", dependsOn: ["missing-goal"] }],
+				code: "VALIDATION_FAILED",
+			},
+			{
+				name: "existing prefix instead of exact id",
+				plan: [{ title: "Prefix dependency", dependsOn: ["existing"] }],
+				code: "VALIDATION_FAILED",
+			},
+			{
+				name: "padded reference instead of exact id",
+				plan: [{ title: "Padded dependency", dependsOn: [" existing-goal "] }],
+				code: "VALIDATION_FAILED",
+			},
+			{
+				name: "batch cycle",
+				plan: [
+					{ title: "Cycle A", dependsOn: ["cycle-b"] },
+					{ title: "Cycle B", dependsOn: ["cycle-a"] },
+				],
+				code: "DEPENDENCY_CYCLE",
+			},
+		] as const;
+
+		for (const testCase of cases) {
+			const planPath = join(root, `${testCase.name.replaceAll(" ", "-")}.json`);
+			await writeFile(planPath, `${JSON.stringify(testCase.plan)}\n`, "utf8");
+			// pi-lens-ignore: await-in-loop
+			const rejected = await runCli(root, ["project", "apply-plan", planPath, "--json"]);
+			expect(rejected.code, testCase.name).toBe(1);
+			expect(parseJson(rejected.stderr), testCase.name).toMatchObject({
+				ok: false,
+				action: "apply-plan",
+				error: { code: testCase.code },
+				meta: { changed: false },
+			});
+			expect(await readFile(worklistPath, "utf8"), testCase.name).toBe(before);
+		}
+
+		const malformedPath = join(root, "malformed.json");
+		await writeFile(malformedPath, "[{\n", "utf8");
+		const malformed = await runCli(root, ["project", "apply-plan", malformedPath, "--json"]);
+		expect(malformed.code).toBe(1);
+		expect(parseJson(malformed.stderr)).toMatchObject({
+			ok: false,
+			action: "apply-plan",
+			error: { code: "VALIDATION_FAILED", details: { resolution: "fix-json-plan" } },
+		});
+		expect(await readFile(worklistPath, "utf8")).toBe(before);
+
+		expect((await runCli(root, ["project", "apply-plan"])).code).toBe(2);
+		expect((await runCli(root, ["project", "apply-plan", malformedPath, "extra.json"])).code).toBe(2);
 	});
 
 	it("migrates generated goal IDs on request and keeps the old ones resolvable", async () => {
@@ -693,7 +850,7 @@ describe("project goal CLI", () => {
 		expect(contradictory.code).toBe(2);
 		const misplaced = await runCli(root, ["project", "list", "--dry-run"]);
 		expect(misplaced.code).toBe(2);
-		expect(misplaced.stderr).toContain("--dry-run is only supported by project migrate_ids");
+		expect(misplaced.stderr).toContain("--dry-run is only supported by project apply-plan, migrate_ids");
 	});
 
 	it("does not migrate a title-derived slug that resembles a generated ID", async () => {
@@ -737,7 +894,7 @@ describe("project goal CLI", () => {
 		const outsideJson = await runCli(bare, ["project", "list", "--json"]);
 		expect(outsideJson.code).toBe(1);
 		expect(outsideJson.stdout).toBe("");
-		expect(JSON.parse(outsideJson.stderr)).toMatchObject({
+		expect(parseJson(outsideJson.stderr)).toMatchObject({
 			ok: false,
 			scope: "project",
 			action: "list",
@@ -837,7 +994,7 @@ describe("project goal CLI", () => {
 
 		expect(result.code).toBe(1);
 		expect(result.stdout).toBe("");
-		const payload = JSON.parse(result.stderr);
+		const payload = parseJson(result.stderr);
 		expect(payload).toMatchObject({
 			ok: false,
 			error: { code: "NOT_FOUND", details: { id: "goal-missing" } },
@@ -884,7 +1041,7 @@ describe("project goal CLI", () => {
 
 		const settled = await runCli(root, ["project", "move", "second", "down", "--json"]);
 		expect(settled.code).toBe(0);
-		expect(JSON.parse(settled.stdout)).toMatchObject({
+		expect(parseJson(settled.stdout)).toMatchObject({
 			ok: true,
 			action: "move",
 			meta: { changed: false, semanticNoOp: true },
@@ -972,7 +1129,7 @@ describe("project goal CLI", () => {
 			"depends on:\n  slug-ids [open] - waiting\n  schema-fields [open] - waiting",
 		);
 		const shownJson = await runCli(root, ["project", "show", "dependency-graph", "--json"]);
-		expect(JSON.parse(shownJson.stdout)).toMatchObject({
+		expect(parseJson(shownJson.stdout)).toMatchObject({
 			result: {
 				goal: { id: "dependency-graph", dependsOn: ["slug-ids", "schema-fields"] },
 				blocked: true,
@@ -985,7 +1142,7 @@ describe("project goal CLI", () => {
 		expect(target.stdout).toContain("blocks:\n  dependency-graph");
 		expect(target.stdout).not.toContain("depends on:");
 		const targetJson = await runCli(root, ["project", "show", "slug-ids", "--json"]);
-		expect(JSON.parse(targetJson.stdout)).toMatchObject({
+		expect(parseJson(targetJson.stdout)).toMatchObject({
 			result: {
 				goal: { id: "slug-ids" },
 				blocked: false,
@@ -1025,7 +1182,7 @@ describe("project goal CLI", () => {
 			"--json",
 		]);
 		expect(cycleJson.code).toBe(1);
-		expect(JSON.parse(cycleJson.stderr)).toMatchObject({
+		expect(parseJson(cycleJson.stderr)).toMatchObject({
 			ok: false,
 			error: {
 				code: "DEPENDENCY_CYCLE",
@@ -1048,7 +1205,7 @@ describe("project goal CLI", () => {
 		// The JSON envelope carries the same fact, so nothing depends on stderr prose.
 		const activatedJson = await runCli(root, ["project", "set_active", "dependency-graph", "--json"]);
 		expect(activatedJson.stderr).toBe("");
-		expect(JSON.parse(activatedJson.stdout)).toMatchObject({
+		expect(parseJson(activatedJson.stdout)).toMatchObject({
 			ok: true,
 			result: { blockedBy: ["slug-ids"] },
 		});
@@ -1061,7 +1218,7 @@ describe("project goal CLI", () => {
 
 		const deleted = await runCli(root, ["project", "delete", "slug-ids", "--confirm", "--json"]);
 		expect(deleted.code).toBe(0);
-		expect(JSON.parse(deleted.stdout)).toMatchObject({
+		expect(parseJson(deleted.stdout)).toMatchObject({
 			meta: { changedEntities: { projectGoalIds: ["dependency-graph", "slug-ids"] } },
 		});
 		// A dangling edge would read as an unsatisfied dependency and block the goal
@@ -1116,7 +1273,7 @@ describe("project goal CLI", () => {
 			const read = await runCli(root, args);
 			expect(read.code, args.join(" ")).toBe(1);
 			expect(read.stdout).toBe("");
-			expect(JSON.parse(read.stderr)).toMatchObject({
+			expect(parseJson(read.stderr)).toMatchObject({
 				ok: false,
 				error: {
 					code: "PERSISTENCE_FAILED",

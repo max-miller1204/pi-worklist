@@ -143,6 +143,7 @@ describe("single CLI command contract", () => {
 		] as const;
 		const ruleSets = {
 			descriptionRules: CLI_COMMAND_CONTRACT.descriptionRules,
+			planRules: CLI_COMMAND_CONTRACT.planRules,
 			idRules: CLI_COMMAND_CONTRACT.idRules,
 			orderRules: CLI_COMMAND_CONTRACT.orderRules,
 			dependencyRules: CLI_COMMAND_CONTRACT.dependencyRules,
@@ -276,6 +277,7 @@ describe("single CLI command contract", () => {
 			"find",
 			"ui",
 			"add",
+			"apply-plan",
 			"update",
 			"move",
 			"set_active",

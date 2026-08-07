@@ -26,6 +26,9 @@ import { Terminal } from "./terminal.ts";
 /** Coalescing window for filesystem change notifications, in milliseconds. */
 const RELOAD_DEBOUNCE_MS = 120;
 
+/** Fallback refresh cadence when filesystem watches are unavailable or lossy. */
+const RELOAD_POLL_MS = 1000;
+
 /** Editors tried when neither $VISUAL nor $EDITOR is set. */
 const FALLBACK_EDITORS = ["nano", "vim", "vi"] as const;
 
@@ -120,6 +123,7 @@ export async function runGoalBoard(options: GoalBoardRuntimeOptions): Promise<vo
 	let projectWatcher: FSWatcher | undefined;
 	let parentWatcher: FSWatcher | undefined;
 	let reloadTimer: NodeJS.Timeout | undefined;
+	let reloadPoller: NodeJS.Timeout | undefined;
 	let finish: () => void = () => {};
 	const finished = new Promise<void>((resolvePromise) => {
 		finish = resolvePromise;
@@ -195,6 +199,7 @@ export async function runGoalBoard(options: GoalBoardRuntimeOptions): Promise<vo
 		if (!running) return;
 		running = false;
 		if (reloadTimer) clearTimeout(reloadTimer);
+		if (reloadPoller) clearInterval(reloadPoller);
 		projectWatcher?.close();
 		parentWatcher?.close();
 		terminal.close();
@@ -262,6 +267,10 @@ export async function runGoalBoard(options: GoalBoardRuntimeOptions): Promise<vo
 
 	// Another Pi session or CLI call may rewrite the file underneath the board.
 	// The file is replaced by rename, so the directory is what must be watched.
+	// A low-frequency read keeps live reload working when inotify instances are
+	// exhausted, a watcher errors after creation, or a filesystem drops events.
+	reloadPoller = setInterval(scheduleReload, RELOAD_POLL_MS);
+
 	const projectDirectory = dirname(projectPath);
 	const attachProjectWatcher = (): void => {
 		projectWatcher?.close();

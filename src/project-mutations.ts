@@ -1,5 +1,11 @@
 import { findDependencyCycle, formatDependencyCycle } from "./dependencies.ts";
-import { findGoalByStoredId, generateGoalId, planGoalIdMigration, takenGoalIds } from "./goal-selection.ts";
+import {
+	findGoalByStoredId,
+	generateGoalId,
+	planGoalIdMigration,
+	slugifyGoalTitle,
+	takenGoalIds,
+} from "./goal-selection.ts";
 import {
 	mutateProjectWorklist,
 	type ProjectMutationOptions,
@@ -10,7 +16,9 @@ import type {
 	GoalIdMigration,
 	ProjectGoal,
 	ProjectGoalPlacement,
+	ProjectGoalPlanEntry,
 	ProjectGoalStatus,
+	ProjectPlanWarning,
 	ProjectWorklist,
 } from "./types.ts";
 
@@ -72,6 +80,17 @@ export class ProjectGoalDependencyCycleError extends ProjectMutationRefusedError
 		super(`Project goal dependencies would form a cycle: ${formatDependencyCycle(cycle)}`);
 		this.name = "ProjectGoalDependencyCycleError";
 		this.cycle = cycle;
+	}
+}
+
+/** A plan whose static shape or reference resolution is not deterministic. */
+export class ProjectGoalPlanValidationError extends ProjectMutationRefusedError {
+	readonly details: Record<string, unknown>;
+
+	constructor(message: string, details: Record<string, unknown>) {
+		super(message);
+		this.name = "ProjectGoalPlanValidationError";
+		this.details = details;
 	}
 }
 
@@ -237,6 +256,122 @@ export interface ProjectGoalDraft {
 	dependsOn?: string[];
 }
 
+export interface ProjectPlanOutcome {
+	addedGoals: ProjectGoal[];
+	goals: ProjectGoal[];
+	warnings: ProjectPlanWarning[];
+	revision: string;
+	changed: boolean;
+}
+
+interface NormalizedProjectPlanEntry extends ProjectGoalPlanEntry {
+	preCollisionSlug: string;
+}
+
+const PROJECT_PLAN_FIELDS = new Set(["title", "description", "group", "dependsOn"]);
+
+/** Validate the plain JSON plan contract and pin every batch reference key. */
+function normalizeProjectPlan(plan: readonly ProjectGoalPlanEntry[]): NormalizedProjectPlanEntry[] {
+	if (!Array.isArray(plan)) {
+		throw new ProjectGoalPlanValidationError("Project plan must be a JSON array of goals.", {
+			fields: ["plan"],
+			resolution: "provide-json-goal-array",
+		});
+	}
+	const entries: NormalizedProjectPlanEntry[] = [];
+	const indicesBySlug = new Map<string, number>();
+	for (const [index, raw] of plan.entries()) {
+		if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+			throw new ProjectGoalPlanValidationError(`Project plan entry ${index} must be an object.`, {
+				fields: [`plan/${index}`],
+				resolution: "provide-goal-object",
+			});
+		}
+		const unknownFields = Object.keys(raw).filter((field) => !PROJECT_PLAN_FIELDS.has(field));
+		if (unknownFields.length > 0) {
+			throw new ProjectGoalPlanValidationError(
+				`Project plan entry ${index} contains unsupported field(s): ${unknownFields.join(", ")}.`,
+				{
+					fields: unknownFields.map((field) => `plan/${index}/${field}`),
+					resolution: "use-title-description-group-and-dependsOn-only",
+				},
+			);
+		}
+		if (typeof raw.title !== "string" || raw.title.trim() === "") {
+			throw new ProjectGoalPlanValidationError(`Project plan entry ${index} requires a non-empty title.`, {
+				fields: [`plan/${index}/title`],
+				resolution: "provide-non-empty-title",
+			});
+		}
+		if (raw.description !== undefined && typeof raw.description !== "string") {
+			throw new ProjectGoalPlanValidationError(`Project plan entry ${index} description must be a string.`, {
+				fields: [`plan/${index}/description`],
+				resolution: "provide-string-description",
+			});
+		}
+		if (raw.group !== undefined && typeof raw.group !== "string") {
+			throw new ProjectGoalPlanValidationError(`Project plan entry ${index} group must be a string.`, {
+				fields: [`plan/${index}/group`],
+				resolution: "provide-string-group",
+			});
+		}
+		if (
+			raw.dependsOn !== undefined &&
+			(!Array.isArray(raw.dependsOn) ||
+				raw.dependsOn.some((reference: unknown) => typeof reference !== "string"))
+		) {
+			throw new ProjectGoalPlanValidationError(
+				`Project plan entry ${index} dependsOn must be an array of strings.`,
+				{
+					fields: [`plan/${index}/dependsOn`],
+					resolution: "provide-string-reference-array",
+				},
+			);
+		}
+		const dependsOn = raw.dependsOn as string[] | undefined;
+		if (dependsOn?.some((reference) => reference.trim() === "")) {
+			throw new ProjectGoalPlanValidationError(
+				`Project plan entry ${index} dependsOn entries must not be blank.`,
+				{
+					fields: [`plan/${index}/dependsOn`],
+					resolution: "provide-non-blank-goal-references",
+				},
+			);
+		}
+		if (dependsOn?.some((reference) => reference !== reference.trim())) {
+			throw new ProjectGoalPlanValidationError(
+				`Project plan entry ${index} dependsOn entries must match exact IDs without surrounding whitespace.`,
+				{
+					fields: [`plan/${index}/dependsOn`],
+					resolution: "remove-surrounding-reference-whitespace",
+				},
+			);
+		}
+		const title = raw.title.trim();
+		const preCollisionSlug = slugifyGoalTitle(title);
+		const previousIndex = indicesBySlug.get(preCollisionSlug);
+		if (previousIndex !== undefined) {
+			throw new ProjectGoalPlanValidationError(
+				`Project plan entries ${previousIndex} and ${index} share pre-collision slug ${preCollisionSlug}.`,
+				{
+					fields: [`plan/${previousIndex}/title`, `plan/${index}/title`],
+					preCollisionSlug,
+					resolution: "rename-one-batch-goal",
+				},
+			);
+		}
+		indicesBySlug.set(preCollisionSlug, index);
+		entries.push({
+			title,
+			...(raw.description !== undefined ? { description: raw.description } : {}),
+			...(raw.group !== undefined ? { group: raw.group } : {}),
+			...(dependsOn !== undefined ? { dependsOn } : {}),
+			preCollisionSlug,
+		});
+	}
+	return entries;
+}
+
 /**
  * Adds an open goal whose ID is derived from its title.
  *
@@ -282,6 +417,104 @@ export async function addProjectGoal(
 		options,
 	);
 	return mutationOutcome(result);
+}
+
+/**
+ * Add every goal in one JSON plan through one locked mutation and revision bump.
+ *
+ * Batch references resolve by pre-collision slug before existing selectors. That
+ * rule is intentional: when `add-focus-mode` already exists, a new batch goal
+ * with that slug is minted as `add-focus-mode-2`, but another batch entry naming
+ * `add-focus-mode` still points at the new goal. A preview reports that shadow
+ * instead of silently wiring the edge to the existing goal.
+ */
+export async function applyProjectPlan(
+	path: string,
+	plan: readonly ProjectGoalPlanEntry[],
+	options: ProjectMutationOptions & { dryRun?: boolean } = {},
+): Promise<ProjectPlanOutcome> {
+	const now = new Date().toISOString();
+	const result = await mutateProjectWorklist(
+		path,
+		(worklist) => {
+			if (options.dryRun !== undefined && typeof options.dryRun !== "boolean") {
+				throw new ProjectGoalPlanValidationError("Project plan dryRun must be a boolean.", {
+					fields: ["dryRun"],
+					resolution: "provide-boolean-dry-run",
+				});
+			}
+			const entries = normalizeProjectPlan(plan);
+			const taken = takenGoalIds(worklist);
+			const staged = entries.map((entry) => {
+				const id = generateGoalId(entry.title, taken);
+				taken.add(id);
+				return { entry, id };
+			});
+			const batchBySlug = new Map(staged.map((item) => [item.entry.preCollisionSlug, item]));
+			const warnings: ProjectPlanWarning[] = [];
+			const warnedReferences = new Set<string>();
+
+			const resolveReference = (reference: string): string => {
+				const batch = batchBySlug.get(reference);
+				if (batch) {
+					const existing = findGoalByStoredId(worklist.goals, reference, worklist.retiredIds ?? []);
+					if (existing && !warnedReferences.has(reference)) {
+						warnings.push({
+							code: "BATCH_REFERENCE_SHADOWS_EXISTING",
+							reference,
+							existingGoalId: existing.id,
+							batchGoalId: batch.id,
+						});
+						warnedReferences.add(reference);
+					}
+					return batch.id;
+				}
+
+				const existing = findGoalByStoredId(worklist.goals, reference, worklist.retiredIds ?? []);
+				if (existing) return existing.id;
+				throw new ProjectGoalPlanValidationError(
+					`Project plan dependency ${reference} was not found in the batch or existing goals.`,
+					{
+						fields: ["dependsOn"],
+						reference,
+						resolution: "add-batch-goal-or-use-existing-goal-id",
+					},
+				);
+			};
+
+			const addedGoals = staged.map(({ entry, id }) => {
+				const canonicalDependencies = (entry.dependsOn ?? []).map(resolveReference);
+				const dependsOn = [...new Set(canonicalDependencies)];
+				const group = resolveGroup(undefined, entry.group);
+				return {
+					id,
+					title: entry.title,
+					...(entry.description !== undefined ? { description: entry.description } : {}),
+					...(group !== undefined ? { group } : {}),
+					...(dependsOn.length > 0 ? { dependsOn } : {}),
+					status: "open" as const,
+					createdAt: now,
+					updatedAt: now,
+				};
+			});
+			const goals = [...worklist.goals, ...addedGoals];
+			for (const goal of addedGoals) assertAcyclic(goals, goal.id, worklist.retiredIds ?? []);
+			const changed = !options.dryRun && addedGoals.length > 0;
+			return {
+				worklist: changed ? { ...worklist, goals } : worklist,
+				result: { addedGoals, goals, warnings },
+				changed,
+			};
+		},
+		options,
+	);
+	if (result.error) throw new Error(result.error);
+	if (result.revision === undefined) throw new Error("Project plan mutation did not return a revision");
+	return {
+		...result.data,
+		revision: String(result.revision),
+		changed: result.changed !== false,
+	};
 }
 
 export async function updateProjectGoal(
