@@ -23,6 +23,16 @@ export function isDependencySatisfied(goal: ProjectGoal): boolean {
 	return goal.status === "done" || goal.status === "archived";
 }
 
+/**
+ * The goals still to do, which is what every sequencing read is a view of.
+ *
+ * Defined once beside the predicate it inverts, so a count reported alongside a
+ * schedule and the goals the schedule actually holds cannot drift apart.
+ */
+export function unfinishedGoals(goals: readonly ProjectGoal[]): ProjectGoal[] {
+	return goals.filter((goal) => !isDependencySatisfied(goal));
+}
+
 /** One stored edge, resolved against the goals it was read alongside. */
 export interface GoalDependency {
 	/** The ID exactly as stored on the depending goal. */
@@ -233,7 +243,7 @@ export function dependencyWaves(
 ): GoalWaves {
 	const placed = new Set<string>();
 	const waves: ProjectGoal[][] = [];
-	let remaining = goals.filter((goal) => !isDependencySatisfied(goal));
+	let remaining = unfinishedGoals(goals);
 	while (remaining.length > 0) {
 		const wave = remaining.filter((goal) =>
 			unsatisfiedDependencies(goals, goal, retiredIds).every(

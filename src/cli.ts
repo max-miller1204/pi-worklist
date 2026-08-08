@@ -14,11 +14,11 @@ import {
 	dependencyWaves,
 	dependentGoals,
 	type GoalDependency,
-	isDependencySatisfied,
 	isGoalBlocked,
 	nextGoal,
 	readyGoals,
 	resolveDependencies,
+	unfinishedGoals,
 } from "./dependencies.ts";
 import { getWorklistPath, resolveGitRoot } from "./git.ts";
 import {
@@ -396,11 +396,6 @@ function formatGoalList(goals: ProjectGoal[]): string {
 /** `1 goal` or `3 goals`, so a wave header reads as a sentence. */
 function goalCount(count: number): string {
 	return `${count} goal${count === 1 ? "" : "s"}`;
-}
-
-/** Unfinished work, which is what every sequencing read is a view of. */
-function unfinishedGoals(goals: readonly ProjectGoal[]): ProjectGoal[] {
-	return goals.filter((goal) => !isDependencySatisfied(goal));
 }
 
 /**
