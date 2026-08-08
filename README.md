@@ -22,6 +22,7 @@ Project Goals track the larger outcomes shared by every Pi session in a Git repo
 - Project Goal file order is canonical: goals are appended and rearranged only by an explicit move, so a roadmap reads in the sequence someone chose for it.
 - Project Goals carry optional `group`, `completedAt`, `links`, `branch`, and `dependsOn` fields alongside the description.
 - Project Goal dependencies are stored in one direction and checked for cycles at mutation time, so blocked work is derived rather than tracked by hand.
+- `next`, `ready`, and `waves` read that graph for humans and dispatch loops: the one goal to start, the whole parallel frontier, and the layers behind it.
 - `/tasks` opens an interactive two-section dashboard.
 - A compact widget shows the active Project Goal and up to three unfinished Session Tasks.
 - The `worklist` model tool manages both scopes through one consistent API.
@@ -143,6 +144,9 @@ The published package ships a compiled `pi-worklist` bin, so no development chec
 npx -y pi-worklist@latest project list
 npx -y pi-worklist@latest project find templates
 npx -y pi-worklist@latest project show <id>
+npx -y pi-worklist@latest project next
+npx -y pi-worklist@latest project ready
+npx -y pi-worklist@latest project waves
 npx -y pi-worklist@latest project add Support goal templates --description "Let teams share reusable goal outlines"
 npx -y pi-worklist@latest project apply-plan plan.json --dry-run --json
 npx -y pi-worklist@latest project apply-plan plan.json --json
@@ -162,6 +166,7 @@ npx -y pi-worklist@latest project complete <id> --confirm
 The CLI routes every mutation through the same service, cross-process lock, and atomic replacement as a live Pi session, so physical writes are serialized and atomic.
 `list` output is deliberately compact without descriptions; `show <id>` prints one goal in full detail.
 `find <text>` lists the goals whose title or description contains the text, so locating one never needs `list --json` plus a client-side filter.
+`next`, `ready`, and `waves` read the dependency graph rather than the file order, so a driver never has to decide for itself which goal is startable.
 `move <id> up|down` steps one place and `move <id> before|after <anchor-id>` lands beside a named goal; both resolve their arguments through the same selector as every other command, and a move that would change nothing succeeds without writing.
 `--group <name>` on `add` and `update` files a goal under a free-form section, and `--group ''` clears it; a group exists exactly when some goal names it, so there is no separate list to keep in step.
 `--depends-on <id>` on `add` and `update` records a goal that must land first and may be repeated, `--depends-on ''` alone clears every edge, and an update replaces the stored set rather than adding to it.
@@ -262,6 +267,30 @@ An ID migration rewrites stored edges too, because a former ID would still resol
 File order and the dependency graph answer two different questions and are allowed to disagree.
 File order is presentation and a tiebreak, arranged by whoever cares how the roadmap reads; the graph is the source of truth for what may start.
 Neither should be edited to mirror the other: re-sorting the file to match the edges throws away an arrangement someone chose, and adding an edge to justify the file's order records a constraint that does not exist.
+
+## Goal sequencing
+
+Three read commands answer what to work on, reading the same edges everything else derives `blocked` from:
+
+```sh
+npx -y pi-worklist@latest project next
+npx -y pi-worklist@latest project ready
+npx -y pi-worklist@latest project waves
+```
+
+`ready` is the parallel frontier: every open goal whose dependencies have all landed and that nobody has claimed, in canonical file order.
+`next` is the first entry of `ready`, by definition rather than by a second calculation, so a driver taking one goal and a human reading the whole frontier can never be told two different things.
+
+A goal is claimed when it is `active` or carries a `branch`.
+Both are dedicated fields somebody set deliberately, never a heuristic over prose, and a claimed goal is left out of `ready` because handing the same work to a second driver is the one mistake a dispatch read exists to prevent.
+
+`waves` lays the unfinished goals out in the earliest layer each could start in.
+Wave 1 is everything unblocked today, and each later wave is exactly what the wave before it releases, so the layers read as a schedule: how much can run in parallel, and what finishing this round opens up.
+A wave shows the shape of the remaining work rather than what is free to pick up, so a claimed goal keeps its place in the layers and is marked with the branch that took it; the frontier is wave 1 with those removed.
+A goal waiting on a hand-edited cycle, or on an edge that names no goal, can never be released by any wave and is reported as unreachable rather than dropped, because a goal missing from the schedule is a goal nobody notices is stuck.
+
+An empty frontier exits 0 and says which kind of empty it is: an empty roadmap, a finished one, or one where everything left is blocked or already claimed.
+Nothing to start is an answer rather than a failure, so read `result.goal` or `result.goals` from `--json` instead of the exit code.
 
 ## Terminal goal board
 

@@ -267,9 +267,9 @@
       "id": "sequencing-commands-project-next-ready",
       "title": "sequencing-commands: project next, ready, and waves",
       "description": "Read commands over the DAG for humans and drivers: ready returns the full parallel frontier of open unblocked goals, excluding goals whose dedicated branch field is set (the dispatch marker written by project-start, never inferred from links); next returns the first entry of ready in file order, by definition, so a goal someone is already working on is never suggested; waves prints topological layers showing what can run in parallel and what each wave unblocks.",
-      "status": "open",
+      "status": "done",
       "createdAt": "2026-08-04T02:37:25.577Z",
-      "updatedAt": "2026-08-07T08:24:46.496Z",
+      "updatedAt": "2026-08-08T18:09:13.684Z",
       "previousIds": [
         "goal-mse1sdl6-dc932bd7"
       ],
@@ -277,7 +277,8 @@
       "dependsOn": [
         "schema-fields-group-completedat-links",
         "dependency-graph-dependson-edges-with"
-      ]
+      ],
+      "completedAt": "2026-08-08T18:09:13.684Z"
     },
     {
       "id": "capture-skill-brainstorm-to-approved",
@@ -495,5 +496,5 @@
       "updatedAt": "2026-08-05T15:33:01.104Z"
     }
   ],
-  "revision": 198
+  "revision": 200
 }

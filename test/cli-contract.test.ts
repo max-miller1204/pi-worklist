@@ -147,6 +147,7 @@ describe("single CLI command contract", () => {
 			idRules: CLI_COMMAND_CONTRACT.idRules,
 			orderRules: CLI_COMMAND_CONTRACT.orderRules,
 			dependencyRules: CLI_COMMAND_CONTRACT.dependencyRules,
+			sequencingRules: CLI_COMMAND_CONTRACT.sequencingRules,
 		};
 		for (const [name, rules] of Object.entries(ruleSets)) {
 			expect(rules.length, `${name} states no rules`).toBeGreaterThan(0);
@@ -275,6 +276,9 @@ describe("single CLI command contract", () => {
 			"list",
 			"show",
 			"find",
+			"next",
+			"ready",
+			"waves",
 			"ui",
 			"add",
 			"apply-plan",
@@ -290,7 +294,7 @@ describe("single CLI command contract", () => {
 		]);
 
 		// A documented read action must not be rejected as unknown.
-		for (const action of ["list", "help"]) {
+		for (const action of ["list", "next", "ready", "waves", "help"]) {
 			// Each invocation is independent; sequential execution keeps output readable.
 			// pi-lens-ignore: await-in-loop
 			const result = await execFileAsync(process.execPath, [resolve("src/cli.ts"), "project", action], {

@@ -50,7 +50,7 @@ export const CLI_COMMAND_CONTRACT = {
 	 * assume it was installed alongside this source tree.
 	 */
 	skillDescription:
-		"Manage pi-worklist Project Goals (the shared roadmap in a repo's .pi/worklist.json) from any Claude session. Use when the user asks to add, list, find, update, activate, complete, reopen, archive, or delete a project goal; apply a JSON goal plan; migrate goal IDs; or capture brainstormed ideas or future goals on a project's worklist or roadmap.",
+		"Manage pi-worklist Project Goals (the shared roadmap in a repo's .pi/worklist.json) from any Claude session. Use when the user asks to add, list, find, update, activate, complete, reopen, archive, or delete a project goal; apply a JSON goal plan; migrate goal IDs; capture brainstormed ideas or future goals on a project's worklist or roadmap; or ask what to work on next, what is ready or unblocked, what can run in parallel, or how the roadmap's dependency order or waves look.",
 	runtime: {
 		/** Node floor for the published compiled bin. Asserted against package.json engines.node. */
 		binaryNodeFloor: "20",
@@ -72,6 +72,21 @@ export const CLI_COMMAND_CONTRACT = {
 			name: "find",
 			usage: "find <text...>",
 			summary: "List the goals whose title or description contains the text",
+		},
+		{
+			name: "next",
+			usage: "next",
+			summary: "Show the one goal to start next, the first ready goal in file order",
+		},
+		{
+			name: "ready",
+			usage: "ready",
+			summary: "List every unblocked, unclaimed open goal: the whole parallel frontier",
+		},
+		{
+			name: "waves",
+			usage: "waves",
+			summary: "Print unfinished goals in dependency layers, earliest first",
 		},
 		{
 			name: "ui",
@@ -271,6 +286,24 @@ export const CLI_COMMAND_CONTRACT = {
 		"Deleting a goal drops the edges naming it in the same atomic change.",
 		"File order is presentation and a tiebreak while the dependency graph is the source of truth for what may start; the two are allowed to disagree, and neither should be edited to mirror the other.",
 	],
+	/**
+	 * What the sequencing reads answer, and why each is defined the way it is.
+	 *
+	 * Stated on every surface because a driver that picks its own goal off `list`
+	 * will hand out work someone is already doing: the frontier is the part of the
+	 * graph that has to be read the same way by everyone dispatching from it.
+	 */
+	sequencingRules: [
+		"`ready` lists every open goal whose dependencies have all landed and that nobody has claimed, in canonical file order, so the whole parallel frontier is visible at once.",
+		"A goal is claimed when it is active or carries a `branch`, and a claimed goal is left out of `ready` so work already in flight is never handed out twice.",
+		"`next` is the first entry of `ready` by definition, so a driver asking for one goal and a human reading the frontier can never be told two different things.",
+		"An empty frontier is reported at exit code 0, because a roadmap with nothing to start is an answer rather than a failure; read `result.goal` or `result.goals` to tell it from a goal.",
+		"`waves` prints every unfinished goal in the earliest layer it could start in: wave 1 is the unblocked frontier, and each later wave is exactly what the wave before it releases.",
+		"`waves` keeps claimed goals in their layer and marks them, because a wave shows the shape of the remaining work rather than what is free to pick up.",
+		"A goal whose dependencies can never all land, through a hand-edited cycle or an edge naming no goal, is reported as unreachable instead of being dropped from the layers.",
+		"`waves --json` reports the layers as `result.waves`, an array of goal arrays whose position is the wave number, and adds `result.unreachableGoals` only when some goal is unreachable, so an absent field means every unfinished goal found a layer.",
+		"All three are reads derived from the stored edges the same way `blocked` is, so nothing is cached and no command has to be re-run to refresh them.",
+	],
 	exitCodes: [
 		{ code: 0, meaning: "success" },
 		{ code: 1, meaning: "error" },
@@ -287,6 +320,8 @@ export const CLI_COMMAND_CONTRACT = {
 		"Treat exit code 3 as a request for explicit user confirmation, not as a retryable failure.",
 		"Treat exit code 4 as a concurrent-change conflict: re-read current state before retrying.",
 		"Use list for orientation, find <text> to locate a goal by wording, and show <id> when you need a goal's complete description.",
+		"Ask next for the goal to start, ready for everything that could run in parallel, and waves for how the rest of the roadmap is layered; never pick a goal off list yourself, because list cannot tell you what is blocked or already claimed.",
+		"Treat an empty next or ready as nothing to start rather than an error: it exits 0, so read result.goal or result.goals instead of the exit code.",
 		"Pass a full ID or a prefix long enough to be unique; an ambiguous prefix is refused with candidates rather than resolved by guesswork.",
 		"Run migrate_ids only when the user explicitly asks for it; it rewrites stored IDs, though every old ID keeps resolving afterwards.",
 		"Add a note with --append-description instead of resending a description you did not write, so nothing in the existing text can be lost in transcription.",
@@ -401,6 +436,9 @@ export function renderSkillMarkdown(): string {
 		"apply-plan plan.json --dry-run --json",
 		"apply-plan plan.json --json",
 		"find templates --json",
+		"next --json",
+		"ready --json",
+		"waves --json",
 		`show ${exampleId} --json`,
 		`update ${exampleId} --description "Replace only the description"`,
 		`update ${exampleId} Support shared goal templates`,
@@ -479,6 +517,10 @@ export function renderSkillMarkdown(): string {
 		"## Dependencies",
 		"",
 		...contract.dependencyRules.map((rule) => `- ${rule}`),
+		"",
+		"## Sequencing",
+		"",
+		...contract.sequencingRules.map((rule) => `- ${rule}`),
 		"",
 		"## Guardrails",
 		"",
@@ -569,6 +611,10 @@ export function renderCliGuide(): string {
 		"## Dependencies",
 		"",
 		...contract.dependencyRules.map((rule) => `- ${rule}`),
+		"",
+		"## Sequencing",
+		"",
+		...contract.sequencingRules.map((rule) => `- ${rule}`),
 		"",
 		"## Exit codes",
 		"",
