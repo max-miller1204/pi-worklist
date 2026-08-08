@@ -53,6 +53,23 @@ async function readGoals(root: string): Promise<ProjectGoal[]> {
 	return (parseJson(raw) as ProjectWorklist).goals;
 }
 
+/**
+ * Write goal state no CLI action writes: a dispatch branch, or an edge that can
+ * never be satisfied.
+ *
+ * `branch` is the marker a later goal will stamp when work starts, and a
+ * mutation refuses a cycle and strips the edges naming a deleted goal, so both
+ * only reach a real file this way. Sequencing has to read them regardless.
+ */
+async function editGoalByHand(root: string, id: string, changes: Partial<ProjectGoal>): Promise<void> {
+	const path = join(root, ".pi", "worklist.json");
+	const worklist = parseJson(await readFile(path, "utf8")) as ProjectWorklist;
+	const goal = worklist.goals.find((entry) => entry.id === id);
+	if (!goal) throw new Error(`No project goal ${id} to edit by hand`);
+	Object.assign(goal, changes);
+	await writeFile(path, `${JSON.stringify(worklist, null, 2)}\n`);
+}
+
 describe("project goal CLI", () => {
 	it("adds, lists, updates, and activates goals through the shared store", async () => {
 		const root = await tempGitRepo();
@@ -1268,6 +1285,9 @@ describe("project goal CLI", () => {
 
 		for (const args of [
 			["project", "show", "existing", "--json"],
+			["project", "next", "--json"],
+			["project", "ready", "--json"],
+			["project", "waves", "--json"],
 			["project", "migrate_ids", "--dry-run", "--json"],
 		]) {
 			const read = await runCli(root, args);
@@ -1283,5 +1303,146 @@ describe("project goal CLI", () => {
 			});
 		}
 		expect(await readFile(path, "utf8")).toBe("not json\n");
+	});
+
+	it("hands out the unblocked frontier and layers the rest behind it", async () => {
+		const root = await tempGitRepo();
+		await runCli(root, ["project", "add", "Add the parser"]);
+		await runCli(root, ["project", "add", "Adopt the parser", "--depends-on", "add-the-parser"]);
+		await runCli(root, ["project", "add", "Unrelated cleanup"]);
+		await runCli(root, [
+			"project",
+			"add",
+			"Retire the importer",
+			"--depends-on",
+			"adopt-the-parser",
+			"--depends-on",
+			"unrelated-cleanup",
+		]);
+
+		const ready = await runCli(root, ["project", "ready"]);
+		expect(ready.code).toBe(0);
+		expect(ready.stdout.trimEnd().split("\n")).toEqual([
+			"[open] add-the-parser: Add the parser",
+			"[open] unrelated-cleanup: Unrelated cleanup",
+		]);
+
+		// next is the first line of ready, so a driver taking one goal and a human
+		// reading the frontier are never told two different things.
+		const next = await runCli(root, ["project", "next"]);
+		expect(next.code).toBe(0);
+		expect(next.stdout.trimEnd()).toBe(ready.stdout.trimEnd().split("\n")[0]);
+
+		const waves = await runCli(root, ["project", "waves"]);
+		expect(waves.code).toBe(0);
+		expect(waves.stdout.trimEnd().split("\n")).toEqual([
+			"Wave 1 (2 goals):",
+			"  [open] add-the-parser: Add the parser",
+			"  [open] unrelated-cleanup: Unrelated cleanup",
+			"Wave 2 (1 goal):",
+			"  [open] adopt-the-parser: Adopt the parser",
+			"Wave 3 (1 goal):",
+			"  [open] retire-the-importer: Retire the importer",
+		]);
+
+		const wavesJson = parseJson((await runCli(root, ["project", "waves", "--json"])).stdout) as {
+			result: { waves: ProjectGoal[][]; unreachableGoals?: ProjectGoal[] };
+		};
+		expect(wavesJson.result.waves.map((wave) => wave.map((goal) => goal.id))).toEqual([
+			["add-the-parser", "unrelated-cleanup"],
+			["adopt-the-parser"],
+			["retire-the-importer"],
+		]);
+		expect(wavesJson.result.unreachableGoals).toBeUndefined();
+	});
+
+	it("never suggests a goal someone has already taken on", async () => {
+		const root = await tempGitRepo();
+		await runCli(root, ["project", "add", "Dispatched work"]);
+		await runCli(root, ["project", "add", "Activated work"]);
+		await runCli(root, ["project", "add", "Free work"]);
+		await editGoalByHand(root, "dispatched-work", { branch: "feat/dispatched" });
+		await runCli(root, ["project", "set_active", "activated-work"]);
+
+		const next = parseJson((await runCli(root, ["project", "next", "--json"])).stdout) as {
+			result: { goal: ProjectGoal };
+		};
+		expect(next.result.goal.id).toBe("free-work");
+
+		const ready = parseJson((await runCli(root, ["project", "ready", "--json"])).stdout) as {
+			result: { goals: ProjectGoal[] };
+		};
+		expect(ready.result.goals.map((goal) => goal.id)).toEqual(["free-work"]);
+
+		// The schedule still holds claimed work and names what claimed it, so a goal
+		// missing from the frontier is never unexplained.
+		const waves = await runCli(root, ["project", "waves"]);
+		expect(waves.stdout.trimEnd().split("\n")).toEqual([
+			"Wave 1 (3 goals):",
+			"  [open] dispatched-work: Dispatched work (branch feat/dispatched)",
+			"  [active] activated-work: Activated work",
+			"  [open] free-work: Free work",
+		]);
+	});
+
+	it("reports an empty frontier at exit code 0 and says why it is empty", async () => {
+		const root = await tempGitRepo();
+
+		for (const action of ["next", "ready", "waves"]) {
+			// Each invocation is independent; sequential execution keeps output readable.
+			// pi-lens-ignore: await-in-loop
+			const empty = await runCli(root, ["project", action]);
+			expect(empty.code, action).toBe(0);
+			expect(empty.stdout.trimEnd(), action).toBe("No project goals.");
+		}
+
+		await runCli(root, ["project", "add", "Blocker"]);
+		await runCli(root, ["project", "add", "Waiting", "--depends-on", "blocker"]);
+		await runCli(root, ["project", "set_active", "blocker"]);
+
+		const jammed = await runCli(root, ["project", "next"]);
+		expect(jammed.code).toBe(0);
+		expect(jammed.stdout.trimEnd()).toBe(
+			"No project goal is ready; 2 goals unfinished, all blocked or already claimed.",
+		);
+		const jammedJson = parseJson((await runCli(root, ["project", "next", "--json"])).stdout) as {
+			ok: boolean;
+			result: { goal?: ProjectGoal };
+		};
+		expect(jammedJson.ok).toBe(true);
+		expect(jammedJson.result.goal).toBeUndefined();
+
+		await runCli(root, ["project", "complete", "blocker", "--confirm"]);
+		await runCli(root, ["project", "archive", "waiting", "--confirm"]);
+		const finished = await runCli(root, ["project", "ready"]);
+		expect(finished.code).toBe(0);
+		expect(finished.stdout.trimEnd()).toBe("No project goal is ready; every goal is done or archived.");
+		const settled = await runCli(root, ["project", "waves"]);
+		expect(settled.code).toBe(0);
+		expect(settled.stdout.trimEnd()).toBe("No project goal is waiting; every goal is done or archived.");
+	});
+
+	it("keeps a goal no wave can hold in the schedule instead of dropping it", async () => {
+		const root = await tempGitRepo();
+		await runCli(root, ["project", "add", "Startable"]);
+		await runCli(root, ["project", "add", "Stranded"]);
+		await editGoalByHand(root, "stranded", { dependsOn: ["vanished"] });
+
+		const waves = await runCli(root, ["project", "waves"]);
+		expect(waves.code).toBe(0);
+		expect(waves.stdout.trimEnd().split("\n")).toEqual([
+			"Wave 1 (1 goal):",
+			"  [open] startable: Startable",
+			"Unreachable (1 goal), waiting on a cycle or a missing goal:",
+			"  [open] stranded: Stranded",
+		]);
+
+		const wavesJson = parseJson((await runCli(root, ["project", "waves", "--json"])).stdout) as {
+			result: { unreachableGoals: ProjectGoal[] };
+		};
+		expect(wavesJson.result.unreachableGoals.map((goal) => goal.id)).toEqual(["stranded"]);
+		// A goal that can never start is not on offer either, so no driver picks it up.
+		const ready = await runCli(root, ["project", "ready"]);
+		expect(ready.stdout.trimEnd()).toBe("[open] startable: Startable");
 	});
 });

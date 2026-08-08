@@ -28,6 +28,9 @@ Actions:
 list
 show <id>
 find <text...>
+next
+ready
+waves
 ui
 add <title...> [--description <text> | -- <description...>]
 apply-plan <plan.json>
@@ -74,6 +77,9 @@ npx -y pi-worklist@latest project add Support goal templates --description "Let 
 npx -y pi-worklist@latest project apply-plan plan.json --dry-run --json
 npx -y pi-worklist@latest project apply-plan plan.json --json
 npx -y pi-worklist@latest project find templates --json
+npx -y pi-worklist@latest project next --json
+npx -y pi-worklist@latest project ready --json
+npx -y pi-worklist@latest project waves --json
 npx -y pi-worklist@latest project show support-goal-templates --json
 npx -y pi-worklist@latest project update support-goal-templates --description "Replace only the description"
 npx -y pi-worklist@latest project update support-goal-templates Support shared goal templates
@@ -131,6 +137,17 @@ The full generated command reference lives in the package's `docs/cli.md`, rende
 - Deleting a goal drops the edges naming it in the same atomic change.
 - File order is presentation and a tiebreak while the dependency graph is the source of truth for what may start; the two are allowed to disagree, and neither should be edited to mirror the other.
 
+## Sequencing
+
+- `ready` lists every open goal whose dependencies have all landed and that nobody has claimed, in canonical file order, so the whole parallel frontier is visible at once.
+- A goal is claimed when it is active or carries a `branch`, and a claimed goal is left out of `ready` so work already in flight is never handed out twice.
+- `next` is the first entry of `ready` by definition, so a driver asking for one goal and a human reading the frontier can never be told two different things.
+- An empty frontier is reported at exit code 0, because a roadmap with nothing to start is an answer rather than a failure; read `result.goal` or `result.goals` to tell it from a goal.
+- `waves` prints every unfinished goal in the earliest layer it could start in: wave 1 is the unblocked frontier, and each later wave is exactly what the wave before it releases.
+- `waves` keeps claimed goals in their layer and marks them, because a wave shows the shape of the remaining work rather than what is free to pick up.
+- A goal whose dependencies can never all land, through a hand-edited cycle or an edge naming no goal, is reported as unreachable instead of being dropped from the layers.
+- All three are reads derived from the stored edges the same way `blocked` is, so nothing is cached and no command has to be re-run to refresh them.
+
 ## Guardrails
 
 - `complete`, `reopen`, `archive`, `delete`, and `migrate_ids` are reserved for explicit user intent.
@@ -141,7 +158,7 @@ The full generated command reference lives in the package's `docs/cli.md`, rende
 - Exit code 3 (confirmation required) means the command needs `--confirm`; stop and ask the user instead of retrying with the flag.
 - Exit code 4 (conflict) means a concurrent change conflicted with yours; re-read current state with `list` or `show` before retrying.
   A conflicting change wrote nothing at all, so rebuild it against the goal you just re-read and pass that goal's new `updatedAt`.
-- `list`, `show`, `find`, `add`, `apply-plan`, `update`, `move`, and `set_active` are safe to run whenever they serve the user's request.
+- `list`, `show`, `find`, `next`, `ready`, `waves`, `add`, `apply-plan`, `update`, `move`, and `set_active` are safe to run whenever they serve the user's request.
 - `ui` opens a full-screen board for the human at the keyboard, not for you.
   Never run it: it holds the terminal until the user quits, and it exits with an error when stdin or stdout is not a terminal.
   Suggest `npx -y pi-worklist@latest project ui` when the user wants to browse or edit goals themselves; read state with `list` and `show` instead.

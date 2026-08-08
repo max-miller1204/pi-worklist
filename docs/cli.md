@@ -21,6 +21,9 @@ Every `--json` result envelope reports the running package version as `meta.cliV
 | `npx -y pi-worklist@latest project list` | Show a compact bounded list of project goals |
 | `npx -y pi-worklist@latest project show <id>` | Show one goal with its full description |
 | `npx -y pi-worklist@latest project find <text...>` | List the goals whose title or description contains the text |
+| `npx -y pi-worklist@latest project next` | Show the one goal to start next, the first ready goal in file order |
+| `npx -y pi-worklist@latest project ready` | List every unblocked, unclaimed open goal: the whole parallel frontier |
+| `npx -y pi-worklist@latest project waves` | Print unfinished goals in dependency layers, earliest first |
 | `npx -y pi-worklist@latest project ui` | Open the interactive goal board for a human at the keyboard. Requires a terminal; not for scripts or agents |
 | `npx -y pi-worklist@latest project add <title...> [--description <text> \| -- <description...>]` | Add an open goal |
 | `npx -y pi-worklist@latest project apply-plan <plan.json>` | Validate and atomically add every goal in a JSON plan |
@@ -99,6 +102,17 @@ Programmatic callers clear a description with `--description ''`; the interactiv
 - Deleting a goal drops the edges naming it in the same atomic change.
 - File order is presentation and a tiebreak while the dependency graph is the source of truth for what may start; the two are allowed to disagree, and neither should be edited to mirror the other.
 
+## Sequencing
+
+- `ready` lists every open goal whose dependencies have all landed and that nobody has claimed, in canonical file order, so the whole parallel frontier is visible at once.
+- A goal is claimed when it is active or carries a `branch`, and a claimed goal is left out of `ready` so work already in flight is never handed out twice.
+- `next` is the first entry of `ready` by definition, so a driver asking for one goal and a human reading the frontier can never be told two different things.
+- An empty frontier is reported at exit code 0, because a roadmap with nothing to start is an answer rather than a failure; read `result.goal` or `result.goals` to tell it from a goal.
+- `waves` prints every unfinished goal in the earliest layer it could start in: wave 1 is the unblocked frontier, and each later wave is exactly what the wave before it releases.
+- `waves` keeps claimed goals in their layer and marks them, because a wave shows the shape of the remaining work rather than what is free to pick up.
+- A goal whose dependencies can never all land, through a hand-edited cycle or an edge naming no goal, is reported as unreachable instead of being dropped from the layers.
+- All three are reads derived from the stored edges the same way `blocked` is, so nothing is cached and no command has to be re-run to refresh them.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -119,6 +133,8 @@ Programmatic callers clear a description with `--description ''`; the interactiv
 - Treat exit code 3 as a request for explicit user confirmation, not as a retryable failure.
 - Treat exit code 4 as a concurrent-change conflict: re-read current state before retrying.
 - Use list for orientation, find <text> to locate a goal by wording, and show <id> when you need a goal's complete description.
+- Ask next for the goal to start, ready for everything that could run in parallel, and waves for how the rest of the roadmap is layered; never pick a goal off list yourself, because list cannot tell you what is blocked or already claimed.
+- Treat an empty next or ready as nothing to start rather than an error: it exits 0, so read result.goal or result.goals instead of the exit code.
 - Pass a full ID or a prefix long enough to be unique; an ambiguous prefix is refused with candidates rather than resolved by guesswork.
 - Run migrate_ids only when the user explicitly asks for it; it rewrites stored IDs, though every old ID keeps resolving afterwards.
 - Add a note with --append-description instead of resending a description you did not write, so nothing in the existing text can be lost in transcription.

@@ -145,6 +145,15 @@ export interface WorklistOperationResult {
 	dryRun?: boolean;
 	/** Goals added or proposed by one atomic plan application, in plan order. */
 	addedGoals?: ProjectGoal[];
+	/**
+	 * Unfinished goals in dependency layers, earliest first.
+	 *
+	 * A layer's position is its wave number, so `waves[0]` is the unblocked
+	 * frontier and each later entry is what the layer before it releases.
+	 */
+	waves?: ProjectGoal[][];
+	/** Unfinished goals no wave can hold, because an edge is cyclic or names no goal. */
+	unreachableGoals?: ProjectGoal[];
 	/** Deterministic plan-resolution warnings, primarily shown during dry runs. */
 	warnings?: ProjectPlanWarning[];
 	/**

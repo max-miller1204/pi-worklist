@@ -163,3 +163,89 @@ export function findDependencyCycleFromRoots(
 export function formatDependencyCycle(cycle: readonly string[]): string {
 	return [...cycle, cycle[0]].join(" -> ");
 }
+
+/**
+ * Whether someone has already taken a goal on.
+ *
+ * Activation and a recorded branch are the two ways a goal is spoken for: one
+ * says a human named it the goal in flight, the other is the dispatch marker
+ * written when work actually starts. Both are read from dedicated fields rather
+ * than inferred from prose, so a goal is claimed only when somebody said so.
+ */
+export function isGoalClaimed(goal: ProjectGoal): boolean {
+	return goal.status === "active" || goal.branch !== undefined;
+}
+
+/**
+ * The goals that could be started right now, in canonical file order.
+ *
+ * This is the parallel frontier: every one of them has had its dependencies
+ * land, and none of them is already spoken for, so they may all run at once.
+ * Claimed goals are left out because handing the same work to a second driver
+ * is the one mistake a dispatch read exists to prevent.
+ */
+export function readyGoals(goals: readonly ProjectGoal[], retiredIds: readonly string[] = []): ProjectGoal[] {
+	return goals.filter(
+		(goal) => goal.status === "open" && !isGoalClaimed(goal) && !isGoalBlocked(goals, goal, retiredIds),
+	);
+}
+
+/**
+ * The single goal to start next, or nothing when the frontier is empty.
+ *
+ * Defined as the first ready goal rather than computed another way, so a driver
+ * asking for one goal and a human reading the whole frontier can never be told
+ * two different things. File order breaks the tie because that order is the
+ * sequence somebody arranged the roadmap in.
+ */
+export function nextGoal(
+	goals: readonly ProjectGoal[],
+	retiredIds: readonly string[] = [],
+): ProjectGoal | undefined {
+	return readyGoals(goals, retiredIds)[0];
+}
+
+/** Unfinished goals in dependency layers, and the ones no layer can hold. */
+export interface GoalWaves {
+	/** Topological layers, earliest first; wave 1 is the unblocked frontier. */
+	waves: ProjectGoal[][];
+	/** Goals whose edges can never all land, through a cycle or a missing goal. */
+	unreachable: ProjectGoal[];
+}
+
+/**
+ * Unfinished goals arranged into the earliest layer each could start in.
+ *
+ * Wave 1 is everything unblocked today, and each later wave is exactly what the
+ * wave before it releases, so the layers read as a schedule: how much can run in
+ * parallel, and what finishing this round opens up. Layering is about the shape
+ * of the remaining work rather than what is free to pick up, so a claimed goal
+ * still occupies its wave; `readyGoals` is the frontier with those removed.
+ *
+ * A goal on a hand-edited cycle, or waiting on an edge that names no goal, can
+ * never be released by any wave. Those come back separately rather than being
+ * dropped, because a goal missing from the schedule entirely is a goal nobody
+ * notices is stuck.
+ */
+export function dependencyWaves(
+	goals: readonly ProjectGoal[],
+	retiredIds: readonly string[] = [],
+): GoalWaves {
+	const placed = new Set<string>();
+	const waves: ProjectGoal[][] = [];
+	let remaining = goals.filter((goal) => !isDependencySatisfied(goal));
+	while (remaining.length > 0) {
+		const wave = remaining.filter((goal) =>
+			unsatisfiedDependencies(goals, goal, retiredIds).every(
+				(entry) => entry.goal !== undefined && placed.has(entry.goal.id),
+			),
+		);
+		// Nothing became eligible, so every goal left is waiting on something no
+		// wave will ever land; another pass would loop over the same set forever.
+		if (wave.length === 0) break;
+		for (const goal of wave) placed.add(goal.id);
+		waves.push(wave);
+		remaining = remaining.filter((goal) => !placed.has(goal.id));
+	}
+	return { waves, unreachable: remaining };
+}

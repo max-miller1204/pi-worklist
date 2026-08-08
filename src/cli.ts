@@ -10,7 +10,16 @@ import {
 	type WorklistOperation,
 } from "./application-service.ts";
 import { CLI_COMMAND_CONTRACT, type CliFlagContract, renderCliUsage } from "./cli-contract.ts";
-import { dependentGoals, type GoalDependency, isGoalBlocked, resolveDependencies } from "./dependencies.ts";
+import {
+	dependencyWaves,
+	dependentGoals,
+	type GoalDependency,
+	isDependencySatisfied,
+	isGoalBlocked,
+	nextGoal,
+	readyGoals,
+	resolveDependencies,
+} from "./dependencies.ts";
 import { getWorklistPath, resolveGitRoot } from "./git.ts";
 import {
 	matchesGoalQuery,
@@ -382,6 +391,64 @@ function formatGoalLine(goal: ProjectGoal): string {
 function formatGoalList(goals: ProjectGoal[]): string {
 	if (goals.length === 0) return "No project goals.";
 	return goals.map(formatGoalLine).join("\n");
+}
+
+/** `1 goal` or `3 goals`, so a wave header reads as a sentence. */
+function goalCount(count: number): string {
+	return `${count} goal${count === 1 ? "" : "s"}`;
+}
+
+/** Unfinished work, which is what every sequencing read is a view of. */
+function unfinishedGoals(goals: readonly ProjectGoal[]): ProjectGoal[] {
+	return goals.filter((goal) => !isDependencySatisfied(goal));
+}
+
+/**
+ * Why the frontier is empty, which is three different answers.
+ *
+ * An empty roadmap, a finished one, and one where everything is waiting all
+ * print no goals, and a driver told only "nothing is ready" cannot tell the end
+ * of the work from a jam it needs to clear.
+ */
+function formatEmptyFrontier(goals: readonly ProjectGoal[]): string {
+	if (goals.length === 0) return "No project goals.";
+	const unfinished = unfinishedGoals(goals).length;
+	if (unfinished === 0) return "No project goal is ready; every goal is done or archived.";
+	return `No project goal is ready; ${goalCount(unfinished)} unfinished, all blocked or already claimed.`;
+}
+
+/** A wave member, with the branch that claimed it when one did. */
+function formatWaveGoalLine(goal: ProjectGoal): string {
+	return `  ${formatGoalLine(goal)}${goal.branch === undefined ? "" : ` (branch ${goal.branch})`}`;
+}
+
+/**
+ * The layers, and then the goals no layer could hold.
+ *
+ * Unreachable goals are printed last and named as such rather than omitted: a
+ * goal missing from the schedule is a goal nobody notices is stuck.
+ */
+function formatWaves(
+	goals: readonly ProjectGoal[],
+	waves: readonly ProjectGoal[][],
+	unreachable: readonly ProjectGoal[],
+): string {
+	if (waves.length === 0 && unreachable.length === 0) {
+		if (goals.length === 0) return "No project goals.";
+		return "No project goal is waiting; every goal is done or archived.";
+	}
+	const sections = waves.map((wave, index) =>
+		[`Wave ${index + 1} (${goalCount(wave.length)}):`, ...wave.map(formatWaveGoalLine)].join("\n"),
+	);
+	if (unreachable.length > 0) {
+		sections.push(
+			[
+				`Unreachable (${goalCount(unreachable.length)}), waiting on a cycle or a missing goal:`,
+				...unreachable.map(formatWaveGoalLine),
+			].join("\n"),
+		);
+	}
+	return sections.join("\n");
 }
 
 /**
@@ -801,6 +868,36 @@ async function run(invocation: CliInvocation): Promise<void> {
 			const result = { scope: "project", action: "find", goals: matches } as const;
 			const message = matches.length === 0 ? `No project goals match ${query}.` : formatGoalList(matches);
 			report(invocation, readEnvelope("find", result, meta), message);
+			return;
+		}
+		case "next": {
+			const { goals, retiredIds, meta } = await readProjectSnapshot(service, "next");
+			const goal = nextGoal(goals, retiredIds);
+			// An empty frontier is an answer, not a failure: reporting it as one would
+			// make a driver loop read a finished roadmap as a broken command.
+			const result = { scope: "project", action: "next", ...(goal ? { goal } : {}) } as const;
+			const message = goal ? formatGoalLine(goal) : formatEmptyFrontier(goals);
+			report(invocation, readEnvelope("next", result, meta), message);
+			return;
+		}
+		case "ready": {
+			const { goals, retiredIds, meta } = await readProjectSnapshot(service, "ready");
+			const ready = readyGoals(goals, retiredIds);
+			const result = { scope: "project", action: "ready", goals: ready } as const;
+			const message = ready.length === 0 ? formatEmptyFrontier(goals) : formatGoalList(ready);
+			report(invocation, readEnvelope("ready", result, meta), message);
+			return;
+		}
+		case "waves": {
+			const { goals, retiredIds, meta } = await readProjectSnapshot(service, "waves");
+			const { waves, unreachable } = dependencyWaves(goals, retiredIds);
+			const result = {
+				scope: "project",
+				action: "waves",
+				waves,
+				...(unreachable.length > 0 ? { unreachableGoals: unreachable } : {}),
+			} as const;
+			report(invocation, readEnvelope("waves", result, meta), formatWaves(goals, waves, unreachable));
 			return;
 		}
 		case "apply-plan": {

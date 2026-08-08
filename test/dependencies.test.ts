@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+	dependencyWaves,
 	dependentGoals,
 	findDependencyCycle,
 	findDependencyCycleFromRoots,
 	formatDependencyCycle,
 	isGoalBlocked,
+	isGoalClaimed,
+	nextGoal,
+	readyGoals,
 	resolveDependencies,
 	unsatisfiedDependencies,
 } from "../src/dependencies.ts";
@@ -126,5 +130,118 @@ describe("project goal dependency graph", () => {
 		expect(findDependencyCycleFromRoots(goals, ["left", "right", "trailer"])).toEqual(["trailer", "loop"]);
 		expect(findDependencyCycleFromRoots(goals, [])).toBeUndefined();
 		expect(findDependencyCycleFromRoots(goals, ["missing"])).toBeUndefined();
+	});
+});
+
+describe("project goal sequencing", () => {
+	it("offers the whole unblocked frontier and starts with the first of it", () => {
+		const goals = [
+			goal({ id: "landed", status: "done" }),
+			goal({ id: "waiting", dependsOn: ["frontier"] }),
+			goal({ id: "released", dependsOn: ["landed"] }),
+			goal({ id: "frontier" }),
+		];
+
+		expect(readyGoals(goals).map((entry) => entry.id)).toEqual(["released", "frontier"]);
+		// next is the first ready goal by definition, so the two can never disagree.
+		expect(nextGoal(goals)?.id).toBe(readyGoals(goals)[0].id);
+		expect(nextGoal(goals)?.id).toBe("released");
+	});
+
+	it("holds back a goal someone already took, whether by activation or by branch", () => {
+		const goals = [
+			goal({ id: "activated", status: "active" }),
+			goal({ id: "dispatched", branch: "feat/dispatched" }),
+			goal({ id: "free" }),
+		];
+
+		expect(goals.map(isGoalClaimed)).toEqual([true, true, false]);
+		expect(readyGoals(goals).map((entry) => entry.id)).toEqual(["free"]);
+		expect(nextGoal(goals)?.id).toBe("free");
+	});
+
+	it("suggests nothing rather than settled or blocked work", () => {
+		const settled = [goal({ id: "done", status: "done" }), goal({ id: "archived", status: "archived" })];
+		expect(readyGoals(settled)).toEqual([]);
+		expect(nextGoal(settled)).toBeUndefined();
+		expect(nextGoal([])).toBeUndefined();
+
+		const blocked = [goal({ id: "blocker" }), goal({ id: "waiting", dependsOn: ["blocker"] })];
+		expect(readyGoals(blocked).map((entry) => entry.id)).toEqual(["blocker"]);
+	});
+
+	it("layers unfinished goals into the earliest wave each could start in", () => {
+		const goals = [
+			goal({ id: "last", dependsOn: ["left", "right"] }),
+			goal({ id: "left", dependsOn: ["base"] }),
+			goal({ id: "base", dependsOn: ["landed"] }),
+			goal({ id: "landed", status: "done" }),
+			goal({ id: "right", dependsOn: ["base"] }),
+		];
+
+		const { waves, unreachable } = dependencyWaves(goals);
+		// A settled dependency clears its dependent into wave 1, and each wave holds
+		// its goals in file order rather than the order the walk reached them.
+		expect(waves.map((wave) => wave.map((entry) => entry.id))).toEqual([
+			["base"],
+			["left", "right"],
+			["last"],
+		]);
+		expect(unreachable).toEqual([]);
+	});
+
+	it("layers a claimed goal like any other, because a wave is not a suggestion", () => {
+		const goals = [
+			goal({ id: "inflight", status: "active" }),
+			goal({ id: "dispatched", branch: "feat/dispatched" }),
+			goal({ id: "waiting", dependsOn: ["inflight"] }),
+		];
+
+		const { waves } = dependencyWaves(goals);
+		expect(waves.map((wave) => wave.map((entry) => entry.id))).toEqual([
+			["inflight", "dispatched"],
+			["waiting"],
+		]);
+		// The frontier is wave 1 with the claimed goals removed, so a reader can see
+		// why a goal that appears in the schedule is not on offer.
+		expect(readyGoals(goals)).toEqual([]);
+	});
+
+	it("leaves out finished work and reports an empty roadmap as no waves at all", () => {
+		expect(dependencyWaves([])).toEqual({ waves: [], unreachable: [] });
+		const settled = [goal({ id: "done", status: "done" }), goal({ id: "archived", status: "archived" })];
+		expect(dependencyWaves(settled)).toEqual({ waves: [], unreachable: [] });
+	});
+
+	it("names the goals no wave can hold instead of dropping them from the schedule", () => {
+		// Both shapes need a hand-edited file: mutations refuse a cycle and strip the
+		// edges naming a deleted goal. A goal missing from the schedule entirely is a
+		// goal nobody notices is stuck, so they are reported rather than omitted.
+		const goals = [
+			goal({ id: "startable" }),
+			goal({ id: "dangling", dependsOn: ["vanished"] }),
+			goal({ id: "loop-a", dependsOn: ["loop-b"] }),
+			goal({ id: "loop-b", dependsOn: ["loop-a"] }),
+			goal({ id: "behind-the-loop", dependsOn: ["loop-a"] }),
+		];
+
+		const { waves, unreachable } = dependencyWaves(goals);
+		expect(waves.map((wave) => wave.map((entry) => entry.id))).toEqual([["startable"]]);
+		expect(unreachable.map((entry) => entry.id)).toEqual(["dangling", "loop-a", "loop-b", "behind-the-loop"]);
+	});
+
+	it("resolves sequencing edges through former IDs and past retired ones", () => {
+		const goals = [
+			goal({ id: "renamed", previousIds: ["goal-mse1rzxb-8213cc2a"], status: "done" }),
+			goal({ id: "released", dependsOn: ["goal-mse1rzxb-8213cc2a"] }),
+			goal({ id: "orphaned", dependsOn: ["goal-mse1rzxb-retired"] }),
+		];
+		const retiredIds = ["goal-mse1rzxb-retired"];
+
+		expect(readyGoals(goals, retiredIds).map((entry) => entry.id)).toEqual(["released"]);
+		expect(nextGoal(goals, retiredIds)?.id).toBe("released");
+		const { waves, unreachable } = dependencyWaves(goals, retiredIds);
+		expect(waves.map((wave) => wave.map((entry) => entry.id))).toEqual([["released"]]);
+		expect(unreachable.map((entry) => entry.id)).toEqual(["orphaned"]);
 	});
 });
