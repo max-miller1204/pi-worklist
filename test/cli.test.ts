@@ -1385,6 +1385,23 @@ describe("project goal CLI", () => {
 		]);
 	});
 
+	it("keeps a wave member on one line when its branch was hand-edited across lines", async () => {
+		const root = await tempGitRepo();
+		await runCli(root, ["project", "add", "Dispatched work"]);
+		await runCli(root, ["project", "add", "Free work"]);
+		await editGoalByHand(root, "dispatched-work", { branch: "feat/one\nWave 9 (1 goal):" });
+
+		// The layers are read one goal per line, so a stored newline must not be able
+		// to split a member in half or forge a wave header out of the tail.
+		const waves = await runCli(root, ["project", "waves"]);
+		expect(waves.code).toBe(0);
+		expect(waves.stdout.trimEnd().split("\n")).toEqual([
+			"Wave 1 (2 goals):",
+			"  [open] dispatched-work: Dispatched work (branch feat/one Wave 9 (1 goal):)",
+			"  [open] free-work: Free work",
+		]);
+	});
+
 	it("reports an empty frontier at exit code 0 and says why it is empty", async () => {
 		const root = await tempGitRepo();
 

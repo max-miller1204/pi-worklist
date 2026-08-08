@@ -29,6 +29,7 @@ import {
 } from "./goal-selection.ts";
 import { WORKLIST_ERROR_CODES, type WorklistErrorCode, type WorklistResultMeta } from "./result-envelope.ts";
 import { runGoalBoard } from "./tui/goal-board-runtime.ts";
+import { singleLine } from "./tui/text.ts";
 import type {
 	GoalIdMigration,
 	ProjectGoal,
@@ -378,7 +379,7 @@ function requireId(invocation: CliInvocation): string {
 }
 
 function compactTitle(title: string): string {
-	const flattened = title.replace(/\s+/g, " ").trim();
+	const flattened = singleLine(title);
 	if (flattened.length <= COMPACT_TITLE_LIMIT) return flattened;
 	return `${flattened.slice(0, COMPACT_TITLE_LIMIT - 1)}…`;
 }
@@ -412,9 +413,15 @@ function formatEmptyFrontier(goals: readonly ProjectGoal[]): string {
 	return `No project goal is ready; ${goalCount(unfinished)} unfinished, all blocked or already claimed.`;
 }
 
-/** A wave member, with the branch that claimed it when one did. */
+/**
+ * A wave member, with the branch that claimed it when one did.
+ *
+ * The branch is flattened like every other goal field this format renders,
+ * because the layers are read one goal per line: a stored newline would break a
+ * member in half and the tail would read as another goal, or as a wave header.
+ */
 function formatWaveGoalLine(goal: ProjectGoal): string {
-	return `  ${formatGoalLine(goal)}${goal.branch === undefined ? "" : ` (branch ${goal.branch})`}`;
+	return `  ${formatGoalLine(goal)}${goal.branch === undefined ? "" : ` (branch ${singleLine(goal.branch)})`}`;
 }
 
 /**
