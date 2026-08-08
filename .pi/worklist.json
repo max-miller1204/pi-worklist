@@ -266,10 +266,10 @@
     {
       "id": "sequencing-commands-project-next-ready",
       "title": "sequencing-commands: project next, ready, and waves",
-      "description": "Read commands over the DAG for humans and drivers: ready returns the full parallel frontier of open unblocked goals, excluding goals whose dedicated branch field is set (the dispatch marker written by project-start, never inferred from links); next returns the first entry of ready in file order, by definition, so a goal someone is already working on is never suggested; waves prints topological layers showing what can run in parallel and what each wave unblocks. All three support the --json envelope.",
+      "description": "Read commands over the DAG for humans and drivers: ready returns the full parallel frontier of open unblocked goals, excluding goals whose dedicated branch field is set (the dispatch marker written by project-start, never inferred from links); next returns the first entry of ready in file order, by definition, so a goal someone is already working on is never suggested; waves prints topological layers showing what can run in parallel and what each wave unblocks.",
       "status": "open",
       "createdAt": "2026-08-04T02:37:25.577Z",
-      "updatedAt": "2026-08-05T05:02:32.886Z",
+      "updatedAt": "2026-08-07T08:24:46.496Z",
       "previousIds": [
         "goal-mse1sdl6-dc932bd7"
       ],
@@ -495,5 +495,5 @@
       "updatedAt": "2026-08-05T15:33:01.104Z"
     }
   ],
-  "revision": 197
+  "revision": 198
 }
